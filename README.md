@@ -104,31 +104,46 @@ agent-wiki/
 
 ## 核心抽象
 
-### 1. KnowledgeStore（知识存储接口）
+### 1. aw-agent（统一知识代理）
+
+Agent Wiki 的核心逻辑由独立 `aw-agent` 进程统一实现，并通过 MCP Server、CLI `aw`、REST API 暴露。各 Agent 不直接实现 query/ingest/lint/sync 逻辑，只配置 MCP 连接参数或 CLI 路径。
+
+### 2. KnowledgeStore（知识存储接口）
 
 ```python
 class KnowledgeStore(Protocol):
     def read_page(self, doc_id: str) -> Page: ...
     def write_page(self, page: Page) -> WriteResult: ...
-    def query(self, query: str, query_type: str, budget: int) -> QueryResult: ...
-    def lint(self) -> LintReport: ...
+    def get_manifest(self, doc_id: str) -> ManifestEntry: ...
+    def update_manifest(self, entry: ManifestEntry) -> None: ...
 ```
 
-每个Agent的适配器实现此接口，对接各自的存储后端。
+存储接口由 `aw-agent` 的 StorageProvider 实现，不由各 Agent adapter 实现。
 
-### 2. PropagationEngine（传播引擎）
+### 3. RetrievalProvider（检索提供者接口）
+
+```python
+class RetrievalProvider(Protocol):
+    def search(self, query: str, top_k: int, filters: dict | None = None) -> list[SearchHit]: ...
+    def upsert_cards(self, cards: list[RetrievalCard]) -> None: ...
+    def delete_doc(self, wiki_id: str, doc_id: str) -> None: ...
+```
+
+Phase 1 默认使用 `retrieval_index.jsonl + lexical search`。向量检索是可选增强插件，不是最低可用路径。
+
+### 4. PropagationEngine（传播引擎）
 
 ```python
 class PropagationEngine:
     """写入即传播 — 每个写操作必须级联更新所有下游工件"""
 
     WRITE_PROPAGATION_MATRIX = {
-        "create_raw": ["manifest", "vectors", "retrieval_index", "log", "mirror"],
-        "create_atom": ["manifest", "vectors", "retrieval_index", "log", "mirror"],
-        "update_compiled": ["manifest", "vectors", "retrieval_index", "review_queue?", "log", "mirror"],
+        "create_raw": ["manifest", "provider_index", "retrieval_index", "log", "mirror"],
+        "create_atom": ["manifest", "provider_index", "retrieval_index", "log", "mirror"],
+        "update_compiled": ["manifest", "provider_index", "retrieval_index", "review_queue?", "log", "mirror"],
         "mark_disputed": ["manifest", "retrieval_index", "review_queue", "log", "mirror"],
-        "promote_principle": ["manifest", "vectors", "retrieval_index", "review_queue", "log", "mirror"],
-        "archive_page": ["manifest", "vectors", "retrieval_index", "log", "mirror"],
+        "promote_principle": ["manifest", "provider_index", "retrieval_index", "review_queue", "log", "mirror"],
+        "archive_page": ["manifest", "provider_index", "retrieval_index", "log", "mirror"],
     }
 
     def propagate(self, operation: str, doc_id: str, **kwargs) -> PropagationResult:
@@ -136,27 +151,20 @@ class PropagationEngine:
         ...
 ```
 
-### 3. AgentAdapter（Agent适配器接口）
+### 5. AgentClientConfig（Agent薄客户端配置）
 
 ```python
-class AgentAdapter(Protocol):
-    """每个Agent必须实现的适配接口"""
-
-    @property
-    def name(self) -> str: ...
-
-    def install(self, wiki_root: str) -> None:
-        """将适配文件安装到Agent的工作区"""
-        ...
-
-    def execute_query(self, query: str, query_type: str) -> str:
-        """Agent通过此方法查询知识库"""
-        ...
-
-    def execute_ingest(self, source_path: str) -> str:
-        """Agent通过此方法摄入新知识"""
-        ...
+class AgentClientConfig(BaseModel):
+    agent_id: str
+    actor_type: Literal["agent", "human", "service"]
+    preferred_transport: Literal["mcp", "cli", "rest"]
+    mcp_server_name: str | None = None
+    cli_path: str | None = None
+    rest_base_url: str | None = None
+    identity_config_path: str | None = None
 ```
+
+Agent adapter 只负责发现和调用 `aw-agent`，不拥有知识库核心逻辑。
 
 ## 数据流闭环（防孤岛）
 
@@ -164,7 +172,7 @@ class AgentAdapter(Protocol):
 
 ```
 写操作 → Step 1: 写页面(原子) → Step 2: 更新manifest(原子)
-       → Step 3: 更新vectors(可延迟) → Step 4: 更新retrieval_index(可延迟)
+       → Step 3: 更新provider index(可延迟) → Step 4: 更新retrieval_index(可延迟)
        → Step 5: 更新review_queue(条件) → Step 6: 写log(非阻塞)
        → Step 7: push mirror(可延迟)
 
@@ -177,7 +185,7 @@ Step 7失败 → 标记 mirror_pending，下次sync补推
 
 | Gate | 验收标准 | 可脚本验证 |
 |------|---------|-----------|
-| A | Schema完整 + 统一向量库 + manifest有doc_id + Skillify字段覆盖100% | ✅ |
+| A | Schema完整 + retrieval provider baseline + manifest有doc_id + Skillify字段覆盖100% | ✅ |
 | B | 每个高频topic有compiled page + 空挂率<30% + route test≥80% + dependency无断链 | ✅ |
 | C | 5类query跑通 + 平均步骤<3 + route test≥85% + dispute自动caveat | ✅ |
 | D | stale发现<7天 + 周维护覆盖>80% + 压缩比>1:10 | ✅ |

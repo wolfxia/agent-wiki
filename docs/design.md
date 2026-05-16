@@ -17,7 +17,7 @@ In cybernetic terms: knowledge base is the controlled object, agent behavior is 
 
 1. **Compile before retrieve** — Correct. But compiled products must be maintainable, traceable, reusable knowledge artifacts, not fancy summaries.
 2. **Skillify is a design principle, not a post-hoc feature** — Knowledge must carry routing semantics from entry into the system.
-3. **Hybrid retrieval is the calling skeleton, not an optimization** — Vectors for coarse screening, full-page reading for understanding, layered presentation for context cost control.
+3. **Hybrid retrieval is the calling skeleton, not an optimization** — A configured coarse retrieval provider finds candidate pages, full-page/section loading provides understanding, and layered presentation controls context cost. Phase 1 defaults to lexical retrieval; vector retrieval is an optional provider.
 4. **Schema must be an operation contract, not a directional manifesto** — It must explicitly tell LLM/Agent: which pages to update on new source, what contradictions to mark, when to create vs revise.
 
 ---
@@ -32,7 +32,7 @@ In cybernetic terms: knowledge base is the controlled object, agent behavior is 
 ├────────────────────────────────────────────────────────────┤
 │              Retrieval Runtime Layer                        │
 │ query_profiles + wiki-query                                │
-│ vector coarse → doc aggregate → full/section → layered     │
+│ coarse provider → doc aggregate → full/section → layered   │
 ├────────────────────────────────────────────────────────────┤
 │              Compile & Maintenance Layer                    │
 │ raw / atom / synthesis / principle                         │
@@ -44,7 +44,7 @@ In cybernetic terms: knowledge base is the controlled object, agent behavior is 
 ├────────────────────────────────────────────────────────────┤
 │              Storage Substrate Layer                        │
 │ knowledge workspace → lint/validate → external mirror      │
-│ unified vectors.db + unified MANIFEST + single write path  │
+│ unified MANIFEST + retrieval_index + pluggable local index │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -59,28 +59,28 @@ In cybernetic terms: knowledge base is the controlled object, agent behavior is 
 | # | Break Point | Symptom | Island Consequence |
 |---|-------------|---------|-------------------|
 | F1 | Write page → no manifest update | manifest pages=[] for 77% of entries | Page changed but index doesn't know |
-| F2 | Write page → no vector update | 53 metadata key shapes, 147/374 missing source | Page changed but search can't find |
+| F2 | Write page → no provider index update | 53 metadata key shapes, 147/374 missing source | Page changed but search can't find |
 | F3 | Write page → no retrieval_index update | retrieval_index doesn't exist | Coarse search has no data source |
 | F4 | query_outcomes → no consumer | Doesn't exist | Knowledge used but no feedback |
 | F5 | External edit → no backflow | sync is one-way push only | Human edits not reflected in agent |
 
 ### 2.2 Write Propagation Matrix
 
-| Operation | manifest | vectors | retrieval_index | review_queue | log.md | mirror |
-|-----------|----------|---------|-----------------|--------------|--------|--------|
-| create raw | ✅ insert | ✅ embed | ✅ add snippet | — | ✅ append | ✅ push |
-| create atom | ✅ insert | ✅ embed cards | ✅ add cards | — | ✅ append | ✅ push |
-| update compiled | ✅ update hash | ✅ re-embed | ✅ rebuild cards | if conflict ✅ | ✅ append | ✅ push |
-| mark disputed | ✅ update status | — | ✅ update dispute | ✅ insert | ✅ append | ✅ push |
-| promote principle | ✅ insert | ✅ embed cards | ✅ add cards | ✅ insert | ✅ append | ✅ push |
-| archive page | ✅ mark archived | ✅ mark stale | ✅ remove cards | — | ✅ append | ✅ archive |
+| Operation | manifest | provider index | retrieval_index | review_queue | log.md | mirror |
+|-----------|----------|----------------|-----------------|--------------|--------|--------|
+| create raw | ✅ insert | ✅ update lexical/optional vector | ✅ add page card | — | ✅ append | ✅ push |
+| create atom | ✅ insert | ✅ update lexical/optional vector | ✅ add section/claim cards | — | ✅ append | ✅ push |
+| update compiled | ✅ update hash | ✅ update lexical/optional vector | ✅ rebuild cards | if conflict ✅ | ✅ append | ✅ push |
+| mark disputed | ✅ update status | — | ✅ update dispute caveat | ✅ insert | ✅ append | ✅ push |
+| promote principle | ✅ insert | ✅ update lexical/optional vector | ✅ add cards | ✅ insert | ✅ append | ✅ push |
+| archive page | ✅ mark archived | ✅ mark stale/remove | ✅ remove cards | — | ✅ append | ✅ archive |
 
 ### 2.3 Propagation Failure Handling
 
 ```
 Step 1: Write page file → fail = abort, no cascade
 Step 2: Update manifest → fail = rollback Step 1
-Step 3: Update vectors → fail = mark "index_stale", don't rollback Step 1/2
+Step 3: Update configured provider index → fail = mark "index_stale", don't rollback Step 1/2
 Step 4: Update retrieval_index → fail = mark "index_stale"
 Step 5: Update review_queue (if needed) → fail = log warning
 Step 6: Write log.md → fail = stderr alert (log can't block main flow)
@@ -99,11 +99,12 @@ Step 7: Push mirror → fail = mark "mirror_pending"
 External edit event (detected by sync adapter)
   ↓
 Step 1: diff detect changed files
-Step 2: lint changed content (frontmatter compliance)
-Step 3: Pass → merge to workspace same path
-        Fail → enter review_queue, no auto-overwrite workspace
-Step 4: re-embed + update retrieval_index
-Step 5: write log.md (record human edit backflow)
+Step 2: parse through ContentAdapter and apply to local workspace
+Step 3: run gate-check on the workspace change before Git commit
+Step 4: Pass → update manifest/retrieval_index and commit to Git
+        Fail → keep workspace-visible pending change, write `.agent-wiki/pending_manifest.jsonl`, and create review_queue item
+Step 5: update provider index according to pending policy
+Step 6: write log.md after successful commit, or local pending log on failure
 ```
 
 ---
@@ -114,8 +115,8 @@ Each phase has: **Entry Gate** (prerequisites) + **Exit Gate** (acceptance) + **
 
 ### Phase A: Skillified Substrate (1-2 weeks)
 - Goal: Freeze operation contract, build unified substrate
-- Exit: schema complete + unified vectors + manifest has doc_id + skillify fields 100%
-- Rollback: Revert to A Freeze Snapshot, keep old vectors read-only
+- Exit: schema complete + retrieval provider baseline + manifest has doc_id + skillify fields 100%
+- Rollback: Revert to A Freeze Snapshot, keep old provider indexes read-only
 
 ### Phase B: Compiled Wiki (2-4 weeks)
 - Goal: Compile high-frequency topics into reusable, routable artifacts
@@ -136,33 +137,40 @@ Each phase has: **Entry Gate** (prerequisites) + **Exit Gate** (acceptance) + **
 
 ---
 
-## 4. Agent Adapter Architecture
+## 4. Protocol-Centered Agent Access
 
-### 4.1 Universal Interface
+### 4.1 Universal Access Model
 
-Every agent adapter must implement:
+Agent-specific adapters must stay thin. They do not implement query, ingest, lint, sync, propagation, or gate logic. Those capabilities live in `aw-agent` and are exposed through MCP, CLI, and REST.
+
+Agent adapter configuration contains connection and invocation details only:
 
 ```python
-class AgentAdapter(Protocol):
-    @property
-    def name(self) -> str: ...
-    
-    def install(self, wiki_root: str) -> None: ...
-    def execute_query(self, query: str, query_type: str) -> str: ...
-    def execute_ingest(self, source_path: str) -> str: ...
-    def execute_lint(self) -> LintReport: ...
-    def execute_sync(self, direction: str) -> SyncResult: ...
+class AgentClientConfig(BaseModel):
+    agent_id: str
+    actor_type: Literal["agent", "human", "service"]
+    preferred_transport: Literal["mcp", "cli", "rest"]
+    mcp_server_name: str | None = None
+    cli_path: str | None = None
+    rest_base_url: str | None = None
+    identity_config_path: str | None = None
 ```
 
-### 4.2 Storage Abstraction
+`aw-agent` resolves the actor identity from MCP client metadata, CLI config, or REST token. Request parameters cannot override identity.
+
+### 4.2 Storage and Retrieval Abstractions
 
 ```python
 class KnowledgeStore(Protocol):
     def read_page(self, doc_id: str) -> Page: ...
     def write_page(self, page: Page) -> WriteResult: ...
-    def search_vectors(self, query: str, top_k: int) -> list[SearchHit]: ...
     def get_manifest(self, doc_id: str) -> ManifestEntry: ...
     def update_manifest(self, entry: ManifestEntry) -> None: ...
+
+class RetrievalProvider(Protocol):
+    def search(self, query: str, top_k: int, filters: dict | None = None) -> list[SearchHit]: ...
+    def upsert_cards(self, cards: list[RetrievalCard]) -> None: ...
+    def delete_doc(self, wiki_id: str, doc_id: str) -> None: ...
 ```
 
 ### 4.3 Per-Agent Differences
@@ -205,20 +213,16 @@ class PropagationEngine:
         ...
 ```
 
-### 5.2 VectorStore
+### 5.2 Retrieval Providers
 
-SQLite-based, agent-agnostic:
+Phase 1 default retrieval provider is lexical search over `retrieval_index.jsonl`. A local vector provider can be enabled as an optional enhancement without changing query contracts.
 
 ```python
-class VectorStore:
-    def __init__(self, db_path: str, model: str = "BAAI/bge-large-zh-v1.5"):
-        ...
-    
-    def embed(self, texts: list[str]) -> list[list[float]]: ...
-    def search(self, query: str, top_k: int, filters: dict = None) -> list[SearchHit]: ...
-    def upsert(self, doc_id: str, unit_id: str, text: str, metadata: dict): ...
-    def delete(self, doc_id: str): ...
-    def health_check(self) -> VectorHealthReport: ...
+class LexicalRetrievalProvider:
+    def search(self, query: str, top_k: int, filters: dict | None = None) -> list[SearchHit]: ...
+
+class LocalVectorRetrievalProvider:
+    def search(self, query: str, top_k: int, filters: dict | None = None) -> list[SearchHit]: ...
 ```
 
 ### 5.3 HybridRetriever
@@ -227,7 +231,7 @@ class VectorStore:
 class HybridRetriever:
     def retrieve(self, query: str, query_type: str, budget: int = 3) -> RetrievalResult:
         # 1. Classify query intent
-        # 2. Vector coarse retrieval on retrieval_index
+        # 2. Coarse retrieval through configured provider on retrieval_index
         # 3. Aggregate by doc_id
         # 4. Load by load_policy (full page or section)
         # 5. Assemble L1/L2/L3 context

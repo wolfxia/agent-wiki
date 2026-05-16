@@ -166,7 +166,7 @@ Only four options:
 Must update the following artifacts:
 - `MANIFEST.jsonl`
 - `retrieval_index.jsonl`
-- `vectors.db` (or configured vector store)
+- configured retrieval provider indexes (Phase 1 default: lexical index; optional: local vector index)
 - `log.md`
 - `review_queue.jsonl` (if conflict/dispute)
 
@@ -245,11 +245,17 @@ Six fixed types:
 
 ### 8.2 Fixed Retrieval Pipeline
 1. classify `query_type`
-2. vector coarse retrieve on `retrieval_index`
+2. coarse retrieve through the configured retrieval provider over `retrieval_index`
 3. aggregate by `doc_id`
 4. load by `load_policy`
 5. assemble layered context
 6. answer + log outcome
+
+### 8.2.1 Retrieval Provider Baseline
+- Retrieval is provider-based, not vector-mandatory.
+- Phase 1 default provider is lexical search over `retrieval_index.jsonl`.
+- Vector retrieval is an optional enhancement provider and must not be required for minimum query capability.
+- Provider outputs must use the same normalized retrieval hit shape and must reference `wiki_id:doc_id`.
 
 ### 8.3 Layered Presentation
 - **L1 Answer layer**: Directly usable answer entries
@@ -273,22 +279,48 @@ When hitting disputed page:
 
 ### 9.1 Queue Item Minimum Fields
 - `item_id`
+- `wiki_id`
 - `doc_id`
+- `item_type`
 - `status`
+- `content_state`
+- `priority`
 - `reason`
 - `created_at`
 - `source_refs`
+- `assigned_to`
 - `resolved_by`
 - `resolved_at`
 
 ### 9.2 Status Flow
-- `stub` → `ambiguous` → `disputed` → `resolved` → `archived`
+- `open` → `assigned` → `in_progress` → `resolved` → `archived`
 
-### 9.3 Close Rules
+### 9.3 Content State
+`content_state` describes the knowledge claim state independently from queue workflow status:
+- `stub`
+- `ambiguous`
+- `disputed`
+- `resolved`
+- `stale`
+- `pending_gate_fix`
+
+Dispute handling is represented as `item_type=dispute` plus the appropriate `content_state`; it is not the global queue status machine.
+
+### 9.4 Item Types
+Common `item_type` values:
+- `conflict`
+- `missing_evidence`
+- `pending_gate_fix`
+- `signal_candidate`
+- `feedback_issue`
+- `principle_proposal`
+- `dispute`
+
+### 9.5 Close Rules
 - Only close when evidence is complete or conflict is adjudicated
 - Principle-related disputed close should include human confirmation
 
-### 9.4 Reopen Rules
+### 9.6 Reopen Rules
 - Auto-reopen when new source overturns resolved conclusion
 - Can reopen when stale page is highly hit by new queries
 

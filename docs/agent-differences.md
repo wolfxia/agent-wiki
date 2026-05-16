@@ -25,19 +25,22 @@
 
 ## Per-Agent Adaptation Strategy
 
+All agents call the same `aw-agent` core. Agent-specific code must be a thin client: MCP connection config, CLI profile, cron trigger, or message-channel wrapper. No agent adapter owns retrieval, ingest, lint, sync, propagation, or gate logic.
+
 ### Hermes (Most Capable — Full Feature)
 
 **Leverage**: Built-in cron, memory_search, rich toolset, Feishu integration
 
 **Adapter approach**: 
-- Full 3 skills (wiki-query, wiki-ingest, wiki-lint) as Hermes skills
-- PropagationEngine as Python module called by skills
-- cronjob for sync, lint, dream-cycle
+- Hermes skills call `aw-agent` MCP tools such as `wiki.query`, `wiki.capture_raw`, `wiki.compile_analyze`, and `wiki.sync`
+- PropagationEngine runs inside `aw-agent`, not inside Hermes skills
+- cronjob triggers `aw-agent` sync, lint, and weekly-review jobs
 - Obsidian sync as built-in cron
 - Feishu alerts for lint failures and gate status
 
 **Unique optimization**:
 - `memory_search` can supplement vector search for semantic recall
+- `memory_search` can be an optional signal, but `aw-agent` Phase 1 query must still work through lexical retrieval baseline
 - `cronjob` enables automated Phase D maintenance
 - `send_message` for human-in-the-loop on principle promotion
 
@@ -51,9 +54,9 @@
 
 **Adapter approach**:
 - CLAUDE.md appendix with wiki usage instructions
-- Bash wrapper scripts for ingest/query/lint
+- Bash wrapper scripts call CLI `aw` or MCP tools exposed by `aw-agent`
 - No built-in scheduling — rely on Hermes cron or external launchd
-- No vector search — rely on `ripgrep` + manifest for retrieval
+- No built-in vector search — rely on `aw-agent` lexical baseline or optional retrieval provider
 
 **Unique optimization**:
 - CC excels at code-related knowledge (architecture decisions, API contracts)
@@ -63,7 +66,7 @@
 
 **Limitation**: 
 - No persistent memory across sessions
-- No vector search — must fall back to keyword search
+- No built-in vector search — `aw-agent` provides lexical baseline and optional vector plugin
 - No scheduling — must be triggered externally
 
 **CC Adapter Structure**:
@@ -71,8 +74,8 @@
 adapters/claude-code/
 ├── CLAUDE.md.append          ← Append to project CLAUDE.md
 ├── hooks/
-│   ├── post-write.sh         ← Trigger propagation after file write
-│   └── pre-query.sh          ← Load wiki context before answering
+│   ├── post-write.sh         ← Trigger aw sync/gate after allowed wiki file write
+│   └── pre-query.sh          ← Call aw query before answering
 ├── commands/
 │   ├── wiki-query.sh         ← /wiki-query slash command wrapper
 │   ├── wiki-ingest.sh        ← /wiki-ingest slash command wrapper
@@ -87,7 +90,7 @@ adapters/claude-code/
 **Leverage**: Skill system, built-in cron, Feishu integration, existing knowledge-base structure
 
 **Adapter approach**:
-- Skills in OpenClaw format (matches existing skill structure)
+- Skills in OpenClaw format call `aw-agent` MCP tools
 - Cron for scheduled maintenance
 - Existing SCHEMA.md in ~/.openclaw/workspace/knowledge-base/ can be upgraded
 - Feishu alerts same as Hermes
@@ -122,10 +125,10 @@ adapters/openclaw/
 **Leverage**: `opencode run` for one-shot tasks, `-f` for file context, provider-agnostic
 
 **Adapter approach**:
-- Shell script wrappers around `opencode run`
+- Shell script wrappers call CLI `aw` with an OpenCode identity profile
 - No persistent state — each invocation is independent
 - No scheduling — external trigger only
-- No vector search — fall back to keyword + manifest
+- No built-in vector search — `aw-agent` provides lexical baseline and optional provider
 
 **Unique optimization**:
 - Good for code-heavy knowledge tasks (refactoring patterns, architecture decisions)
@@ -162,7 +165,7 @@ adapters/opencode/
 | Retrieval pipeline logic | ✅ | — |
 | Propagation engine | ✅ | — |
 | Lint rules | ✅ | — |
-| Vector store | ✅ | — |
+| Retrieval providers | ✅ | — |
 | **Invocation method** | — | ✅ per-agent |
 | **Scheduling config** | — | ✅ per-agent |
 | **Human interface** | — | ✅ per-agent |
@@ -175,11 +178,12 @@ adapters/opencode/
 
 When multiple agents write to the same wiki:
 
-1. **Lock by doc_id** — Only one agent can write to a doc_id at a time
-2. **manifest as coordination point** — manifest records `last_writer` and `last_write_at`
-3. **Conflict detection** — If two agents write within 1 minute, second write enters review_queue
-4. **Human adjudication** — High-impact conflicts (principle, disputed) always require human
-5. **Agent identity** — Each write in log.md includes `agent_id` for traceability
+1. **Optimistic concurrency in Phase 1** — Write flow runs `git pull --rebase` before commit.
+2. **manifest as coordination point** — manifest records `last_writer` and `last_write_at`.
+3. **Conflict detection** — Rebase/file conflicts enter `review_queue` with conflict snapshots in `.agent-wiki/`.
+4. **Human adjudication** — High-impact C-level conflicts require MCP/message-channel confirmation.
+5. **Agent identity** — Each committed operation records resolved `actor_type` and `agent_id` for traceability.
+6. **Lock interface reserved** — Explicit doc/topic locks are Phase 2 interfaces; Phase 1 lock implementation is no-op.
 
 ---
 
