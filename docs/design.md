@@ -125,7 +125,7 @@ Each phase has: **Entry Gate** (prerequisites) + **Exit Gate** (acceptance) + **
 
 ### Phase C: Hybrid Retrieval Runtime (4-8 weeks)
 - Goal: Fixed query pipeline, agent no longer ad-hoc decides what to read
-- Exit: 5 query types pass + avg steps <3 + route test ≥85% + dispute caveat
+- Exit: 6 query types pass + avg steps <3 + route test ≥85% + dispute caveat
 - Rollback: Revert to B Stable, use INDEX + compiled page manual priority
 
 ### Phase D: Evolution (8-16 weeks)
@@ -197,12 +197,12 @@ The anti-island core. Every write goes through this engine:
 ```python
 class PropagationEngine:
     WRITE_PROPAGATION_MATRIX = {
-        "create_raw": ["manifest", "vectors", "retrieval_index", "log", "mirror"],
-        "create_atom": ["manifest", "vectors", "retrieval_index", "log", "mirror"],
-        "update_compiled": ["manifest", "vectors", "retrieval_index", "review_queue?", "log", "mirror"],
+        "create_raw": ["manifest", "provider_index", "retrieval_index", "log", "mirror"],
+        "create_atom": ["manifest", "provider_index", "retrieval_index", "log", "mirror"],
+        "update_compiled": ["manifest", "provider_index", "retrieval_index", "review_queue?", "log", "mirror"],
         "mark_disputed": ["manifest", "retrieval_index", "review_queue", "log", "mirror"],
-        "promote_principle": ["manifest", "vectors", "retrieval_index", "review_queue", "log", "mirror"],
-        "archive_page": ["manifest", "vectors", "retrieval_index", "log", "mirror"],
+        "promote_principle": ["manifest", "provider_index", "retrieval_index", "review_queue", "log", "mirror"],
+        "archive_page": ["manifest", "provider_index", "retrieval_index", "log", "mirror"],
     }
     
     def propagate(self, operation: str, doc_id: str, **kwargs) -> PropagationResult:

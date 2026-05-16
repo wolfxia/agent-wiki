@@ -246,7 +246,7 @@ Six fixed types:
 ### 8.2 Fixed Retrieval Pipeline
 1. classify `query_type`
 2. coarse retrieve through the configured retrieval provider over `retrieval_index`
-3. aggregate by `doc_id`
+3. aggregate by `wiki_id:doc_id`
 4. load by `load_policy`
 5. assemble layered context
 6. answer + log outcome
@@ -410,9 +410,12 @@ When lint fails:
 - Lint and route test execution
 
 ### 13.3 Human Edit Backflow Rules
-- Human edits in external store are treated as upstream changes
-- Must pass lint before merging back to workspace
-- If conflicts with compiled truth zone → enter review queue, no direct overwrite
+- Human edits in external store are treated as upstream changes.
+- Reverse sync applies parsed human edits to the local workspace first, so the change stays visible in the user's external view and workspace.
+- Gate-check blocks Git commit, not workspace visibility.
+- If gate-check passes, update committed artifacts and commit to Git.
+- If gate-check fails, keep the workspace-visible change, record it in `.agent-wiki/pending_manifest.jsonl`, and create a `review_queue` item with `item_type=pending_gate_fix` or `item_type=conflict`.
+- Truth-zone pending pages are excluded from default query unless `include_pending=true`; raw pending pages can be queried through the local pending index.
 
 ---
 

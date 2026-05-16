@@ -187,7 +187,7 @@ Step 7失败 → 标记 mirror_pending，下次sync补推
 |------|---------|-----------|
 | A | Schema完整 + retrieval provider baseline + manifest有doc_id + Skillify字段覆盖100% | ✅ |
 | B | 每个高频topic有compiled page + 空挂率<30% + route test≥80% + dependency无断链 | ✅ |
-| C | 5类query跑通 + 平均步骤<3 + route test≥85% + dispute自动caveat | ✅ |
+| C | 6类query跑通 + 平均步骤<3 + route test≥85% + dispute自动caveat | ✅ |
 | D | stale发现<7天 + 周维护覆盖>80% + 压缩比>1:10 | ✅ |
 
 **不能跳Gate。未通过回退到上一稳定阶段。每Gate留快照。**
