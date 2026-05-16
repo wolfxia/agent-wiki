@@ -1,0 +1,98 @@
+from pathlib import Path
+
+from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
+from agent_wiki.application.maintenance import MaintenanceService
+from agent_wiki.application.query import QueryInput, QueryService
+from agent_wiki.bootstrap.registry_loader import RegistryLoader
+from agent_wiki.domain.contracts import ResolvedActor
+
+
+def test_maintenance_runs_all_detectors_and_returns_summary(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    query_service = QueryService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    # 3 raw pages in same cluster → triggers compile_suggestion
+    for i in range(3):
+        capture_service.execute(
+            wiki=wiki, actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-maint-{i}", topic="logging",
+                problem_cluster="cluster-maint",
+                content=f"# Raw maint {i}", source_refs=[],
+            ),
+        )
+
+    # 3 zero-hit queries → triggers quality_signal
+    for _ in range(3):
+        query_service.execute(
+            wiki=wiki, actor=actor,
+            data=QueryInput(query="nonexistent-knowledge-gap"),
+        )
+
+    # Two pages co-occurring in queries → triggers signal_candidate
+    capture_service.execute(
+        wiki=wiki, actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-co-1", topic="caching", problem_cluster="cluster-co",
+            content="# Raw co 1", source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki, actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-co-1", page_type="atom", topic="caching",
+            problem_cluster="cluster-co",
+            content="# Atom co one\n\nCaching invalidation strategies.",
+            source_refs=["personal-1:raw-co-1"],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki, actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-co-2", page_type="atom", topic="caching",
+            problem_cluster="cluster-co",
+            content="# Atom co two\n\nCaching invalidation patterns.",
+            source_refs=["personal-1:raw-co-1"],
+        ),
+    )
+    for _ in range(2):
+        query_service.execute(
+            wiki=wiki, actor=actor,
+            data=QueryInput(query="caching invalidation"),
+        )
+
+    summary = MaintenanceService().run(wiki)
+
+    assert summary["compile_suggestions"] >= 1
+    assert summary["quality_signals"] >= 1
+    assert summary["co_occurrence_candidates"] >= 1
+    assert summary["cross_reference_candidates"] >= 1
+
+    # Items actually landed in the queue
+    queue_path = temp_wiki_root / "review_queue.jsonl"
+    entries = [json.loads(line) for line in queue_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    item_types = {e.get("item_type") for e in entries}
+    assert "compile_suggestion" in item_types
+    assert "quality_signal" in item_types
+    assert "signal_candidate" in item_types
+
+
+def test_maintenance_idempotent_with_no_signals(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+
+    summary = MaintenanceService().run(wiki)
+
+    assert summary["compile_suggestions"] == 0
+    assert summary["quality_signals"] == 0
+    assert summary["co_occurrence_candidates"] == 0
+    assert summary["cross_reference_candidates"] == 0
