@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 import typer
 
@@ -9,23 +10,40 @@ from agent_wiki.application.maintenance import MaintenanceService
 from agent_wiki.application.quality_report import QualityReportService
 from agent_wiki.application.query import QueryService
 from agent_wiki.bootstrap.container import Container
-from agent_wiki.bootstrap.registry_loader import RegistryLoader
+from agent_wiki.bootstrap.registry_loader import RegistryLoader, WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
-from agent_wiki.domain.models import CaptureRawInput, CompileUpdateInput, QueryInput
+from agent_wiki.domain.models import CaptureRawInput, CompileUpdateInput, IdentityContext, QueryInput
+from agent_wiki.infrastructure.identity.resolver import IdentityResolver
+from agent_wiki.settings import DEFAULT_REGISTRY_PATH
 
 app = typer.Typer(help="Agent Wiki CLI")
 
 
-def _load_wiki(workspace: str | None):
-    registry = RegistryLoader().load(Path("tests/fixtures/registry.yaml"))
-    wiki = registry.wikis[0]
+def _resolve_registry_path(registry: str | None) -> Path:
+    return Path(registry or os.environ.get("AGENT_WIKI_REGISTRY") or DEFAULT_REGISTRY_PATH)
+
+
+def _load_wiki(registry: str | None, workspace: str | None, wiki_id: str | None) -> WikiConfig:
+    registry_config = RegistryLoader().load(_resolve_registry_path(registry))
+    if wiki_id is None:
+        wiki = registry_config.wikis[0]
+    else:
+        wiki = next((candidate for candidate in registry_config.wikis if candidate.wiki_id == wiki_id), None)
+        if wiki is None:
+            raise typer.BadParameter(f"unknown wiki_id: {wiki_id}")
     if workspace:
         wiki = wiki.model_copy(update={"workspace_path": workspace})
     return wiki
 
 
 def _actor() -> ResolvedActor:
-    return ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    return IdentityResolver().resolve(
+        IdentityContext(
+            transport="cli",
+            actor_type=os.environ.get("AGENT_WIKI_ACTOR_TYPE"),
+            actor_id=os.environ.get("AGENT_WIKI_ACTOR_ID"),
+        )
+    )
 
 
 @app.callback()
@@ -49,8 +67,10 @@ def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
 def query(
     text: str = typer.Argument(..., help="Query text"),
     workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
 ) -> None:
-    wiki = _load_wiki(workspace)
+    wiki = _load_wiki(registry, workspace, wiki_id)
     result = QueryService().execute(wiki=wiki, actor=_actor(), data=QueryInput(query=text))
     typer.echo(f"hit_count={result.hit_count}")
     typer.echo(f"l1_answer={result.l1_answer}")
@@ -65,8 +85,10 @@ def capture_raw(
     problem_cluster: str = typer.Option(...),
     content: str = typer.Option(...),
     workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
 ) -> None:
-    wiki = _load_wiki(workspace)
+    wiki = _load_wiki(registry, workspace, wiki_id)
     result = CaptureRawService().execute(
         wiki=wiki, actor=_actor(),
         data=CaptureRawInput(
@@ -86,8 +108,10 @@ def compile_update(
     content: str = typer.Option(...),
     source_refs: str = typer.Option("", help="Comma-separated source_refs"),
     workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
 ) -> None:
-    wiki = _load_wiki(workspace)
+    wiki = _load_wiki(registry, workspace, wiki_id)
     refs = [r.strip() for r in source_refs.split(",") if r.strip()]
     result = CompileUpdateService().apply(
         wiki=wiki, actor=_actor(),
@@ -100,8 +124,12 @@ def compile_update(
 
 
 @app.command("lint")
-def lint(workspace: str | None = typer.Option(None, "--workspace")) -> None:
-    wiki = _load_wiki(workspace)
+def lint(
+    workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
+) -> None:
+    wiki = _load_wiki(registry, workspace, wiki_id)
     result = LintService().run(wiki)
     if result.ok:
         typer.echo("ok: no issues")
@@ -112,9 +140,13 @@ def lint(workspace: str | None = typer.Option(None, "--workspace")) -> None:
 
 
 @app.command("maintain")
-def maintain(workspace: str | None = typer.Option(None, "--workspace")) -> None:
+def maintain(
+    workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
+) -> None:
     """Run the slow self-evolution loop and print the quality report."""
-    wiki = _load_wiki(workspace)
+    wiki = _load_wiki(registry, workspace, wiki_id)
 
     summary = MaintenanceService().run(wiki)
     typer.echo("maintenance summary:")

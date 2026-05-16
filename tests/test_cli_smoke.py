@@ -1,4 +1,5 @@
 from typer.testing import CliRunner
+import yaml
 
 from agent_wiki.transports.cli.app import app
 
@@ -50,7 +51,7 @@ def test_cli_query_command(temp_wiki_root) -> None:
     )
 
     runner = CliRunner()
-    result = runner.invoke(app, ["query", "CLI query results", "--workspace", str(temp_wiki_root)])
+    result = runner.invoke(app, ["query", "CLI query results", "--workspace", str(temp_wiki_root), "--registry", "tests/fixtures/registry.yaml"], env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"})
 
     assert result.exit_code == 0
     assert "atom-cli-1" in result.stdout
@@ -59,7 +60,7 @@ def test_cli_query_command(temp_wiki_root) -> None:
 def test_cli_lint_command(temp_wiki_root) -> None:
     runner = CliRunner()
 
-    result = runner.invoke(app, ["lint", "--workspace", str(temp_wiki_root)])
+    result = runner.invoke(app, ["lint", "--workspace", str(temp_wiki_root), "--registry", "tests/fixtures/registry.yaml"], env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"})
 
     assert result.exit_code == 0
     assert "ok" in result.stdout.lower() or "no issues" in result.stdout.lower()
@@ -88,7 +89,7 @@ def test_cli_maintain_runs_orchestrator_and_prints_quality_report(temp_wiki_root
         )
 
     runner = CliRunner()
-    result = runner.invoke(app, ["maintain", "--workspace", str(temp_wiki_root)])
+    result = runner.invoke(app, ["maintain", "--workspace", str(temp_wiki_root), "--registry", "tests/fixtures/registry.yaml"], env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"})
 
     assert result.exit_code == 0
     # Maintenance summary output
@@ -98,3 +99,73 @@ def test_cli_maintain_runs_orchestrator_and_prints_quality_report(temp_wiki_root
     assert "hit_rate" in result.stdout
     assert "compile_rate" in result.stdout
     assert "orphan_count" in result.stdout
+
+
+def test_cli_query_uses_registry_option_and_identity_env(temp_wiki_root) -> None:
+    from pathlib import Path
+    from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+    from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
+    from agent_wiki.bootstrap.registry_loader import RegistryLoader
+    from agent_wiki.domain.contracts import ResolvedActor
+
+    registry_path = temp_wiki_root.parent / "registry-cli.yaml"
+    registry_data = yaml.safe_load(Path("tests/fixtures/registry.yaml").read_text())
+    registry_data["wikis"][0]["permissions"].append(
+        {
+            "actor_type": "agent",
+            "actor_id": "codex",
+            "allowed_operations": ["query", "capture_raw", "compile_update", "lint"],
+            "max_gate": "B",
+            "allowed_page_types": ["raw", "atom", "synthesis"],
+        }
+    )
+    registry_path.write_text(yaml.safe_dump(registry_data, sort_keys=False), encoding="utf-8")
+
+    wiki = RegistryLoader().load(registry_path).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="codex", transport="cli")
+
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-cli-env-1",
+            topic="testing",
+            problem_cluster="cluster-cli-env",
+            content="# Raw cli env",
+            source_refs=[],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-cli-env-1",
+            page_type="atom",
+            topic="testing",
+            problem_cluster="cluster-cli-env",
+            content="# Atom cli env\n\nCLI env identity results.",
+            source_refs=["personal-1:raw-cli-env-1"],
+        ),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "query",
+            "CLI env identity results",
+            "--workspace",
+            str(temp_wiki_root),
+            "--registry",
+            str(registry_path),
+        ],
+        env={
+            "AGENT_WIKI_ACTOR_TYPE": "agent",
+            "AGENT_WIKI_ACTOR_ID": "codex",
+        },
+    )
+
+    assert result.exit_code == 0
+    assert "atom-cli-env-1" in result.stdout

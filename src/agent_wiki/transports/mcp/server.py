@@ -1,7 +1,9 @@
+from pathlib import Path
+
 from agent_wiki.application.capture_raw import CaptureRawService
 from agent_wiki.application.compile_update import CompileUpdateService
 from agent_wiki.application.query import QueryService
-from agent_wiki.domain.contracts import ResolvedActor
+from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.models import (
     CaptureRawInput,
     CompileUpdateInput,
@@ -9,10 +11,12 @@ from agent_wiki.domain.models import (
     QueryInput,
 )
 from agent_wiki.infrastructure.identity.resolver import IdentityResolver
+from agent_wiki.settings import DEFAULT_REGISTRY_PATH
 
 
 class MCPServer:
-    def __init__(self) -> None:
+    def __init__(self, registry_path: str | None = None) -> None:
+        self._registry_path = Path(registry_path) if registry_path else DEFAULT_REGISTRY_PATH
         self._tools = {
             "wiki.query": self._tool_query,
             "wiki.capture_raw": self._tool_capture_raw,
@@ -26,14 +30,22 @@ class MCPServer:
             {"name": "wiki.compile_update", "description": "Compile a truth-zone page"},
         ]
 
-    def invoke(self, tool_name: str, params: dict) -> dict:
+    def invoke(
+        self,
+        tool_name: str,
+        params: dict,
+        request_metadata: dict | None = None,
+        session_metadata: dict | None = None,
+        wiki_workspace_overrides: dict[str, str] | None = None,
+    ) -> dict:
         handler = self._tools.get(tool_name)
         if handler is None:
             raise ValueError(f"unknown tool: {tool_name}")
-        return handler(params)
+        actor = self.resolve_identity(request_metadata or {}, session_metadata or {})
+        wiki = self._resolve_wiki(params["wiki_id"], wiki_workspace_overrides or {})
+        return handler(params, wiki, actor)
 
-    def resolve_identity(self, request_metadata: dict, session_metadata: dict) -> ResolvedActor:
-        # Session metadata wins; request fields are ignored
+    def resolve_identity(self, request_metadata: dict, session_metadata: dict):
         return IdentityResolver().resolve(
             IdentityContext(
                 transport="mcp",
@@ -41,10 +53,20 @@ class MCPServer:
             )
         )
 
-    def _tool_query(self, params: dict) -> dict:
+    def _resolve_wiki(self, wiki_id: str, workspace_overrides: dict[str, str]):
+        registry = RegistryLoader().load(self._registry_path)
+        wiki = next((candidate for candidate in registry.wikis if candidate.wiki_id == wiki_id), None)
+        if wiki is None:
+            raise ValueError(f"unknown wiki_id: {wiki_id}")
+        override = workspace_overrides.get(wiki_id)
+        if override:
+            wiki = wiki.model_copy(update={"workspace_path": override})
+        return wiki
+
+    def _tool_query(self, params: dict, wiki, actor) -> dict:
         result = QueryService().execute(
-            wiki=params["wiki"],
-            actor=params["actor"],
+            wiki=wiki,
+            actor=actor,
             data=QueryInput(
                 query=params["query"],
                 include_pending=params.get("include_pending", False),
@@ -61,10 +83,10 @@ class MCPServer:
             "miss_signal": result.miss_signal,
         }
 
-    def _tool_capture_raw(self, params: dict) -> dict:
+    def _tool_capture_raw(self, params: dict, wiki, actor) -> dict:
         result = CaptureRawService().execute(
-            wiki=params["wiki"],
-            actor=params["actor"],
+            wiki=wiki,
+            actor=actor,
             data=CaptureRawInput(
                 doc_id=params["doc_id"],
                 topic=params["topic"],
@@ -75,17 +97,20 @@ class MCPServer:
         )
         return {"status": result.status, "doc_id": result.doc_id, "page_path": result.page_path}
 
-    def _tool_compile_update(self, params: dict) -> dict:
-        result = CompileUpdateService().apply(
-            wiki=params["wiki"],
-            actor=params["actor"],
-            data=CompileUpdateInput(
-                doc_id=params["doc_id"],
-                page_type=params["page_type"],
-                topic=params["topic"],
-                problem_cluster=params["problem_cluster"],
-                content=params["content"],
-                source_refs=params.get("source_refs", []),
-            ),
-        )
+    def _tool_compile_update(self, params: dict, wiki, actor) -> dict:
+        try:
+            result = CompileUpdateService().apply(
+                wiki=wiki,
+                actor=actor,
+                data=CompileUpdateInput(
+                    doc_id=params["doc_id"],
+                    page_type=params["page_type"],
+                    topic=params["topic"],
+                    problem_cluster=params["problem_cluster"],
+                    content=params["content"],
+                    source_refs=params.get("source_refs", []),
+                ),
+            )
+        except PermissionError as exc:
+            return {"status": "denied", "reason": str(exc)}
         return {"status": result.status, "doc_id": result.doc_id, "page_path": result.page_path}
