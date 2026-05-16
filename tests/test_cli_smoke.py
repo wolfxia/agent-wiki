@@ -21,6 +21,38 @@ def test_cli_serve_help_renders() -> None:
     assert result.exit_code == 0
 
 
+def test_cli_serve_starts_uvicorn(monkeypatch, temp_wiki_root) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(app_obj, host: str, port: int) -> None:
+        captured["app"] = app_obj
+        captured["host"] = host
+        captured["port"] = port
+
+    monkeypatch.setattr("uvicorn.run", fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "serve",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8123",
+            "--workspace",
+            str(temp_wiki_root),
+            "--registry",
+            "tests/fixtures/registry.yaml",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["host"] == "127.0.0.1"
+    assert captured["port"] == 8123
+    assert callable(getattr(captured["app"], "openapi", None))
+
+
 def test_cli_query_command(temp_wiki_root) -> None:
     from pathlib import Path
     from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService

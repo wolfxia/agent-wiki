@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 
 import typer
+import uvicorn
 
 from agent_wiki.application.capture_raw import CaptureRawService
 from agent_wiki.application.compile_update import CompileUpdateService
@@ -58,9 +59,21 @@ def info() -> None:
 
 
 @app.command("serve")
-def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
+def serve(
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+) -> None:
     """Start the long-running agent-wiki service."""
-    typer.echo(f"agent-wiki serve scaffolded on {host}:{port}")
+    from agent_wiki.transports.rest.app import create_app
+
+    rest_app = create_app(
+        wiki_workspace=workspace,
+        registry_path=registry,
+        token_identities={},
+    )
+    uvicorn.run(rest_app, host=host, port=port)
 
 
 @app.command("query")
