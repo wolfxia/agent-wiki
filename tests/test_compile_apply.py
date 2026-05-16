@@ -72,3 +72,50 @@ def test_compile_apply_rejects_missing_raw_source_ref(temp_wiki_root: Path) -> N
         assert "source_refs must point to existing raw pages" in str(error)
     else:
         raise AssertionError("expected source ref validation failure")
+
+
+def test_compile_apply_denied_when_actor_gate_insufficient(temp_wiki_root: Path) -> None:
+    from agent_wiki.bootstrap.registry_loader import PermissionConfig
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={
+            "workspace_path": str(temp_wiki_root),
+            "permissions": [
+                PermissionConfig(
+                    actor_type="agent",
+                    actor_id="low-gate-agent",
+                    allowed_operations=["compile_update"],
+                    max_gate="A",
+                    allowed_page_types=["atom", "synthesis"],
+                )
+            ],
+        }
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    actor = ResolvedActor(actor_type="agent", actor_id="low-gate-agent", transport="cli")
+
+    capture_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-gate-1", topic="testing", problem_cluster="cluster-gate",
+            content="# Raw gate", source_refs=[],
+        ),
+    )
+
+    try:
+        compile_service.apply(
+            wiki=wiki,
+            actor=actor,
+            data=CompileUpdateInput(
+                doc_id="atom-gate-1", page_type="atom", topic="testing",
+                problem_cluster="cluster-gate",
+                content="# Atom gate",
+                source_refs=["personal-1:raw-gate-1"],
+            ),
+        )
+    except PermissionError as error:
+        assert "gate" in str(error).lower()
+    else:
+        raise AssertionError("expected gate enforcement failure")

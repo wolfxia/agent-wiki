@@ -4,6 +4,7 @@ from agent_wiki.application.propagation import PropagationService
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import CompileAnalysis, CompileResult, CompileUpdateInput
+from agent_wiki.infrastructure.identity.permissions import PermissionService
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 
 
@@ -24,6 +25,11 @@ class CompileUpdateService:
         manifest = ManifestRepository(Path(wiki.workspace_path))
         if data.page_type not in wiki.allowed_page_types:
             raise ValueError(f"page type {data.page_type} is not allowed")
+
+        permission_service = PermissionService()
+        decision = permission_service.check(actor, "compile_update", wiki, data.page_type)
+        if not decision.allowed:
+            raise PermissionError(decision.reason)
 
         if not data.allow_shared_write_without_sources and not self._source_refs_are_valid(wiki, manifest, data.source_refs):
             raise ValueError("source_refs must point to existing raw pages")
