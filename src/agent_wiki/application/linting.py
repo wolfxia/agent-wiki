@@ -4,6 +4,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
+from agent_wiki.infrastructure.runtime.pending_state import PendingStateRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 
 
@@ -35,5 +36,9 @@ class LintService:
                 card = json.loads(line)
                 if manifest.find(card["doc_id"]) is None:
                     issues.append(f"retrieval index entry without manifest entry: {card['doc_id']}")
+
+        pending_state = PendingStateRepository(wiki_root)
+        for marker in pending_state.read_stale_markers():
+            issues.append(f"stale marker for {marker.get('doc_id', 'unknown')}: {marker.get('reason', '')}")
 
         return LintResult(ok=not issues, issues=issues)

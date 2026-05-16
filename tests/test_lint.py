@@ -55,3 +55,21 @@ def test_lint_passes_for_basic_committed_capture(temp_wiki_root: Path) -> None:
 
     assert result.ok is True
     assert result.issues == []
+
+
+def test_lint_detects_stale_markers(temp_wiki_root: Path) -> None:
+    from agent_wiki.infrastructure.runtime.pending_state import PendingStateRepository
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    repo = PendingStateRepository(temp_wiki_root)
+    repo.append_stale_marker({
+        "doc_id": "atom-stale-lint",
+        "reason": "downstream propagation failed",
+    })
+
+    result = LintService().run(wiki)
+
+    assert result.ok is False
+    assert any("stale" in issue.lower() for issue in result.issues)
