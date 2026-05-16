@@ -101,3 +101,13 @@ def test_plain_markdown_adapter_reads_file(temp_wiki_root: Path) -> None:
     assert document["content"] == "# Imported\n\nExternal content."
     assert document["adapter_metadata"]["path"] == str(source)
     assert document["adapter_metadata"]["stem"] == "external-read"
+
+
+def test_plain_markdown_adapter_writes_file(temp_wiki_root: Path) -> None:
+    target = temp_wiki_root / "output.md"
+    document = {"content": "# Written\n\nAdapter output."}
+
+    PlainMarkdownAdapter().write(str(target), document)
+
+    assert target.exists()
+    assert target.read_text(encoding="utf-8") == "# Written\n\nAdapter output."
