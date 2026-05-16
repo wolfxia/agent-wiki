@@ -21,25 +21,19 @@ def test_cli_serve_help_renders() -> None:
     assert result.exit_code == 0
 
 
-def test_cli_serve_starts_uvicorn(monkeypatch, temp_wiki_root) -> None:
+def test_cli_serve_runs_stdio_mcp_server(monkeypatch, temp_wiki_root) -> None:
     captured: dict[str, object] = {}
 
-    def fake_run(app_obj, host: str, port: int) -> None:
-        captured["app"] = app_obj
-        captured["host"] = host
-        captured["port"] = port
+    def fake_run_stdio_server(registry_path: str | None = None) -> None:
+        captured["registry_path"] = registry_path
 
-    monkeypatch.setattr("uvicorn.run", fake_run)
+    monkeypatch.setattr("agent_wiki.transports.cli.app.run_stdio_server", fake_run_stdio_server)
 
     runner = CliRunner()
     result = runner.invoke(
         app,
         [
             "serve",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            "8123",
             "--workspace",
             str(temp_wiki_root),
             "--registry",
@@ -48,9 +42,7 @@ def test_cli_serve_starts_uvicorn(monkeypatch, temp_wiki_root) -> None:
     )
 
     assert result.exit_code == 0
-    assert captured["host"] == "127.0.0.1"
-    assert captured["port"] == 8123
-    assert callable(getattr(captured["app"], "openapi", None))
+    assert captured["registry_path"] == "tests/fixtures/registry.yaml"
 
 
 def test_cli_query_command(temp_wiki_root) -> None:

@@ -1,33 +1,179 @@
-from pathlib import Path
+from pydantic import BaseModel
+from mcp.server.fastmcp import Context, FastMCP
 
-from agent_wiki.application.capture_raw import CaptureRawService
-from agent_wiki.application.compile_update import CompileUpdateService
-from agent_wiki.application.query import QueryService
-from agent_wiki.bootstrap.registry_loader import RegistryLoader
-from agent_wiki.domain.models import (
-    CaptureRawInput,
-    CompileUpdateInput,
-    IdentityContext,
-    QueryInput,
-)
-from agent_wiki.infrastructure.identity.resolver import IdentityResolver
-from agent_wiki.settings import DEFAULT_REGISTRY_PATH
+from agent_wiki.transports.mcp.dispatcher import MCPDispatcher
+
+
+class QueryToolResult(BaseModel):
+    query_type: str
+    l1_answer: str
+    l2_context: list[dict]
+    l3_proof: list[dict]
+    hits: list[dict]
+    hit_count: int
+    miss_signal: bool
+
+
+class MutationToolResult(BaseModel):
+    status: str
+    doc_id: str
+    page_path: str | None = None
+    reason: str | None = None
+
+
+class LintToolResult(BaseModel):
+    ok: bool
+    issues: list[str]
+    issue_count: int
+
+
+class SyncToolResult(BaseModel):
+    mode: str
+    changed_files: list[str]
+
+
+def _metadata_from_context(ctx: Context | None) -> dict[str, str]:
+    if ctx is None:
+        return {}
+
+    metadata: dict[str, str] = {}
+    client_id = getattr(ctx, "client_id", None)
+    if client_id:
+        metadata["client_id"] = client_id
+
+    request_context = getattr(ctx, "request_context", None)
+    request_meta = getattr(request_context, "meta", None) if request_context is not None else None
+    if request_meta is not None:
+        actor_type = getattr(request_meta, "actor_type", None)
+        actor_id = getattr(request_meta, "actor_id", None)
+        if actor_type:
+            metadata["actor_type"] = actor_type
+        if actor_id:
+            metadata["actor_id"] = actor_id
+
+    return metadata
+
+
+def build_fastmcp_server(registry_path: str | None = None) -> FastMCP:
+    dispatcher = MCPDispatcher(registry_path=registry_path)
+    server = FastMCP(name="agent-wiki")
+
+    @server.tool(name="wiki.query", structured_output=True)
+    def query_tool(
+        wiki_id: str,
+        query: str,
+        include_pending: bool = False,
+        max_sensitivity: str | None = None,
+        ctx: Context | None = None,
+    ) -> QueryToolResult:
+        return QueryToolResult.model_validate(
+            dispatcher.dispatch(
+                tool_name="wiki.query",
+                params={
+                    "wiki_id": wiki_id,
+                    "query": query,
+                    "include_pending": include_pending,
+                    "max_sensitivity": max_sensitivity,
+                },
+                session_metadata=_metadata_from_context(ctx),
+            )
+        )
+
+    @server.tool(name="wiki.capture_raw", structured_output=True)
+    def capture_raw_tool(
+        wiki_id: str,
+        doc_id: str,
+        topic: str,
+        problem_cluster: str,
+        content: str,
+        source_refs: list[str] | None = None,
+        ctx: Context | None = None,
+    ) -> MutationToolResult:
+        return MutationToolResult.model_validate(
+            dispatcher.dispatch(
+                tool_name="wiki.capture_raw",
+                params={
+                    "wiki_id": wiki_id,
+                    "doc_id": doc_id,
+                    "topic": topic,
+                    "problem_cluster": problem_cluster,
+                    "content": content,
+                    "source_refs": source_refs or [],
+                },
+                session_metadata=_metadata_from_context(ctx),
+            )
+        )
+
+    @server.tool(name="wiki.compile_update", structured_output=True)
+    def compile_update_tool(
+        wiki_id: str,
+        doc_id: str,
+        page_type: str,
+        topic: str,
+        problem_cluster: str,
+        content: str,
+        source_refs: list[str] | None = None,
+        ctx: Context | None = None,
+    ) -> MutationToolResult:
+        return MutationToolResult.model_validate(
+            dispatcher.dispatch(
+                tool_name="wiki.compile_update",
+                params={
+                    "wiki_id": wiki_id,
+                    "doc_id": doc_id,
+                    "page_type": page_type,
+                    "topic": topic,
+                    "problem_cluster": problem_cluster,
+                    "content": content,
+                    "source_refs": source_refs or [],
+                },
+                session_metadata=_metadata_from_context(ctx),
+            )
+        )
+
+    @server.tool(name="wiki.lint", structured_output=True)
+    def lint_tool(wiki_id: str, ctx: Context | None = None) -> LintToolResult:
+        return LintToolResult.model_validate(
+            dispatcher.dispatch(
+                tool_name="wiki.lint",
+                params={"wiki_id": wiki_id},
+                session_metadata=_metadata_from_context(ctx),
+            )
+        )
+
+    @server.tool(name="wiki.sync", structured_output=True)
+    def sync_tool(
+        wiki_id: str,
+        mode: str,
+        doc_ids: list[str] | None = None,
+        ctx: Context | None = None,
+    ) -> SyncToolResult:
+        return SyncToolResult.model_validate(
+            dispatcher.dispatch(
+                tool_name="wiki.sync",
+                params={"wiki_id": wiki_id, "mode": mode, "doc_ids": doc_ids},
+                session_metadata=_metadata_from_context(ctx),
+            )
+        )
+
+    return server
+
+
+def run_stdio_server(registry_path: str | None = None) -> None:
+    build_fastmcp_server(registry_path=registry_path).run(transport="stdio")
 
 
 class MCPServer:
     def __init__(self, registry_path: str | None = None) -> None:
-        self._registry_path = Path(registry_path) if registry_path else DEFAULT_REGISTRY_PATH
-        self._tools = {
-            "wiki.query": self._tool_query,
-            "wiki.capture_raw": self._tool_capture_raw,
-            "wiki.compile_update": self._tool_compile_update,
-        }
+        self._dispatcher = MCPDispatcher(registry_path=registry_path)
 
     def list_tools(self) -> list[dict]:
         return [
             {"name": "wiki.query", "description": "Query the agent wiki"},
             {"name": "wiki.capture_raw", "description": "Capture a raw page"},
             {"name": "wiki.compile_update", "description": "Compile a truth-zone page"},
+            {"name": "wiki.lint", "description": "Lint wiki state and indexes"},
+            {"name": "wiki.sync", "description": "Run explicit wiki sync operations"},
         ]
 
     def invoke(
@@ -38,79 +184,13 @@ class MCPServer:
         session_metadata: dict | None = None,
         wiki_workspace_overrides: dict[str, str] | None = None,
     ) -> dict:
-        handler = self._tools.get(tool_name)
-        if handler is None:
-            raise ValueError(f"unknown tool: {tool_name}")
-        actor = self.resolve_identity(request_metadata or {}, session_metadata or {})
-        wiki = self._resolve_wiki(params["wiki_id"], wiki_workspace_overrides or {})
-        return handler(params, wiki, actor)
+        return self._dispatcher.dispatch(
+            tool_name=tool_name,
+            params=params,
+            request_metadata=request_metadata,
+            session_metadata=session_metadata,
+            wiki_workspace_overrides=wiki_workspace_overrides,
+        )
 
     def resolve_identity(self, request_metadata: dict, session_metadata: dict):
-        return IdentityResolver().resolve(
-            IdentityContext(
-                transport="mcp",
-                metadata={**request_metadata, **session_metadata},
-            )
-        )
-
-    def _resolve_wiki(self, wiki_id: str, workspace_overrides: dict[str, str]):
-        registry = RegistryLoader().load(self._registry_path)
-        wiki = next((candidate for candidate in registry.wikis if candidate.wiki_id == wiki_id), None)
-        if wiki is None:
-            raise ValueError(f"unknown wiki_id: {wiki_id}")
-        override = workspace_overrides.get(wiki_id)
-        if override:
-            wiki = wiki.model_copy(update={"workspace_path": override})
-        return wiki
-
-    def _tool_query(self, params: dict, wiki, actor) -> dict:
-        result = QueryService().execute(
-            wiki=wiki,
-            actor=actor,
-            data=QueryInput(
-                query=params["query"],
-                include_pending=params.get("include_pending", False),
-                max_sensitivity=params.get("max_sensitivity"),
-            ),
-        )
-        return {
-            "query_type": result.query_type,
-            "l1_answer": result.l1_answer,
-            "l2_context": result.l2_context,
-            "l3_proof": result.l3_proof,
-            "hits": [{"doc_id": h.doc_id, "wiki_id": h.wiki_id, "score": h.score} for h in result.hits],
-            "hit_count": result.hit_count,
-            "miss_signal": result.miss_signal,
-        }
-
-    def _tool_capture_raw(self, params: dict, wiki, actor) -> dict:
-        result = CaptureRawService().execute(
-            wiki=wiki,
-            actor=actor,
-            data=CaptureRawInput(
-                doc_id=params["doc_id"],
-                topic=params["topic"],
-                problem_cluster=params["problem_cluster"],
-                content=params["content"],
-                source_refs=params.get("source_refs", []),
-            ),
-        )
-        return {"status": result.status, "doc_id": result.doc_id, "page_path": result.page_path}
-
-    def _tool_compile_update(self, params: dict, wiki, actor) -> dict:
-        try:
-            result = CompileUpdateService().apply(
-                wiki=wiki,
-                actor=actor,
-                data=CompileUpdateInput(
-                    doc_id=params["doc_id"],
-                    page_type=params["page_type"],
-                    topic=params["topic"],
-                    problem_cluster=params["problem_cluster"],
-                    content=params["content"],
-                    source_refs=params.get("source_refs", []),
-                ),
-            )
-        except PermissionError as exc:
-            return {"status": "denied", "reason": str(exc)}
-        return {"status": result.status, "doc_id": result.doc_id, "page_path": result.page_path}
+        return self._dispatcher.resolve_identity(request_metadata, session_metadata)

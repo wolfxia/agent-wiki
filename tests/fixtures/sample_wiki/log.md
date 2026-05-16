@@ -1,1 +1,0 @@
-- capture_raw mcp-test-1 by claude-code

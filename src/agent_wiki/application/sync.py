@@ -8,10 +8,12 @@ from agent_wiki.infrastructure.adapters.obsidian import ObsidianAdapter
 from agent_wiki.infrastructure.adapters.plain_markdown import PlainMarkdownAdapter
 from agent_wiki.infrastructure.identity.permissions import PermissionService
 from agent_wiki.infrastructure.runtime.pending_state import PendingStateRepository
+from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 
 
 class SyncInput(BaseModel):
     mode: str
+    doc_ids: list[str] | None = None
 
 
 class SyncResult(BaseModel):
@@ -27,19 +29,17 @@ _ADAPTERS = {
 
 class SyncService:
     def execute(self, wiki: WikiConfig, actor: ResolvedActor, data: SyncInput) -> SyncResult:
+        self._check_permission(actor, wiki)
         if data.mode == "status":
-            self._check_permission(actor, wiki, "query")
             return self._status(wiki)
         if data.mode == "pull-view":
-            self._check_permission(actor, wiki, "capture_raw")
             return self._pull_view(wiki, actor)
         if data.mode == "push-view":
-            self._check_permission(actor, wiki, "capture_raw")
-            return self._push_view(wiki)
+            return self._push_view(wiki, data.doc_ids)
         raise ValueError(f"unsupported sync mode: {data.mode}")
 
-    def _check_permission(self, actor: ResolvedActor, wiki: WikiConfig, operation: str) -> None:
-        decision = PermissionService().check(actor, operation, wiki, "raw")
+    def _check_permission(self, actor: ResolvedActor, wiki: WikiConfig) -> None:
+        decision = PermissionService().check(actor, "sync", wiki, "raw")
         if not decision.allowed:
             raise PermissionError(decision.reason)
 
@@ -73,7 +73,7 @@ class SyncService:
                 })
         return SyncResult(mode="pull-view", changed_files=changed_files)
 
-    def _push_view(self, wiki: WikiConfig) -> SyncResult:
+    def _push_view(self, wiki: WikiConfig, doc_ids: list[str] | None = None) -> SyncResult:
         wiki_root = Path(wiki.workspace_path)
         changed_files: list[str] = []
         for view in wiki.external_views:
@@ -82,7 +82,7 @@ class SyncService:
             adapter = self._get_adapter(view)
             external_path = Path(self._view_path(view))
             external_path.mkdir(exist_ok=True)
-            for source in (wiki_root / "pages").glob("*.md"):
+            for source in self._iter_export_sources(wiki_root, doc_ids):
                 target = external_path / source.name
                 document: dict = {"content": source.read_text(encoding="utf-8")}
                 if target.exists():
@@ -91,7 +91,25 @@ class SyncService:
                     document["adapter_metadata"] = adapter_metadata
                 adapter.write(str(target), document)
                 changed_files.append(str(target))
+
+            if self._view_adapter(view) == "obsidian":
+                changed_files.append(self._write_obsidian_graph_index(wiki, external_path))
+
         return SyncResult(mode="push-view", changed_files=changed_files)
+
+    def _write_obsidian_graph_index(self, wiki: WikiConfig, external_path: Path) -> str:
+        manifest_entries = ManifestRepository(Path(wiki.workspace_path)).read_all()
+        index_path = external_path / "04-知识图谱" / "知识图谱索引.md"
+        index_path.parent.mkdir(parents=True, exist_ok=True)
+        content = ObsidianAdapter().render_graph_index(manifest_entries)
+        index_path.write_text(content, encoding="utf-8")
+        return str(index_path)
+
+    def _iter_export_sources(self, wiki_root: Path, doc_ids: list[str] | None) -> list[Path]:
+        pages_root = wiki_root / "pages"
+        if not doc_ids:
+            return sorted(pages_root.glob("*.md"))
+        return [pages_root / f"{doc_id}.md" for doc_id in doc_ids if (pages_root / f"{doc_id}.md").exists()]
 
     def _get_adapter(self, view: object) -> object:
         adapter_name = self._view_adapter(view)

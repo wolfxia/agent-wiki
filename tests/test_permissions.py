@@ -96,3 +96,48 @@ def test_permission_config_and_gate_service_accept_operation_enum() -> None:
 
     assert permission.allowed_operations[0] == Operation.CAPTURE_RAW
     assert GateService().required_gate(Operation.CAPTURE_RAW, PageType.RAW) == "A"
+
+
+def test_permission_service_reports_required_gate_for_sync() -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0]
+    service = PermissionService()
+
+    decision = service.check(
+        ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        operation="sync",
+        wiki=wiki,
+        page_type="raw",
+    )
+
+    assert decision.allowed is True
+    assert decision.required_gate == "A"
+
+
+def test_permission_service_allows_phase1_shared_agent_profiles() -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0]
+    service = PermissionService()
+
+    hermes = service.check(
+        ResolvedActor(actor_type="agent", actor_id="hermes", transport="mcp"),
+        operation="sync",
+        wiki=wiki,
+        page_type="raw",
+    )
+    claude = service.check(
+        ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        operation="compile_update",
+        wiki=wiki,
+        page_type="atom",
+    )
+    codex = service.check(
+        ResolvedActor(actor_type="agent", actor_id="codex", transport="cli"),
+        operation="compile_update",
+        wiki=wiki,
+        page_type="atom",
+    )
+
+    assert hermes.allowed is True
+    assert claude.allowed is True
+    assert codex.allowed is False
+    assert codex.reason == "no matching permission rule"
+    assert codex.required_gate is None

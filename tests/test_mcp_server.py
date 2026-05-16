@@ -2,7 +2,7 @@ from pathlib import Path
 
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
-from agent_wiki.transports.mcp.server import MCPServer
+from agent_wiki.transports.mcp.server import MCPServer, build_fastmcp_server, run_stdio_server
 import yaml
 
 
@@ -11,9 +11,13 @@ def test_mcp_server_lists_expected_tools() -> None:
     tools = server.list_tools()
 
     tool_names = {tool["name"] for tool in tools}
-    assert "wiki.query" in tool_names
-    assert "wiki.capture_raw" in tool_names
-    assert "wiki.compile_update" in tool_names
+    assert tool_names == {
+        "wiki.query",
+        "wiki.capture_raw",
+        "wiki.compile_update",
+        "wiki.lint",
+        "wiki.sync",
+    }
 
 
 def test_mcp_query_tool_delegates_to_query_service(temp_wiki_root: Path) -> None:
@@ -116,6 +120,68 @@ def test_mcp_compile_tool_delegates_to_compile_service(temp_wiki_root: Path) -> 
     assert (temp_wiki_root / "pages" / "atom-mcp-comp-1.md").exists()
 
 
+def test_mcp_lint_tool_returns_structured_issue_payload(temp_wiki_root: Path) -> None:
+    server = MCPServer(registry_path="tests/fixtures/registry.yaml")
+
+    result = server.invoke(
+        "wiki.lint",
+        {"wiki_id": "personal-1"},
+        session_metadata={"actor_type": "agent", "actor_id": "claude-code"},
+        wiki_workspace_overrides={"personal-1": str(temp_wiki_root)},
+    )
+
+    assert set(result) == {"ok", "issues", "issue_count"}
+    assert result["ok"] is True
+    assert result["issues"] == []
+    assert result["issue_count"] == 0
+
+
+def test_mcp_sync_tool_accepts_doc_ids(temp_wiki_root: Path) -> None:
+    server = MCPServer(registry_path="tests/fixtures/registry.yaml")
+
+    pages_dir = temp_wiki_root / "pages"
+    pages_dir.mkdir(exist_ok=True)
+    (pages_dir / "atom-1.md").write_text("# Atom 1", encoding="utf-8")
+    (pages_dir / "atom-2.md").write_text("# Atom 2", encoding="utf-8")
+    external_dir = temp_wiki_root / "mcp-sync-vault"
+    external_dir.mkdir(exist_ok=True)
+
+    registry_path = temp_wiki_root.parent / "registry-mcp-sync.yaml"
+    registry_data = yaml.safe_load(Path("tests/fixtures/registry.yaml").read_text())
+    registry_data["wikis"][0]["external_views"] = [
+        {"adapter": "plain_markdown", "mode": "read_write", "path": str(external_dir)}
+    ]
+    registry_path.write_text(yaml.safe_dump(registry_data, sort_keys=False), encoding="utf-8")
+
+    server = MCPServer(registry_path=str(registry_path))
+    result = server.invoke(
+        "wiki.sync",
+        {"wiki_id": "personal-1", "mode": "push-view", "doc_ids": ["atom-1"]},
+        session_metadata={"actor_type": "agent", "actor_id": "claude-code"},
+        wiki_workspace_overrides={"personal-1": str(temp_wiki_root)},
+    )
+
+    assert result["mode"] == "push-view"
+    assert isinstance(result["changed_files"], list)
+    assert (external_dir / "atom-1.md").exists()
+    assert not (external_dir / "atom-2.md").exists()
+
+
+def test_mcp_sync_tool_supports_status_mode(temp_wiki_root: Path) -> None:
+    server = MCPServer(registry_path="tests/fixtures/registry.yaml")
+
+    result = server.invoke(
+        "wiki.sync",
+        {"wiki_id": "personal-1", "mode": "status"},
+        session_metadata={"actor_type": "agent", "actor_id": "claude-code"},
+        wiki_workspace_overrides={"personal-1": str(temp_wiki_root)},
+    )
+
+    assert result["mode"] == "status"
+    assert "changed_files" in result
+    assert isinstance(result["changed_files"], list)
+
+
 def test_mcp_resolves_identity_from_session_metadata() -> None:
     """MCP transport should not trust request-supplied actor fields."""
     server = MCPServer()
@@ -128,7 +194,6 @@ def test_mcp_resolves_identity_from_session_metadata() -> None:
     assert resolved.actor_id == "trusted-agent"
     assert resolved.actor_type == "agent"
     assert resolved.transport == "mcp"
-
 
 
 def test_mcp_invoke_uses_session_identity_not_caller_actor(temp_wiki_root: Path) -> None:
@@ -183,3 +248,34 @@ def test_mcp_invoke_uses_session_identity_not_caller_actor(temp_wiki_root: Path)
 
     assert result["status"] == "denied"
     assert not (temp_wiki_root / "pages" / "atom-mcp-auth-1.md").exists()
+
+
+def test_build_fastmcp_server_registers_agent_wiki_tools() -> None:
+    import asyncio
+
+    app = build_fastmcp_server(registry_path="tests/fixtures/registry.yaml")
+
+    tools = {tool.name for tool in asyncio.run(app.list_tools())}
+
+    assert app.name == "agent-wiki"
+    assert tools == {
+        "wiki.query",
+        "wiki.capture_raw",
+        "wiki.compile_update",
+        "wiki.lint",
+        "wiki.sync",
+    }
+
+
+def test_run_stdio_server_uses_stdio_transport(monkeypatch) -> None:
+    captured = {}
+
+    class FakeFastMCP:
+        def run(self, transport: str = "stdio") -> None:
+            captured["transport"] = transport
+
+    monkeypatch.setattr("agent_wiki.transports.mcp.server.build_fastmcp_server", lambda **_: FakeFastMCP())
+
+    run_stdio_server(registry_path="tests/fixtures/registry.yaml")
+
+    assert captured["transport"] == "stdio"

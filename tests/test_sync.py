@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
 from agent_wiki.application.sync import SyncInput, SyncService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
@@ -55,6 +56,35 @@ def test_sync_pull_view_imports_external_markdown(temp_wiki_root: Path) -> None:
 
     assert result.mode == "pull-view"
     assert (temp_wiki_root / "pages" / "imported.md").exists()
+
+
+def test_sync_push_view_exports_only_requested_doc_ids(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    pages_dir = temp_wiki_root / "pages"
+    pages_dir.mkdir(exist_ok=True)
+    (pages_dir / "one.md").write_text("# One", encoding="utf-8")
+    (pages_dir / "two.md").write_text("# Two", encoding="utf-8")
+    external_dir = temp_wiki_root / "vault"
+    external_dir.mkdir(exist_ok=True)
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {"adapter": "plain_markdown", "mode": "read_write", "path": str(external_dir)}
+            ]
+        }
+    )
+
+    result = SyncService().execute(
+        wiki,
+        ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        SyncInput(mode="push-view", doc_ids=["one"]),
+    )
+
+    assert (external_dir / "one.md").exists()
+    assert not (external_dir / "two.md").exists()
+    assert any(path.endswith("one.md") for path in result.changed_files)
 
 
 def test_sync_push_view_exports_workspace_markdown(temp_wiki_root: Path) -> None:
@@ -344,3 +374,135 @@ def test_sync_push_skips_read_only_external_view(temp_wiki_root: Path) -> None:
     assert result.mode == "push-view"
     assert result.changed_files == []
     assert not (external_dir / "raw-sync-read-only.md").exists()
+
+
+def test_sync_push_view_requires_sync_permission(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    external_dir = temp_wiki_root / "external-sync-blocked"
+    external_dir.mkdir(exist_ok=True)
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {"adapter": "plain_markdown", "mode": "read_write", "path": str(external_dir)}
+            ]
+        }
+    )
+
+    try:
+        SyncService().execute(
+            wiki,
+            ResolvedActor(actor_type="agent", actor_id="codex", transport="cli"),
+            SyncInput(mode="push-view"),
+        )
+    except PermissionError as error:
+        assert "permission" in str(error).lower() or "no matching" in str(error).lower()
+    else:
+        raise AssertionError("expected sync permission failure")
+
+
+def test_sync_push_view_rebuilds_obsidian_graph_index(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    external_dir = temp_wiki_root / "obsidian-vault"
+    external_dir.mkdir(exist_ok=True)
+    wiki = wiki.model_copy(update={"external_views": [{"adapter": "obsidian", "mode": "read_write", "path": str(external_dir)}]})
+
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(doc_id="raw-graph-1", topic="retrieval", problem_cluster="cluster-graph", content="# Raw graph", source_refs=[]),
+    )
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(doc_id="raw-graph-2", topic="retrieval", problem_cluster="cluster-graph", content="# Raw graph 2", source_refs=[]),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(doc_id="atom-graph-1", page_type="atom", topic="retrieval", problem_cluster="cluster-graph", content="# Atom graph", source_refs=["personal-1:raw-graph-1"]),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(doc_id="synthesis-graph-1", page_type="synthesis", topic="retrieval", problem_cluster="cluster-graph", content="# Synth graph", source_refs=["personal-1:raw-graph-2"]),
+    )
+
+    result = SyncService().execute(wiki, actor, SyncInput(mode="push-view"))
+
+    index_path = external_dir / "04-知识图谱" / "知识图谱索引.md"
+    assert index_path.exists()
+    text = index_path.read_text(encoding="utf-8")
+    assert "## Atom" in text
+    assert "## Synthesis" in text
+    assert "## Raw" in text
+    assert "[[atom-graph-1]]" in text
+    assert "[[synthesis-graph-1]]" in text
+    assert "[[raw-graph-1]]" in text or "[[raw-graph-2]]" in text
+    assert any(path.endswith("04-知识图谱/知识图谱索引.md") for path in result.changed_files)
+
+
+def test_compile_update_does_not_push_external_view(temp_wiki_root: Path) -> None:
+    from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    external_dir = temp_wiki_root / "vault-decouple"
+    external_dir.mkdir(exist_ok=True)
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {"adapter": "obsidian", "mode": "read_write", "path": str(external_dir)}
+            ]
+        }
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-decouple-1",
+            topic="testing",
+            problem_cluster="cluster-decouple",
+            content="# Raw decouple",
+            source_refs=[],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-decouple-1",
+            page_type="atom",
+            topic="testing",
+            problem_cluster="cluster-decouple",
+            content="# Atom decouple",
+            source_refs=["personal-1:raw-decouple-1"],
+        ),
+    )
+
+    assert not (external_dir / "atom-decouple-1.md").exists()
+
+
+def test_obsidian_push_view_preserves_frontmatter_and_reports_index_file(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    external_dir = temp_wiki_root / "obsidian-vault-compat"
+    external_dir.mkdir(exist_ok=True)
+    (external_dir / "existing.md").write_text("---\ntags:\n  - wiki\n---\n# Existing\n", encoding="utf-8")
+    (temp_wiki_root / "pages").mkdir(exist_ok=True)
+    (temp_wiki_root / "pages" / "existing.md").write_text("# Existing\n\nNew content.", encoding="utf-8")
+    wiki = wiki.model_copy(update={"external_views": [{"adapter": "obsidian", "mode": "read_write", "path": str(external_dir)}]})
+
+    result = SyncService().execute(wiki, actor, SyncInput(mode="push-view", doc_ids=["existing"]))
+
+    assert any(path.endswith("04-知识图谱/知识图谱索引.md") for path in result.changed_files)
+    assert "tags:" in (external_dir / "existing.md").read_text(encoding="utf-8")

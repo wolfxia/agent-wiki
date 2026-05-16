@@ -2,7 +2,6 @@ from pathlib import Path
 import os
 
 import typer
-import uvicorn
 
 from agent_wiki.application.capture_raw import CaptureRawService
 from agent_wiki.application.compile_update import CompileUpdateService
@@ -16,6 +15,7 @@ from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import CaptureRawInput, CompileUpdateInput, IdentityContext, QueryInput
 from agent_wiki.infrastructure.identity.resolver import IdentityResolver
 from agent_wiki.settings import DEFAULT_REGISTRY_PATH
+from agent_wiki.transports.mcp.server import run_stdio_server
 
 app = typer.Typer(help="Agent Wiki CLI")
 
@@ -60,20 +60,13 @@ def info() -> None:
 
 @app.command("serve")
 def serve(
-    host: str = "127.0.0.1",
-    port: int = 8000,
     workspace: str | None = typer.Option(None, "--workspace"),
     registry: str | None = typer.Option(None, "--registry"),
 ) -> None:
-    """Start the long-running agent-wiki service."""
-    from agent_wiki.transports.rest.app import create_app
-
-    rest_app = create_app(
-        wiki_workspace=workspace,
-        registry_path=registry,
-        token_identities={},
-    )
-    uvicorn.run(rest_app, host=host, port=port)
+    """Start the long-running agent-wiki MCP stdio service."""
+    if workspace:
+        os.environ["AGENT_WIKI_WORKSPACE"] = workspace
+    run_stdio_server(registry_path=registry)
 
 
 @app.command("query")

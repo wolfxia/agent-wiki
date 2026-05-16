@@ -11,7 +11,7 @@ class GateService:
     def required_gate(self, operation: Operation | str, page_type: PageType | str) -> GateLevel:
         operation = Operation(operation)
         page_type = PageType(page_type)
-        if operation == Operation.CAPTURE_RAW:
+        if operation in {Operation.QUERY, Operation.CAPTURE_RAW, Operation.SYNC, Operation.LINT}:
             return GateLevel.A
         if operation in {Operation.COMPILE_UPDATE, Operation.MARK_DISPUTED}:
             return GateLevel.B

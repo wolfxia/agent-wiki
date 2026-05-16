@@ -21,7 +21,22 @@ wikis:
       route_priority: 80
     permissions:
       - actor_type: agent
+        actor_id: hermes
+        allowed_operations: [query, capture_raw, compile_update, lint, sync]
+        max_gate: C
+        allowed_page_types: [raw, atom, synthesis]
+      - actor_type: agent
+        actor_id: openclaw
+        allowed_operations: [query, capture_raw, compile_update, lint, sync]
+        max_gate: C
+        allowed_page_types: [raw, atom, synthesis]
+      - actor_type: agent
         actor_id: claude-code
-        allowed_operations: [query, capture_raw, compile_update, lint]
+        allowed_operations: [query, capture_raw, compile_update, lint, sync]
         max_gate: B
         allowed_page_types: [raw, atom, synthesis]
+      - actor_type: agent
+        actor_id: codex
+        allowed_operations: [query, capture_raw]
+        max_gate: A
+        allowed_page_types: [raw]

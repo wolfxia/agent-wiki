@@ -2,7 +2,41 @@ from agent_wiki.domain.models import IdentityContext
 from agent_wiki.infrastructure.identity.resolver import IdentityResolver
 
 
-def test_identity_resolver_prefers_metadata_over_explicit_values() -> None:
+def test_identity_resolver_uses_trusted_metadata_for_mcp() -> None:
+    resolver = IdentityResolver()
+
+    actor = resolver.resolve(
+        IdentityContext(
+            transport="mcp",
+            actor_type="agent",
+            actor_id="spoofed",
+            metadata={"actor_type": "agent", "actor_id": "hermes"},
+        )
+    )
+
+    assert actor.actor_type == "agent"
+    assert actor.actor_id == "hermes"
+    assert actor.transport == "mcp"
+
+
+def test_identity_resolver_uses_trusted_metadata_for_rest() -> None:
+    resolver = IdentityResolver()
+
+    actor = resolver.resolve(
+        IdentityContext(
+            transport="rest",
+            actor_type="agent",
+            actor_id="spoofed",
+            metadata={"actor_type": "service", "actor_id": "aw-agent"},
+        )
+    )
+
+    assert actor.actor_type == "service"
+    assert actor.actor_id == "aw-agent"
+    assert actor.transport == "rest"
+
+
+def test_identity_resolver_uses_explicit_cli_identity_when_metadata_present() -> None:
     resolver = IdentityResolver()
 
     actor = resolver.resolve(
@@ -14,12 +48,12 @@ def test_identity_resolver_prefers_metadata_over_explicit_values() -> None:
         )
     )
 
-    assert actor.actor_type == "service"
-    assert actor.actor_id == "aw-agent"
+    assert actor.actor_type == "agent"
+    assert actor.actor_id == "claude-code"
     assert actor.transport == "cli"
 
 
-def test_identity_resolver_falls_back_to_explicit_when_no_metadata() -> None:
+def test_identity_resolver_uses_explicit_cli_identity_when_metadata_missing() -> None:
     resolver = IdentityResolver()
 
     actor = resolver.resolve(
@@ -34,19 +68,18 @@ def test_identity_resolver_falls_back_to_explicit_when_no_metadata() -> None:
     assert actor.actor_id == "claude-code"
 
 
-def test_identity_resolver_falls_back_to_metadata() -> None:
+def test_identity_resolver_falls_back_to_metadata_when_cli_explicit_identity_missing() -> None:
     resolver = IdentityResolver()
 
     actor = resolver.resolve(
         IdentityContext(
-            transport="mcp",
+            transport="cli",
             metadata={"actor_type": "service", "actor_id": "aw-agent"},
         )
     )
 
     assert actor.actor_type == "service"
     assert actor.actor_id == "aw-agent"
-
 
 
 def test_identity_resolver_raises_when_identity_missing() -> None:
