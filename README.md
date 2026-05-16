@@ -29,15 +29,15 @@ capture_raw → compile_update → query → lint → sync → weekly-review
 
 ### System overview
 
-![System overview](docs/architecture/system-overview.png)
+![System overview](docs/architecture/system-overview.svg)
 
 ### Write propagation
 
-![Write propagation](docs/architecture/write-propagation.png)
+![Write propagation](docs/architecture/write-propagation.svg)
 
 ### Query and retrieval flow
 
-![Query retrieval flow](docs/architecture/query-retrieval.png)
+![Query retrieval flow](docs/architecture/query-retrieval.svg)
 
 > Note: the diagrams above are part of the repository architecture assets under `docs/architecture/`. They reflect the current Phase 1 implementation direction, with some future MCP/REST and richer propagation behaviors still documented as design targets.
 
