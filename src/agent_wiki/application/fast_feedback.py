@@ -43,6 +43,7 @@ class FastFeedbackService:
         queue = ReviewQueueRepository(wiki_root)
         for signal in signals:
             queue.append({
+                "item_id": f"quality_signal:{signal['query']}",
                 "item_type": "quality_signal",
                 "query": signal["query"],
                 "zero_hit_count": signal["zero_hit_count"],

@@ -14,6 +14,9 @@ class ReviewQueueRepository:
         self.path = wiki_root / "review_queue.jsonl"
 
     def append(self, entry: dict) -> None:
+        item_id = entry.get("item_id")
+        if item_id and self.find(item_id) is not None:
+            return
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 

@@ -44,6 +44,7 @@ class CompileSuggestService:
         queue = ReviewQueueRepository(wiki_root)
         for candidate in candidates:
             queue.append({
+                "item_id": f"compile_suggestion:{candidate['topic']}:{candidate['problem_cluster']}",
                 "item_type": "compile_suggestion",
                 "topic": candidate["topic"],
                 "problem_cluster": candidate["problem_cluster"],

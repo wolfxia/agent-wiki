@@ -83,6 +83,7 @@ class RelationsService:
         queue = ReviewQueueRepository(wiki_root)
         for candidate in candidates:
             queue.append({
+                "item_id": f"signal_candidate:co_occurrence:{candidate['doc_ids'][0]}:{candidate['doc_ids'][1]}",
                 "item_type": "signal_candidate",
                 "relation_type": "co_occurrence",
                 "doc_ids": candidate["doc_ids"],
@@ -99,6 +100,7 @@ class RelationsService:
         queue = ReviewQueueRepository(wiki_root)
         for candidate in candidates:
             queue.append({
+                "item_id": f"signal_candidate:cross_reference:{candidate['doc_ids'][0]}:{candidate['doc_ids'][1]}",
                 "item_type": "signal_candidate",
                 "relation_type": "cross_reference",
                 "doc_ids": candidate["doc_ids"],

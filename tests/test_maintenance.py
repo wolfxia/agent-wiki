@@ -96,3 +96,78 @@ def test_maintenance_idempotent_with_no_signals(temp_wiki_root: Path) -> None:
     assert summary["quality_signals"] == 0
     assert summary["co_occurrence_candidates"] == 0
     assert summary["cross_reference_candidates"] == 0
+
+
+
+def test_maintenance_does_not_duplicate_queue_items_on_repeat_run(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    query_service = QueryService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    for i in range(3):
+        capture_service.execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-maint-dedupe-{i}",
+                topic="logging",
+                problem_cluster="cluster-maint-dedupe",
+                content=f"# Raw dedupe {i}",
+                source_refs=[],
+            ),
+        )
+
+    for _ in range(3):
+        query_service.execute(wiki=wiki, actor=actor, data=QueryInput(query="repeat-gap"))
+
+    capture_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-dedupe-shared",
+            topic="caching",
+            problem_cluster="cluster-dedupe",
+            content="# Raw dedupe shared",
+            source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-dedupe-1",
+            page_type="atom",
+            topic="caching",
+            problem_cluster="cluster-dedupe",
+            content="# Atom dedupe one\n\nCaching invalidation strategies.",
+            source_refs=["personal-1:raw-dedupe-shared"],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-dedupe-2",
+            page_type="atom",
+            topic="caching",
+            problem_cluster="cluster-dedupe",
+            content="# Atom dedupe two\n\nCaching invalidation strategies.",
+            source_refs=["personal-1:raw-dedupe-shared"],
+        ),
+    )
+    for _ in range(2):
+        query_service.execute(wiki=wiki, actor=actor, data=QueryInput(query="caching invalidation"))
+
+    service = MaintenanceService()
+    service.run(wiki)
+    first_entries = [json.loads(line) for line in (temp_wiki_root / "review_queue.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    service.run(wiki)
+    second_entries = [json.loads(line) for line in (temp_wiki_root / "review_queue.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    assert len(second_entries) == len(first_entries)
