@@ -44,20 +44,27 @@ class RetrievalIndexRepository:
             if not line.strip():
                 continue
             card = json.loads(line)
-            content_tokens = tokenize(
-                " ".join(
-                    [
-                        str(card.get("topic", "")),
-                        str(card.get("problem_cluster", "")),
-                        str(card.get("content", "")),
-                    ]
-                )
-            )
+            topic_tokens = tokenize(str(card.get("topic", "")))
+            problem_cluster_tokens = tokenize(str(card.get("problem_cluster", "")))
+            content_tokens = tokenize(str(card.get("content", "")))
             score = 0.0
             for term in terms:
+                if term in topic_tokens:
+                    score += 3.0
+                    continue
+                if term in problem_cluster_tokens:
+                    score += 2.0
+                    continue
                 if term in content_tokens:
                     score += 1.0
-                elif any(fuzzy_match(token, term) for token in content_tokens):
+                    continue
+                if any(fuzzy_match(token, term) for token in topic_tokens):
+                    score += 1.5
+                    continue
+                if any(fuzzy_match(token, term) for token in problem_cluster_tokens):
+                    score += 1.0
+                    continue
+                if any(fuzzy_match(token, term) for token in content_tokens):
                     score += 0.5
             if score:
                 hits.append(
