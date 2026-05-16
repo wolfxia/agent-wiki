@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
 from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
@@ -53,3 +54,51 @@ def test_query_returns_l1_l2_l3_layers_and_dispute_caveat(temp_wiki_root: Path) 
     assert result.l3_proof
     assert "disputed" in result.l2_context[0]["caveat"]
     assert "conflicting evidence" in result.l2_context[0]["caveat"]
+
+
+def test_query_execution_appends_query_outcome(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    query_service = QueryService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    capture_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-query-outcome-1",
+            topic="testing",
+            problem_cluster="cluster-qo1",
+            content="# Raw outcome one",
+            source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-query-outcome-1",
+            page_type="atom",
+            topic="testing",
+            problem_cluster="cluster-qo1",
+            content="# Atom outcome one\n\nOutcome logging should happen on query.",
+            source_refs=["personal-1:raw-query-outcome-1"],
+        ),
+    )
+
+    result = query_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=QueryInput(query="outcome logging", include_pending=False),
+    )
+
+    outcomes_path = temp_wiki_root / "query_outcomes.jsonl"
+    entries = [json.loads(line) for line in outcomes_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    assert len(entries) == 1
+    assert entries[0]["query"] == "outcome logging"
+    assert entries[0]["hit_count"] == len(result.hits)
+    assert entries[0]["actor_id"] == "claude-code"

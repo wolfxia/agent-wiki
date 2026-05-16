@@ -24,6 +24,7 @@ class QueryService:
         l2_context = self._build_l2_context(manifest, filtered_hits)
         l3_proof = self._build_l3_proof(manifest, filtered_hits)
         l1_answer = self._build_l1_answer(filtered_hits, wiki_root)
+        self._append_query_outcome(wiki_root, actor, data, filtered_hits)
 
         return QueryResult(
             query_type=query_type,
@@ -121,6 +122,22 @@ class QueryService:
         if len(lines) >= 2:
             return lines[1]
         return lines[0] if lines else f"Top match: {hits[0].doc_id}"
+
+    def _append_query_outcome(
+        self,
+        wiki_root: Path,
+        actor: ResolvedActor,
+        data: QueryInput,
+        hits: list[RetrievalHit],
+    ) -> None:
+        path = wiki_root / "query_outcomes.jsonl"
+        entry = {
+            "query": data.query,
+            "hit_count": len(hits),
+            "actor_id": actor.actor_id,
+        }
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 class CrossWikiQueryService:
