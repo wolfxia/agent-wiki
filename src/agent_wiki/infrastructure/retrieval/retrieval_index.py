@@ -3,6 +3,7 @@ from pathlib import Path
 
 from agent_wiki.domain.contracts import RetrievalHit
 from agent_wiki.domain.models import CompileUpdateInput
+from agent_wiki.infrastructure.retrieval.fuzzy import fuzzy_match
 from agent_wiki.infrastructure.retrieval.tokenizer import tokenize
 
 
@@ -52,13 +53,18 @@ class RetrievalIndexRepository:
                     ]
                 )
             )
-            score = sum(1 for term in terms if term in content_tokens)
+            score = 0.0
+            for term in terms:
+                if term in content_tokens:
+                    score += 1.0
+                elif any(fuzzy_match(token, term) for token in content_tokens):
+                    score += 0.5
             if score:
                 hits.append(
                     RetrievalHit(
                         wiki_id=card["wiki_id"],
                         doc_id=card["doc_id"],
-                        score=float(score),
+                        score=score,
                     )
                 )
         hits.sort(key=lambda hit: hit.score, reverse=True)

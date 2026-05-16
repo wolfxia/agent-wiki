@@ -106,3 +106,45 @@ def test_lexical_search_finds_chinese_content(temp_wiki_root: Path) -> None:
 def test_fuzzy_match_finds_near_miss_terms() -> None:
     assert fuzzy_match("deployability", "deployablity")
     assert not fuzzy_match("deployability", "runtime")
+
+
+def test_lexical_search_returns_fuzzy_hits(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    query_service = QueryService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    capture_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-query-fuzzy-1",
+            topic="testing",
+            problem_cluster="cluster-fuzzy",
+            content="# Raw query fuzzy",
+            source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="synthesis-query-fuzzy-1",
+            page_type="synthesis",
+            topic="testing",
+            problem_cluster="cluster-fuzzy",
+            content="# Synthesis query fuzzy\n\nDeployability depends on release automation.",
+            source_refs=["personal-1:raw-query-fuzzy-1"],
+        ),
+    )
+
+    result = query_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=QueryInput(query="deployablity"),
+    )
+
+    assert result.hits[0].doc_id == "synthesis-query-fuzzy-1"
