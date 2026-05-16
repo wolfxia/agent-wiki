@@ -81,6 +81,8 @@ C级操作采用 proposal → approval 两步流程：
 - 记录到操作日志
 - 等待重试或人工干预
 
+> 说明：以上仍然是目标设计，不应被读成当前 Phase 1 已完整实现的运行时保证。当前基线仍缺少完整的 authority-promotion / commit orchestration、stale marker 生命周期，以及自动重试编排。
+
 ## 3. 查询检索流程
 
 ```
@@ -324,6 +326,10 @@ Agent Wiki 应当能够在三种部署形态下易于安装、运行、升级与
 - 面向可选检索提供者的 docker-compose 编排
 - 带反向代理、TLS、OIDC 的 REST 网络部署
 
+#### Phase 1 发布就绪说明
+
+当前基线在 package 安装与总体架构方向上已经成立，但还不能被视为文档中所描述的长驻 `aw-agent` 服务。要支撑更强的部署声明，项目仍需要真实的 `aw serve` 进程、可健康检查的服务行为，以及保护远程或多 Agent 运行的治理控制。
+
 #### Phase 2 规划
 
 Phase 2 应补充：
@@ -488,6 +494,10 @@ Agent Wiki 应保护敏感知识内容，通过身份与能力约束 agent 行�
 - 当前基线尚未实现 git-crypt 工作流或加密内容处理
 - 因为网络服务尚未落地，尚无传输层 TLS / mTLS
 - 目前尚未有 adapter 沙箱运行时
+
+#### Phase 1 发布就绪说明
+
+当前 Phase 1 基线还不能被视为 production-ready 的多 Agent 治理体系。在更强的治理或部署声明成立之前，项目仍需要：可信身份优先级、高于 caller-supplied actor fields 的身份解析、中央化 `max_gate` enforcement、页面级敏感性策略，以及 authority-promotion / commit orchestration。
 
 #### Phase 2 规划
 

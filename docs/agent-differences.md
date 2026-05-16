@@ -8,9 +8,9 @@
 
 | Capability | Hermes | Claude Code | Codex | OpenClaw | OpenCode |
 |-----------|--------|-------------|-------|----------|----------|
-| **Execution Model** | Skill (SKILL.md) | CLAUDE.md + Bash | CLI `aw` + identity profile | Skill prompt | CLI `opencode run` |
+| **Execution Model** | Skill (SKILL.md) | CLAUDE.md + Bash | CLI `aw` + identity profile | Skill prompt | CLI wrapper over `aw` |
 | **Scheduling** | Built-in cronjob | External cron/launchd | None | Built-in cron | External cron |
-| **File I/O** | terminal + file tools | Bash commands | CLI commands | Skill prompt | `-f` file attach |
+| **File I/O** | terminal + file tools | Bash commands | CLI commands | Skill prompt | CLI commands |
 | **Vector Search** | `memory_search` built-in | ❌ Needs adapter | ❌ Needs adapter | ❌ Needs adapter | ❌ Needs adapter |
 | **Semantic Memory** | `memory` tool built-in | ❌ None | ❌ None | ❌ None | ❌ None |
 | **Human Interface** | Feishu/WeChat native | Terminal | Terminal | Feishu native | Terminal |
@@ -19,7 +19,7 @@
 | **Config Format** | config.yaml | settings.local.json | identity profile / config.yaml | agents/*.json | config.yaml |
 | **Background Tasks** | Built-in (cronjob) | Manual | Manual | Built-in (cron) | Manual |
 | **Multi-tool** | Rich (browser, web, etc.) | Terminal only | Terminal only | Rich (browser, web) | Terminal only |
-| **Context Injection** | Memory + Skills + .env | CLAUDE.md + hooks | aw CLI + identity profile | Skills + identity | Config + flags |
+| **Context Injection** | Memory + Skills + .env | CLAUDE.md + hooks | aw CLI + identity profile | Skills + identity | aw CLI + config + flags |
 
 ---
 
@@ -62,7 +62,7 @@ All agents call the same `aw-agent` core. Agent-specific code must be a thin cli
 - CC excels at code-related knowledge (architecture decisions, API contracts)
 - Can directly modify wiki files with high confidence
 - Git integration means wiki changes are tracked
-- Code review can be augmented with wiki-query for context
+- Code review can be augmented with `aw query` for context
 
 **Limitation**: 
 - No persistent memory across sessions
@@ -77,9 +77,10 @@ adapters/claude-code/
 │   ├── post-write.sh         ← Trigger aw sync/gate after allowed wiki file write
 │   └── pre-query.sh          ← Call aw query before answering
 ├── commands/
-│   ├── wiki-query.sh         ← /wiki-query slash command wrapper
-│   ├── wiki-ingest.sh        ← /wiki-ingest slash command wrapper
-│   └── wiki-lint.sh          ← /wiki-lint slash command wrapper
+│   ├── wiki-query.sh         ← aw query wrapper
+│   ├── wiki-capture.sh       ← aw capture-raw wrapper
+│   ├── wiki-compile.sh       ← aw compile-* wrapper
+│   └── wiki-lint.sh          ← aw lint wrapper
 └── README.md
 ```
 
@@ -98,7 +99,7 @@ adapters/claude-code/
 **Unique optimization**:
 - OpenClaw already has a knowledge-base structure with SCHEMA.md, resolvers, topics
 - Can reuse existing resolver mechanism as the "hot layer" in agent-wiki
-- lcm.db (SQLite) can be queried for conversation history → auto-ingest source
+- lcm.db (SQLite) can be queried for conversation history → capture as source, then route through `aw` / `aw-agent`
 
 **Key difference from Hermes**:
 - OpenClaw skills are prompt-based, not code-based
@@ -109,9 +110,9 @@ adapters/claude-code/
 ```
 adapters/openclaw/
 ├── skills/
-│   ├── wiki-query/SKILL.md       ← Query skill in OpenClaw format
-│   ├── wiki-ingest/SKILL.md      ← Ingest skill in OpenClaw format
-│   └── wiki-lint/SKILL.md        ← Lint skill in OpenClaw format
+│   ├── wiki-query/SKILL.md       ← Query skill that calls aw-agent
+│   ├── wiki-capture/SKILL.md     ← Raw capture skill that calls aw-agent
+│   └── wiki-lint/SKILL.md        ← Lint skill that calls aw-agent
 ├── cron/
 │   └── wiki-maintenance.json     ← Cron config
 ├── config.yaml
@@ -154,7 +155,7 @@ adapters/codex/
 
 ### OpenCode (CLI Agent — Script Wrappers)
 
-**Leverage**: `opencode run` for one-shot tasks, `-f` for file context, provider-agnostic
+**Leverage**: provider-agnostic execution and thin shell-based automation around the shared CLI
 
 **Adapter approach**:
 - Shell script wrappers call CLI `aw` with an OpenCode identity profile
@@ -165,21 +166,22 @@ adapters/codex/
 **Unique optimization**:
 - Good for code-heavy knowledge tasks (refactoring patterns, architecture decisions)
 - Can run in isolated worktrees for safe knowledge operations
-- Provider-agnostic — can use any model
+- Provider-agnostic — can use any model behind the wrapper
 
 **Limitation**:
 - No persistence between sessions
 - No memory/search
 - Must be triggered externally
-- Slow for interactive knowledge work (each `opencode run` is a cold start)
+- Slow for interactive knowledge work when each invocation is a cold start
 
 **OpenCode Adapter Structure**:
 ```
 adapters/opencode/
 ├── commands/
-│   ├── wiki-query.sh          ← opencode run 'query wiki...' -f schema.md
-│   ├── wiki-ingest.sh         ← opencode run 'ingest...' -f source.md
-│   └── wiki-lint.sh           ← opencode run 'lint wiki...'
+│   ├── wiki-query.sh          ← aw query wrapper
+│   ├── wiki-capture.sh        ← aw capture-raw wrapper
+│   ├── wiki-compile.sh        ← aw compile-* wrapper
+│   └── wiki-lint.sh           ← aw lint wrapper
 ├── config.yaml
 └── README.md
 ```
@@ -210,12 +212,16 @@ adapters/opencode/
 
 When multiple agents write to the same wiki:
 
-1. **Optimistic concurrency in Phase 1** — Write flow runs `git pull --rebase` before commit.
+1. **Optimistic concurrency in Phase 1** — target write flow eventually runs `git pull --rebase` before authority promotion.
 2. **manifest as coordination point** — manifest records `last_writer` and `last_write_at`.
 3. **Conflict detection** — Rebase/file conflicts enter `review_queue` with conflict snapshots in `.agent-wiki/`.
 4. **Human adjudication** — High-impact C-level conflicts require MCP/message-channel confirmation.
 5. **Agent identity** — Each committed operation records resolved `actor_type` and `agent_id` for traceability.
 6. **Lock interface reserved** — Explicit doc/topic locks are Phase 2 interfaces; Phase 1 lock implementation is no-op.
+
+Current implementation note:
+- the current runtime does not yet implement a full authority-promotion / commit orchestrator
+- the conflict strategy above should therefore be read as the intended governance path, not a fully delivered runtime path yet
 
 ---
 
@@ -224,4 +230,4 @@ When multiple agents write to the same wiki:
 1. **Hermes adapter first** — Most capable, already has most pieces
 2. **OpenClaw adapter second** — Similar architecture, can reuse patterns
 3. **Claude Code adapter third** — Different model, but high value (code knowledge)
-4. **OpenCode adapter last** — Most limited, can use same scripts as CC
+4. **OpenCode adapter last** — Most limited, can use same scripts as Codex/CC

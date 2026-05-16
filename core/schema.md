@@ -103,6 +103,8 @@ All pages should eventually carry:
 - `confidence`
 - `updated`
 - `source_refs`
+- `sensitivity`
+- `access_policy`
 
 ### 4.2 Type-specific target fields
 
@@ -144,6 +146,8 @@ All pages should eventually carry:
 - `load_policy` must match page type.
 - `review_status` must not be missing.
 - `source_refs` must point to existing source in manifest.
+- `sensitivity` must be in a documented enum such as `public`, `internal`, `confidential`.
+- `access_policy` must be present when page-level access differs from the wiki default.
 
 ---
 
@@ -372,7 +376,9 @@ This is currently produced from:
 - `src/agent_wiki/application/propagation.py`
 - `src/agent_wiki/application/feedback.py`
 
-The richer queue contract remains the design target.
+This minimal shape should be treated as a **transitional Phase 1 simplification**, not the long-term queue contract. The richer queue contract remains the implementation target for serious multi-wiki governance, assignment, conflict handling, and review lifecycle tracking.
+
+When the runtime adopts the richer queue shape, migration or compatibility handling will be required for older minimal JSONL entries.
 
 ---
 

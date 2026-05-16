@@ -96,6 +96,7 @@ Git authority → Local workspace compile/index/staging → External view/edit l
 Current implementation note:
 - The Phase 1 code already assumes Git-visible files as authority artifacts.
 - The current runtime does not yet implement the full gate-to-commit orchestration described in the original design.
+- Writing Git-visible files should therefore be read as an authority-aligned baseline, not as a complete authority-promotion pipeline.
 
 ### 2.4 Protocol-centered system shape
 
@@ -109,6 +110,7 @@ Current implementation note:
 - the shared core services are implemented under `src/agent_wiki/`
 - the only implemented transport today is a minimal CLI stub in `src/agent_wiki/transports/cli/app.py`
 - MCP and REST remain design targets, not implemented runtime surfaces yet
+- `aw-agent` is not yet a real long-running service process because `aw serve` does not exist yet
 
 ### 2.5 Risk gates scale with truth-zone risk
 
@@ -121,6 +123,7 @@ The design still assumes:
 Current implementation note:
 - gate classification exists
 - full `max_gate` enforcement and gate-check execution remain incomplete
+- the current baseline should not be treated as policy-complete governance yet
 
 ---
 
@@ -182,6 +185,7 @@ This remains the active tier model:
 Current implementation note:
 - the implemented service boundaries align with this model
 - there is still no transport-level policy-complete enforcement across all agents, because MCP/REST are not implemented yet
+- the tier model should therefore be read as the intended policy shape, not a fully enforced runtime perimeter yet
 
 ### 3.5 Ingest and compile
 
@@ -231,7 +235,8 @@ Still required:
 Current implementation note:
 - this rule is enforced today for standard compile updates
 - shared-wiki approval flow currently has a targeted bypass used for smoke-path principle/shared writes
-- that bypass should be read as a Phase 1 simplification, not a general relaxation of the design rule
+- that bypass should be read as a temporary Phase 1 simplification, not a general relaxation of the design rule
+- this bypass should be removed or explicitly blocked before any production-style C-level governance claim
 
 ### 3.9 Retrieval and answer format
 
@@ -267,7 +272,8 @@ The review queue still conceptually supports conflict, missing evidence, pending
 
 Current implementation note:
 - the current queue item shape is minimal: `item_type`, `doc_id`, `reason`, `status`
-- richer lifecycle, assignment, and priority semantics are design targets
+- richer lifecycle, assignment, priority, `wiki_id`, and resolution semantics are design targets
+- the current queue shape should be treated as transitional rather than sufficient for serious multi-wiki governance
 
 ### 3.12 C-level confirmation and audit
 
@@ -289,7 +295,8 @@ The design still requires identity to be resolved by the knowledge agent rather 
 Current implementation note:
 - identity, permission, and gate helper modules exist
 - explicit actor fields are still accepted and preferred in the current identity resolver
-- this is an implementation gap to be fixed, not a design change
+- full `max_gate` enforcement is still missing
+- these are implementation gaps to be fixed, not design changes
 
 ### 3.14 Transports and naming
 
@@ -304,6 +311,7 @@ Current implementation note:
 - package name is implemented
 - CLI entry point is configured in `pyproject.toml`
 - full CLI command surface, MCP, and REST remain incomplete
+- `aw-agent` should currently be read as a target service identity, not as a fully deployable long-running process
 
 ---
 
@@ -326,6 +334,16 @@ The current implementation baseline covers the following subsystems under `src/a
 
 This means the project now has a **working Phase 1 baseline**, but not yet the full protocol-complete architecture described in the end-state design.
 
+### 4.1 Release-readiness blockers
+
+The following items should be treated as blockers before any stronger claim of production-ready multi-agent governance:
+
+- trusted identity precedence over caller-supplied actor fields
+- central `max_gate` enforcement
+- authority-promotion / commit orchestration for Git-first governance
+- page-level sensitivity schema plus retrieval/response filtering
+- deployable `aw serve` process and long-running `aw-agent` runtime path
+
 ---
 
 ## 5. Divergence map: design target vs implementation baseline
@@ -336,10 +354,12 @@ This means the project now has a **working Phase 1 baseline**, but not yet the f
 | Gate enforcement | policy-complete A/B/C checks and `max_gate` enforcement | gate classification only, partial service separation | Partial |
 | Identity safety | caller cannot override resolved identity | explicit actor fields still override metadata | Divergence |
 | Propagation recovery | rollback + stale markers + mirror handling | direct write/append model only | Phase 1 Simplification |
+| Authority promotion | gate-checked commit orchestration to Git authority | Git-visible file writes only, no full orchestrator yet | Divergence |
 | Retrieval runtime | provider-pluggable, load-policy aware, budgeted | lexical baseline + layered output | Phase 1 Simplification |
 | Sync | adapter-driven reverse sync and gate-to-authority path | markdown file copy modes | Phase 1 Simplification |
 | Review queue | rich workflow schema | minimal queue entries | Phase 1 Simplification |
 | Query outcomes | query path logs outcomes directly | feedback path records outcomes | Simplified |
+| Page sensitivity | schema-backed page access policy with query filtering | no page-level sensitivity enforcement yet | Not Yet Implemented |
 
 ---
 
@@ -367,3 +387,5 @@ This order gives you:
 ## 7. Final note
 
 This document should be read as the **requirements and architecture baseline**, not as a claim that every target capability is already implemented. Where the current implementation is smaller than the design, the design remains authoritative and the current runtime is treated as a Phase 1 baseline or simplification.
+
+In particular, identity precedence, `max_gate`, authority-promotion/commit orchestration, page-level sensitivity filtering, and deployable service surfaces remain the most important unresolved blockers for stronger governance claims.

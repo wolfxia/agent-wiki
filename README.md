@@ -39,7 +39,9 @@ capture_raw → compile_update → query → lint → sync → weekly-review
 
 ## What Agent Wiki does
 
-### Implemented in the current Phase 1 baseline
+### Implemented runtime subsystems in the current Phase 1 baseline
+
+These subsystems exist in the current `src/agent_wiki/` runtime implementation:
 
 - Python package `agent_wiki` with a test-backed Phase 1 core under `src/agent_wiki/`
 - registry-driven multi-wiki configuration loading
@@ -56,18 +58,46 @@ capture_raw → compile_update → query → lint → sync → weekly-review
 - weekly review summary generation
 - C-level proposal / approval smoke path
 - shared wiki restrictions and cross-wiki query smoke coverage
-- 32 passing tests covering M1-M6
+- 32 passing tests covering the current M1-M6 baseline as of 2026-05-16
+
+### Implemented callable interfaces today
+
+The currently callable user/agent surface is intentionally small:
+
+- minimal CLI stub in `src/agent_wiki/transports/cli/app.py`
+- `aw --help`
+- `aw info`
+
+This is enough to inspect packaging and runtime wiring, but it is **not** yet a workflow-complete CLI or a deployable long-running `aw-agent` service.
 
 ### Designed but not yet fully implemented
 
 - MCP transport surface
 - REST transport surface
 - full gate enforcement against `max_gate`
+- trusted identity precedence over caller-supplied actor fields
+- authority-promotion / commit orchestration for Git-first governance
 - rollback/stale-marker propagation recovery model
+- page-level sensitivity schema and query filtering
 - richer schema/frontmatter validation
 - richer review queue workflow fields
 - vector provider routing and load-budget enforcement
 - adapter-specific reverse sync semantics beyond copy-based Phase 1 behavior
+
+## CLI surface today
+
+| Command | Status | Notes |
+|---|---|---|
+| `aw --help` | Implemented | package/CLI help surface |
+| `aw info` | Implemented | minimal runtime info stub |
+| `aw capture-raw` | Planned | application service exists, command surface does not |
+| `aw compile-*` | Planned | application service exists, command surface does not |
+| `aw query` | Planned | application service exists, command surface does not |
+| `aw lint` | Planned | application service exists, command surface does not |
+| `aw sync` | Planned | application service exists, command surface does not |
+| `aw feedback` | Planned | application service exists, command surface does not |
+| `aw weekly-review` | Planned | application service exists, command surface does not |
+| `aw serve` | Not started | required before `aw-agent` becomes a real long-running service |
 
 ## Core design principles
 
@@ -129,6 +159,11 @@ The current runtime implementation lives under `src/agent_wiki/` and is organize
 ### Transport
 
 - `src/agent_wiki/transports/cli/app.py` — current CLI stub surface
+
+### Legacy / non-authoritative paths
+
+- `engine/` exists in the repository but is not the authoritative runtime implementation path for the current Phase 1 baseline.
+- Contributors should treat `src/agent_wiki/` as the active runtime tree unless or until the repository explicitly reintroduces `engine/` as a supported path.
 
 ## Repository structure
 

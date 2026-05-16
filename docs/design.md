@@ -230,7 +230,8 @@ Current implemented components:
 
 ### Important divergence
 
-The target design says request parameters must not override resolved identity. The current implementation still accepts explicit actor fields in `IdentityContext` and prefers them over metadata. This is a **real implementation gap**, not a design change, and the design docs should continue treating caller override as disallowed target behavior.
+- The target design says request parameters must not override resolved identity. The current implementation still accepts explicit actor fields in `IdentityContext` and prefers them over metadata. This is a **real implementation gap**, not a design change, and the design docs should continue treating caller override as disallowed target behavior.
+- Full `max_gate` enforcement is also still missing. Together, identity override and missing gate enforcement should be treated as governance blockers before stronger multi-agent security claims are made.
 
 ---
 
@@ -384,6 +385,8 @@ These are validated by:
 
 This smoke coverage proves the interface direction is workable, but it is not yet the full transport- and policy-complete system described in the original protocol-centered design.
 
+The shared-wiki approval bypass for raw-backed provenance should be treated as a temporary smoke-path exception only. It must not be read as a relaxation of the normal truth-zone evidence rule, and it should be removed or explicitly blocked before any production-style C-level governance claim.
+
 ---
 
 ## 10. Known Divergences from Design v1.0
@@ -393,11 +396,13 @@ This smoke coverage proves the interface direction is workable, but it is not ye
 | Transport surface | MCP + CLI + REST | minimal CLI stub only | Not Yet Implemented |
 | Identity resolution | caller cannot override resolved identity | explicit actor fields still override metadata | Divergence to fix |
 | Gate enforcement | operation risk + `max_gate` policy | gate classification exists, full enforcement missing | Partial |
+| Authority promotion | gate-checked commit orchestration to Git authority | Git-visible file writes only, no full orchestrator yet | Divergence to fix |
 | Propagation failure handling | rollback + stale markers + mirror state | direct append/write only | Phase 1 Simplification |
 | Retrieval runtime | provider-pluggable, load-policy aware | lexical baseline with layered output | Phase 1 Simplification |
 | Sync | adapter-driven reverse sync + gate/commit path | copy-based markdown sync | Phase 1 Simplification |
 | Review queue | rich workflow schema | minimal append-only queue items | Phase 1 Simplification |
 | Query outcome loop | query service logs outcomes directly | feedback service records outcomes | Simplified |
+| Page sensitivity | schema-backed page access policy with query filtering | no page-level sensitivity enforcement yet | Not Yet Implemented |
 
 ---
 
@@ -507,6 +512,10 @@ Not yet implemented in the current repository baseline:
 - service-manager examples for `launchd` / `systemd`
 - docker-compose packaging for optional retrieval providers
 - REST deployment with reverse proxy, TLS, and OIDC
+
+#### Phase 1 release-readiness note
+
+The current baseline is package-installable and architecture-aligned, but not yet deployable as the documented long-running `aw-agent` service. Before stronger deployment claims are made, the project still needs a real `aw serve` process, health-checkable service behavior, and the governance controls that protect remote or multi-agent operation.
 
 #### Phase 2 plan
 
@@ -672,7 +681,6 @@ Important gaps relative to the design target:
 - no git-crypt workflow or encrypted content handling in the current baseline
 - no transport-level TLS / mTLS because network service is not yet implemented
 - no adapter sandbox runtime yet
-
 #### Phase 2 plan
 
 Phase 2 should add:
