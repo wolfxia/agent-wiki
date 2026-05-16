@@ -1,0 +1,191 @@
+# Agent Differences & Adaptation Strategy
+
+> How agent-wiki adapts to each agent's unique capabilities
+
+---
+
+## Capability Matrix
+
+| Capability | Hermes | Claude Code | OpenClaw | OpenCode |
+|-----------|--------|-------------|----------|----------|
+| **Execution Model** | Skill (SKILL.md) | CLAUDE.md + Bash | Skill prompt | CLI `opencode run` |
+| **Scheduling** | Built-in cronjob | External cron/launchd | Built-in cron | External cron |
+| **File I/O** | terminal + file tools | Bash commands | Skill prompt | `-f` file attach |
+| **Vector Search** | `memory_search` built-in | ❌ Needs adapter | ❌ Needs adapter | ❌ Needs adapter |
+| **Semantic Memory** | `memory` tool built-in | ❌ None | ❌ None | ❌ None |
+| **Human Interface** | Feishu/WeChat native | Terminal | Feishu native | Terminal |
+| **Editor Sync** | Obsidian sync cron | None (code-focused) | Obsidian sync cron | None |
+| **Knowledge Path** | `~/hermes-projects/knowledge/` | `~/workspace/code/` | `~/.openclaw/workspace/` | Project-scoped |
+| **Config Format** | config.yaml | settings.local.json | agents/*.json | config.yaml |
+| **Background Tasks** | Built-in (cronjob) | Manual | Built-in (cron) | Manual |
+| **Multi-tool** | Rich (browser, web, etc.) | Terminal only | Rich (browser, web) | Terminal only |
+| **Context Injection** | Memory + Skills + .env | CLAUDE.md + hooks | Skills + identity | Config + flags |
+
+---
+
+## Per-Agent Adaptation Strategy
+
+### Hermes (Most Capable — Full Feature)
+
+**Leverage**: Built-in cron, memory_search, rich toolset, Feishu integration
+
+**Adapter approach**: 
+- Full 3 skills (wiki-query, wiki-ingest, wiki-lint) as Hermes skills
+- PropagationEngine as Python module called by skills
+- cronjob for sync, lint, dream-cycle
+- Obsidian sync as built-in cron
+- Feishu alerts for lint failures and gate status
+
+**Unique optimization**:
+- `memory_search` can supplement vector search for semantic recall
+- `cronjob` enables automated Phase D maintenance
+- `send_message` for human-in-the-loop on principle promotion
+
+**Limitation**: Memory 5000-char cap; knowledge must live in files, not memory
+
+---
+
+### Claude Code (Code-Focused — Minimal Adapter)
+
+**Leverage**: CLAUDE.md injection, Bash execution, git integration, strong code reasoning
+
+**Adapter approach**:
+- CLAUDE.md appendix with wiki usage instructions
+- Bash wrapper scripts for ingest/query/lint
+- No built-in scheduling — rely on Hermes cron or external launchd
+- No vector search — rely on `ripgrep` + manifest for retrieval
+
+**Unique optimization**:
+- CC excels at code-related knowledge (architecture decisions, API contracts)
+- Can directly modify wiki files with high confidence
+- Git integration means wiki changes are tracked
+- Code review can be augmented with wiki-query for context
+
+**Limitation**: 
+- No persistent memory across sessions
+- No vector search — must fall back to keyword search
+- No scheduling — must be triggered externally
+
+**CC Adapter Structure**:
+```
+adapters/claude-code/
+├── CLAUDE.md.append          ← Append to project CLAUDE.md
+├── hooks/
+│   ├── post-write.sh         ← Trigger propagation after file write
+│   └── pre-query.sh          ← Load wiki context before answering
+├── commands/
+│   ├── wiki-query.sh         ← /wiki-query slash command wrapper
+│   ├── wiki-ingest.sh        ← /wiki-ingest slash command wrapper
+│   └── wiki-lint.sh          ← /wiki-lint slash command wrapper
+└── README.md
+```
+
+---
+
+### OpenClaw (Closest to Hermes — Skill-Based)
+
+**Leverage**: Skill system, built-in cron, Feishu integration, existing knowledge-base structure
+
+**Adapter approach**:
+- Skills in OpenClaw format (matches existing skill structure)
+- Cron for scheduled maintenance
+- Existing SCHEMA.md in ~/.openclaw/workspace/knowledge-base/ can be upgraded
+- Feishu alerts same as Hermes
+
+**Unique optimization**:
+- OpenClaw already has a knowledge-base structure with SCHEMA.md, resolvers, topics
+- Can reuse existing resolver mechanism as the "hot layer" in agent-wiki
+- lcm.db (SQLite) can be queried for conversation history → auto-ingest source
+
+**Key difference from Hermes**:
+- OpenClaw skills are prompt-based, not code-based
+- Less flexible execution model (no arbitrary Python in skills)
+- Different config format (agents/*.json not config.yaml)
+
+**OpenClaw Adapter Structure**:
+```
+adapters/openclaw/
+├── skills/
+│   ├── wiki-query/SKILL.md       ← Query skill in OpenClaw format
+│   ├── wiki-ingest/SKILL.md      ← Ingest skill in OpenClaw format
+│   └── wiki-lint/SKILL.md        ← Lint skill in OpenClaw format
+├── cron/
+│   └── wiki-maintenance.json     ← Cron config
+├── config.yaml
+└── README.md
+```
+
+---
+
+### OpenCode (CLI Agent — Script Wrappers)
+
+**Leverage**: `opencode run` for one-shot tasks, `-f` for file context, provider-agnostic
+
+**Adapter approach**:
+- Shell script wrappers around `opencode run`
+- No persistent state — each invocation is independent
+- No scheduling — external trigger only
+- No vector search — fall back to keyword + manifest
+
+**Unique optimization**:
+- Good for code-heavy knowledge tasks (refactoring patterns, architecture decisions)
+- Can run in isolated worktrees for safe knowledge operations
+- Provider-agnostic — can use any model
+
+**Limitation**:
+- No persistence between sessions
+- No memory/search
+- Must be triggered externally
+- Slow for interactive knowledge work (each `opencode run` is a cold start)
+
+**OpenCode Adapter Structure**:
+```
+adapters/opencode/
+├── commands/
+│   ├── wiki-query.sh          ← opencode run 'query wiki...' -f schema.md
+│   ├── wiki-ingest.sh         ← opencode run 'ingest...' -f source.md
+│   └── wiki-lint.sh           ← opencode run 'lint wiki...'
+├── config.yaml
+└── README.md
+```
+
+---
+
+## Shared vs Agent-Specific
+
+| Component | Shared (core/) | Agent-Specific (adapters/) |
+|-----------|----------------|---------------------------|
+| Page taxonomy | ✅ | — |
+| Frontmatter schema | ✅ | — |
+| Manifest schema | ✅ | — |
+| Query profiles | ✅ | — |
+| Retrieval pipeline logic | ✅ | — |
+| Propagation engine | ✅ | — |
+| Lint rules | ✅ | — |
+| Vector store | ✅ | — |
+| **Invocation method** | — | ✅ per-agent |
+| **Scheduling config** | — | ✅ per-agent |
+| **Human interface** | — | ✅ per-agent |
+| **External store sync** | — | ✅ per-agent |
+| **Alert routing** | — | ✅ per-agent |
+
+---
+
+## Multi-Agent Write Conflict Strategy
+
+When multiple agents write to the same wiki:
+
+1. **Lock by doc_id** — Only one agent can write to a doc_id at a time
+2. **manifest as coordination point** — manifest records `last_writer` and `last_write_at`
+3. **Conflict detection** — If two agents write within 1 minute, second write enters review_queue
+4. **Human adjudication** — High-impact conflicts (principle, disputed) always require human
+5. **Agent identity** — Each write in log.md includes `agent_id` for traceability
+
+---
+
+## Recommended Priority
+
+1. **Hermes adapter first** — Most capable, already has most pieces
+2. **OpenClaw adapter second** — Similar architecture, can reuse patterns
+3. **Claude Code adapter third** — Different model, but high value (code knowledge)
+4. **OpenCode adapter last** — Most limited, can use same scripts as CC
