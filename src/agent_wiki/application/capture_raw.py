@@ -1,4 +1,3 @@
-import re
 from pathlib import Path
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
@@ -6,9 +5,7 @@ from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import CaptureRawInput, CaptureResult
 from agent_wiki.application.propagation import PropagationService
 from agent_wiki.infrastructure.identity.permissions import PermissionService
-
-
-_DOC_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+from agent_wiki.domain.validators import validate_doc_id
 
 
 class CaptureRawService:
@@ -22,6 +19,8 @@ class CaptureRawService:
             raise PermissionError(decision.reason)
 
         propagation_service = PropagationService(Path(wiki.workspace_path))
-        if not _DOC_ID_PATTERN.match(data.doc_id):
+        try:
+            validate_doc_id(data.doc_id)
+        except ValueError:
             return propagation_service.record_pending_capture_raw(wiki=wiki, actor=actor, data=data)
         return propagation_service.propagate_capture_raw(wiki=wiki, actor=actor, data=data)

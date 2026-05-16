@@ -6,6 +6,7 @@ from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import CompileAnalysis, CompileResult, CompileUpdateInput
 from agent_wiki.infrastructure.identity.permissions import PermissionService
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
+from agent_wiki.domain.validators import validate_doc_id
 
 
 class CompileUpdateService:
@@ -23,6 +24,7 @@ class CompileUpdateService:
 
     def apply(self, wiki: WikiConfig, actor: ResolvedActor, data: CompileUpdateInput) -> CompileResult:
         manifest = ManifestRepository(Path(wiki.workspace_path))
+        validate_doc_id(data.doc_id)
         if data.page_type not in wiki.allowed_page_types:
             raise ValueError(f"page type {data.page_type} is not allowed")
 

@@ -5,10 +5,13 @@ from agent_wiki.application.propagation import PropagationService
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import ApprovalResult, CompileUpdateInput, ProposalInput, ProposalResult
+from agent_wiki.domain.validators import validate_doc_id, validate_proposal_id
 
 
 class ApprovalService:
     def propose(self, wiki: WikiConfig, actor: ResolvedActor, data: ProposalInput) -> ProposalResult:
+        validate_proposal_id(data.proposal_id)
+        validate_doc_id(data.doc_id)
         runtime_root = Path(wiki.workspace_path) / ".agent-wiki" / "proposals"
         runtime_root.mkdir(parents=True, exist_ok=True)
         proposal_path = runtime_root / f"{data.proposal_id}.json"
@@ -31,6 +34,7 @@ class ApprovalService:
         return ProposalResult(status="proposed", proposal_id=data.proposal_id)
 
     def approve(self, wiki: WikiConfig, actor: ResolvedActor, proposal_id: str) -> ApprovalResult:
+        validate_proposal_id(proposal_id)
         proposal_path = Path(wiki.workspace_path) / ".agent-wiki" / "proposals" / f"{proposal_id}.json"
         proposal = json.loads(proposal_path.read_text(encoding="utf-8"))
         propagation = PropagationService(Path(wiki.workspace_path))

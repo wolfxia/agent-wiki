@@ -119,3 +119,43 @@ def test_compile_apply_denied_when_actor_gate_insufficient(temp_wiki_root: Path)
         assert "gate" in str(error).lower()
     else:
         raise AssertionError("expected gate enforcement failure")
+
+
+
+def test_compile_apply_rejects_path_traversal_doc_id(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    capture_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-traversal-1",
+            topic="testing",
+            problem_cluster="cluster-traversal",
+            content="# Raw traversal",
+            source_refs=[],
+        ),
+    )
+
+    try:
+        compile_service.apply(
+            wiki=wiki,
+            actor=actor,
+            data=CompileUpdateInput(
+                doc_id="../outside",
+                page_type="atom",
+                topic="testing",
+                problem_cluster="cluster-traversal",
+                content="# traversal",
+                source_refs=["personal-1:raw-traversal-1"],
+            ),
+        )
+    except ValueError as error:
+        assert "doc_id" in str(error)
+    else:
+        raise AssertionError("expected doc_id validation failure")
