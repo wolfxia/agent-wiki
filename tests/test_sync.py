@@ -5,6 +5,7 @@ from agent_wiki.application.sync import SyncInput, SyncService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.infrastructure.adapters.plain_markdown import PlainMarkdownAdapter
+from agent_wiki.infrastructure.adapters.obsidian import ObsidianAdapter
 
 
 def test_sync_status_reports_workspace_files(temp_wiki_root: Path) -> None:
@@ -111,3 +112,28 @@ def test_plain_markdown_adapter_writes_file(temp_wiki_root: Path) -> None:
 
     assert target.exists()
     assert target.read_text(encoding="utf-8") == "# Written\n\nAdapter output."
+
+
+def test_obsidian_adapter_reads_frontmatter(temp_wiki_root: Path) -> None:
+    source = temp_wiki_root / "note.md"
+    source.write_text(
+        "---\ntags:\n  - python\n  - wiki\naliases: [aw]\n---\n# Note Title\n\nBody content.",
+        encoding="utf-8",
+    )
+
+    document = ObsidianAdapter().read(str(source))
+
+    assert document["content"] == "# Note Title\n\nBody content."
+    assert document["adapter_metadata"]["frontmatter"]["tags"] == ["python", "wiki"]
+    assert document["adapter_metadata"]["frontmatter"]["aliases"] == ["aw"]
+    assert document["adapter_metadata"]["path"] == str(source)
+
+
+def test_obsidian_adapter_reads_file_without_frontmatter(temp_wiki_root: Path) -> None:
+    source = temp_wiki_root / "plain-note.md"
+    source.write_text("# Plain\n\nNo frontmatter here.", encoding="utf-8")
+
+    document = ObsidianAdapter().read(str(source))
+
+    assert document["content"] == "# Plain\n\nNo frontmatter here."
+    assert document["adapter_metadata"]["frontmatter"] == {}
