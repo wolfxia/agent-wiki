@@ -24,6 +24,7 @@ class PermissionService:
                 return PermissionDecision(
                     allowed=False,
                     reason=f"max_gate {actor_max} insufficient for required gate {required_gate}",
+                    required_gate=required_gate.value,
                 )
-            return PermissionDecision(allowed=True, reason="allowed")
+            return PermissionDecision(allowed=True, reason="allowed", required_gate=required_gate.value)
         return PermissionDecision(allowed=False, reason="no matching permission rule")

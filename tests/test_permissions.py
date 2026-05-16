@@ -63,3 +63,18 @@ def test_permission_service_enforces_max_gate() -> None:
 
     assert decision.allowed is False
     assert "gate" in decision.reason.lower()
+
+
+def test_permission_decision_includes_required_gate() -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0]
+    service = PermissionService()
+
+    decision = service.check(
+        ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        operation="capture_raw",
+        wiki=wiki,
+        page_type="raw",
+    )
+
+    assert decision.allowed is True
+    assert decision.required_gate == "A"

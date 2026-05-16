@@ -12,6 +12,7 @@ class ResolvedActor(BaseModel):
 class PermissionDecision(BaseModel):
     allowed: bool
     reason: str
+    required_gate: str | None = None
 
 
 class KnowledgeStore(Protocol):
