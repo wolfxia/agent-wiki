@@ -168,3 +168,71 @@ def test_obsidian_adapter_writes_without_frontmatter(temp_wiki_root: Path) -> No
 
     result = target.read_text(encoding="utf-8")
     assert result == "# No FM\n\nJust content."
+
+
+def test_sync_pull_uses_obsidian_adapter_for_obsidian_view(temp_wiki_root: Path) -> None:
+    """Obsidian pull normalizes content via adapter (strips frontmatter into internal pages)."""
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    external_dir = temp_wiki_root / "obsidian-vault"
+    external_dir.mkdir(exist_ok=True)
+    (external_dir / "obs-note.md").write_text(
+        "---\ntags:\n  - imported\n---\n# Obsidian Note\n\nVault content.",
+        encoding="utf-8",
+    )
+
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {"adapter": "obsidian", "mode": "read_write", "path": str(external_dir)}
+            ]
+        }
+    )
+
+    result = SyncService().execute(wiki, SyncInput(mode="pull-view"))
+
+    assert result.mode == "pull-view"
+    imported = temp_wiki_root / "pages" / "obs-note.md"
+    assert imported.exists()
+    content = imported.read_text(encoding="utf-8")
+    # Adapter dispatch should store only the content body in workspace pages
+    assert content == "# Obsidian Note\n\nVault content."
+    assert "---" not in content
+
+
+def test_sync_push_uses_obsidian_adapter_preserves_frontmatter(temp_wiki_root: Path) -> None:
+    """Obsidian push writes back with frontmatter from adapter_metadata."""
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    external_dir = temp_wiki_root / "obsidian-vault"
+    external_dir.mkdir(exist_ok=True)
+
+    # Pre-existing obsidian file with frontmatter
+    (external_dir / "existing.md").write_text(
+        "---\ntags:\n  - wiki\n---\n# Existing\n\nOld content.",
+        encoding="utf-8",
+    )
+
+    # Workspace page (modified content)
+    pages_dir = temp_wiki_root / "pages"
+    pages_dir.mkdir(exist_ok=True)
+    (pages_dir / "existing.md").write_text("# Existing\n\nNew content.", encoding="utf-8")
+
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {"adapter": "obsidian", "mode": "read_write", "path": str(external_dir)}
+            ]
+        }
+    )
+
+    result = SyncService().execute(wiki, SyncInput(mode="push-view"))
+
+    assert result.mode == "push-view"
+    pushed = external_dir / "existing.md"
+    content = pushed.read_text(encoding="utf-8")
+    # Should preserve frontmatter from original external file
+    assert "tags:" in content
+    assert "# Existing\n\nNew content." in content

@@ -1,9 +1,10 @@
 from pathlib import Path
-from shutil import copy2
 
 from pydantic import BaseModel
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
+from agent_wiki.infrastructure.adapters.obsidian import ObsidianAdapter
+from agent_wiki.infrastructure.adapters.plain_markdown import PlainMarkdownAdapter
 
 
 class SyncInput(BaseModel):
@@ -13,6 +14,12 @@ class SyncInput(BaseModel):
 class SyncResult(BaseModel):
     mode: str
     changed_files: list[str]
+
+
+_ADAPTERS = {
+    "plain_markdown": PlainMarkdownAdapter,
+    "obsidian": ObsidianAdapter,
+}
 
 
 class SyncService:
@@ -36,10 +43,12 @@ class SyncService:
         pages_root.mkdir(exist_ok=True)
         changed_files: list[str] = []
         for view in wiki.external_views:
+            adapter = self._get_adapter(view)
             external_path = Path(self._view_path(view))
             for source in external_path.glob("*.md"):
+                document = adapter.read(str(source))
                 target = pages_root / source.name
-                copy2(source, target)
+                target.write_text(document["content"], encoding="utf-8")
                 changed_files.append(str(target.relative_to(wiki_root)))
         return SyncResult(mode="pull-view", changed_files=changed_files)
 
@@ -47,15 +56,32 @@ class SyncService:
         wiki_root = Path(wiki.workspace_path)
         changed_files: list[str] = []
         for view in wiki.external_views:
+            adapter = self._get_adapter(view)
             external_path = Path(self._view_path(view))
             external_path.mkdir(exist_ok=True)
             for source in (wiki_root / "pages").glob("*.md"):
                 target = external_path / source.name
-                copy2(source, target)
+                document: dict = {"content": source.read_text(encoding="utf-8")}
+                # Preserve existing frontmatter on push for adapters that support it
+                if target.exists():
+                    existing = adapter.read(str(target))
+                    adapter_metadata = existing.get("adapter_metadata", {})
+                    document["adapter_metadata"] = adapter_metadata
+                adapter.write(str(target), document)
                 changed_files.append(str(target))
         return SyncResult(mode="push-view", changed_files=changed_files)
+
+    def _get_adapter(self, view: object) -> object:
+        adapter_name = self._view_adapter(view)
+        cls = _ADAPTERS.get(adapter_name, PlainMarkdownAdapter)
+        return cls()
 
     def _view_path(self, view: object) -> str:
         if isinstance(view, dict):
             return str(view["path"])
         return str(view.path)
+
+    def _view_adapter(self, view: object) -> str:
+        if isinstance(view, dict):
+            return str(view.get("adapter", "plain_markdown"))
+        return str(getattr(view, "adapter", "plain_markdown"))
