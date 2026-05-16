@@ -5,6 +5,7 @@ from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpd
 from agent_wiki.application.query import QueryInput, QueryService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
+from agent_wiki.infrastructure.retrieval.fuzzy import fuzzy_match
 from agent_wiki.infrastructure.retrieval.tokenizer import tokenize
 
 
@@ -100,3 +101,8 @@ def test_lexical_search_finds_chinese_content(temp_wiki_root: Path) -> None:
     )
 
     assert result.hits[0].doc_id == "synthesis-query-cjk-1"
+
+
+def test_fuzzy_match_finds_near_miss_terms() -> None:
+    assert fuzzy_match("deployability", "deployablity")
+    assert not fuzzy_match("deployability", "runtime")
