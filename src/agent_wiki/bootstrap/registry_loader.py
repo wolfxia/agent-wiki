@@ -3,13 +3,13 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field
 
-from agent_wiki.domain.enums import ActorType, GateLevel, PageType
+from agent_wiki.domain.enums import ActorType, GateLevel, Operation, PageType
 
 
 class PermissionConfig(BaseModel):
     actor_type: ActorType
     actor_id: str
-    allowed_operations: list[str] = Field(default_factory=list)
+    allowed_operations: list[Operation] = Field(default_factory=list)
     max_gate: GateLevel
     allowed_page_types: list[PageType] = Field(default_factory=list)
 

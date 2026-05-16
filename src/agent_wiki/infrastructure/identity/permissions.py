@@ -1,6 +1,6 @@
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import PermissionDecision, ResolvedActor
-from agent_wiki.domain.enums import GateLevel
+from agent_wiki.domain.enums import GateLevel, Operation, PageType
 from agent_wiki.infrastructure.identity.gates import GateService, gate_at_least
 
 
@@ -8,7 +8,9 @@ class PermissionService:
     def __init__(self) -> None:
         self._gate_service = GateService()
 
-    def check(self, actor: ResolvedActor, operation: str, wiki: WikiConfig, page_type: str) -> PermissionDecision:
+    def check(self, actor: ResolvedActor, operation: Operation | str, wiki: WikiConfig, page_type: PageType | str) -> PermissionDecision:
+        operation = Operation(operation)
+        page_type = PageType(page_type)
         for permission in wiki.permissions:
             if permission.actor_type != actor.actor_type:
                 continue

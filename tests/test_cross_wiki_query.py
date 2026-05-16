@@ -65,3 +65,57 @@ def test_cross_wiki_query_returns_hits_from_multiple_wikis(tmp_path: Path) -> No
     wiki_ids = {hit.wiki_id for hit in result.hits}
     assert "personal-1" in wiki_ids
     assert "shared-1" in wiki_ids
+
+
+
+def test_cross_wiki_query_writes_single_aggregated_outcome(tmp_path: Path) -> None:
+    import json
+
+    personal_root = tmp_path / "sample_wiki"
+    shared_root = tmp_path / "shared_wiki"
+    copytree(Path("tests/fixtures/sample_wiki"), personal_root)
+    copytree(Path("tests/fixtures/shared_wiki"), shared_root)
+
+    registry = RegistryLoader().load(Path("tests/fixtures/registry_multi.yaml"))
+    personal = registry.wikis[0].model_copy(update={"workspace_path": str(personal_root)})
+    shared = registry.wikis[1].model_copy(update={"workspace_path": str(shared_root)})
+
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    capture_service.execute(
+        wiki=personal,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-cross-agg-1",
+            topic="testing",
+            problem_cluster="cluster-cross-agg",
+            content="# Raw cross agg one",
+            source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=personal,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-cross-agg-1",
+            page_type="atom",
+            topic="testing",
+            problem_cluster="cluster-cross-agg",
+            content="# Atom cross agg\n\nCross wiki aggregated logging.",
+            source_refs=["personal-1:raw-cross-agg-1"],
+        ),
+    )
+
+    CrossWikiQueryService().execute([personal, shared], actor, QueryInput(query="aggregated logging"))
+
+    personal_outcomes = [json.loads(line) for line in (personal_root / "query_outcomes.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    shared_outcomes_path = shared_root / "query_outcomes.jsonl"
+    shared_outcomes = []
+    if shared_outcomes_path.exists():
+        shared_outcomes = [json.loads(line) for line in shared_outcomes_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    assert len(personal_outcomes) == 1
+    assert personal_outcomes[0].get("cross_wiki") is True
+    assert shared_outcomes == []

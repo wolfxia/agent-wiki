@@ -125,3 +125,51 @@ def test_rest_capture_requires_token_and_uses_bound_identity(temp_wiki_root: Pat
 
     assert authorized.status_code == 200
     assert (temp_wiki_root / "pages" / "raw-rest-auth-1.md").exists()
+
+
+
+def test_rest_query_returns_l1_l2_l3_and_wiki_ids(temp_wiki_root: Path) -> None:
+    from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+    from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
+    from agent_wiki.domain.contracts import ResolvedActor
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="rest")
+
+    CaptureRawService().execute(
+        wiki=wiki, actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-rest-layers-1", topic="testing", problem_cluster="cluster-rest-layers",
+            content="# Raw rest layers", source_refs=[],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki, actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-rest-layers-1", page_type="atom", topic="testing",
+            problem_cluster="cluster-rest-layers",
+            content="# Atom rest layers\n\nREST returns layered query payloads.",
+            source_refs=["personal-1:raw-rest-layers-1"],
+        ),
+    )
+
+    app = create_app(
+        wiki_workspace=str(temp_wiki_root),
+        registry_path="tests/fixtures/registry.yaml",
+        token_identities={"token-claude": {"actor_type": "agent", "actor_id": "claude-code"}},
+    )
+    client = TestClient(app)
+    response = client.post(
+        "/query",
+        headers={"Authorization": "Bearer token-claude"},
+        json={"query": "layered query payloads"},
+    )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["l1_answer"]
+    assert payload["l2_context"]
+    assert payload["l3_proof"]
+    assert payload["hits"][0]["wiki_id"] == "personal-1"

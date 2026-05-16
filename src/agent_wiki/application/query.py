@@ -12,7 +12,7 @@ from agent_wiki.infrastructure.storage.purpose_reader import PurposeReader
 
 
 class QueryService:
-    def execute(self, wiki: WikiConfig, actor: ResolvedActor, data: QueryInput) -> QueryResult:
+    def execute(self, wiki: WikiConfig, actor: ResolvedActor, data: QueryInput, *, write_outcome: bool = True) -> QueryResult:
         query_type = self._classify_query_type(data.query)
         wiki_root = Path(wiki.workspace_path)
         manifest = ManifestRepository(wiki_root)
@@ -30,7 +30,8 @@ class QueryService:
         l2_context = self._build_l2_context(manifest, filtered_hits)
         l3_proof = self._build_l3_proof(manifest, filtered_hits)
         l1_answer = self._build_l1_answer(filtered_hits, wiki_root)
-        self._append_query_outcome(wiki_root, actor, data, filtered_hits)
+        if write_outcome:
+            self._append_query_outcome(wiki_root, actor, data, filtered_hits)
 
         return QueryResult(
             query_type=query_type,
@@ -184,12 +185,25 @@ class CrossWikiQueryService:
         l1_answer = "No matching knowledge found."
 
         for wiki in wikis:
-            result = QueryService().execute(wiki, actor, data)
+            result = QueryService().execute(wiki, actor, data, write_outcome=False)
             if result.hits and l1_answer == "No matching knowledge found.":
                 l1_answer = result.l1_answer
             combined_hits.extend(result.hits)
             l2_context.extend(result.l2_context)
             l3_proof.extend(result.l3_proof)
+
+        if wikis:
+            primary_root = Path(wikis[0].workspace_path)
+            outcomes_path = primary_root / "query_outcomes.jsonl"
+            query_id = str(uuid.uuid4())
+            with outcomes_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({
+                    "query_id": query_id,
+                    "query": data.query,
+                    "hit_count": len(combined_hits),
+                    "actor_id": actor.actor_id,
+                    "cross_wiki": True,
+                }, ensure_ascii=False) + "\n")
 
         combined_hits.sort(key=lambda hit: hit.score, reverse=True)
         return QueryResult(
@@ -198,4 +212,6 @@ class CrossWikiQueryService:
             l2_context=l2_context[:3],
             l3_proof=l3_proof[:3],
             hits=combined_hits,
+            hit_count=len(combined_hits),
+            miss_signal=len(combined_hits) == 0,
         )

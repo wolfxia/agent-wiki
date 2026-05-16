@@ -73,3 +73,31 @@ def test_lint_detects_stale_markers(temp_wiki_root: Path) -> None:
 
     assert result.ok is False
     assert any("stale" in issue.lower() for issue in result.issues)
+
+
+
+def test_lint_detects_missing_source_refs_on_compiled_page(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    (temp_wiki_root / "pages").mkdir(exist_ok=True)
+    (temp_wiki_root / "pages" / "atom-no-sources.md").write_text("# Atom no sources", encoding="utf-8")
+    (temp_wiki_root / "MANIFEST.jsonl").write_text(
+        json.dumps(
+            {
+                "wiki_id": "personal-1",
+                "doc_id": "atom-no-sources",
+                "page_type": "atom",
+                "canonical_uri": "pages/atom-no-sources.md",
+                "topic": "testing",
+                "problem_cluster": "cluster-lint-src",
+                "source_refs": [],
+            }
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    result = LintService().run(wiki)
+
+    assert result.ok is False
+    assert any("source_refs" in issue for issue in result.issues)

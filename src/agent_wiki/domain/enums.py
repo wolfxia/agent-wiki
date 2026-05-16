@@ -24,3 +24,15 @@ class Sensitivity(StrEnum):
     PUBLIC = "public"
     INTERNAL = "internal"
     CONFIDENTIAL = "confidential"
+
+
+class Operation(StrEnum):
+    QUERY = "query"
+    CAPTURE_RAW = "capture_raw"
+    COMPILE_UPDATE = "compile_update"
+    LINT = "lint"
+    SYNC = "sync"
+    APPROVE_PROPOSAL = "approve_proposal"
+    PROMOTE_PRINCIPLE = "promote_principle"
+    MARK_DISPUTED = "mark_disputed"
+    CROSS_WIKI_MERGE = "cross_wiki_merge"

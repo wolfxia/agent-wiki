@@ -1,4 +1,4 @@
-from agent_wiki.domain.enums import GateLevel, PageType
+from agent_wiki.domain.enums import GateLevel, Operation, PageType
 
 _GATE_ORDER = {GateLevel.A: 0, GateLevel.B: 1, GateLevel.C: 2}
 
@@ -8,11 +8,13 @@ def gate_at_least(actor_gate: GateLevel, required: GateLevel) -> bool:
 
 
 class GateService:
-    def required_gate(self, operation: str, page_type: str) -> GateLevel:
-        if operation == "capture_raw":
+    def required_gate(self, operation: Operation | str, page_type: PageType | str) -> GateLevel:
+        operation = Operation(operation)
+        page_type = PageType(page_type)
+        if operation == Operation.CAPTURE_RAW:
             return GateLevel.A
-        if operation in {"compile_update", "mark_disputed"}:
+        if operation in {Operation.COMPILE_UPDATE, Operation.MARK_DISPUTED}:
             return GateLevel.B
-        if page_type == PageType.PRINCIPLE.value or operation in {"promote_principle", "approve_proposal", "cross_wiki_merge"}:
+        if page_type == PageType.PRINCIPLE or operation in {Operation.PROMOTE_PRINCIPLE, Operation.APPROVE_PROPOSAL, Operation.CROSS_WIKI_MERGE}:
             return GateLevel.C
         return GateLevel.B

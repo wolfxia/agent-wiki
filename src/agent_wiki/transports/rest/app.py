@@ -83,9 +83,11 @@ def create_app(
         return {
             "query_type": result.query_type,
             "l1_answer": result.l1_answer,
+            "l2_context": result.l2_context,
+            "l3_proof": result.l3_proof,
             "hit_count": result.hit_count,
             "miss_signal": result.miss_signal,
-            "hits": [{"doc_id": h.doc_id, "score": h.score} for h in result.hits],
+            "hits": [{"doc_id": h.doc_id, "wiki_id": h.wiki_id, "score": h.score} for h in result.hits],
         }
 
     @app.post("/capture-raw")

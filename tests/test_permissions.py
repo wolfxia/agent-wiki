@@ -78,3 +78,21 @@ def test_permission_decision_includes_required_gate() -> None:
 
     assert decision.allowed is True
     assert decision.required_gate == "A"
+
+
+
+def test_permission_config_and_gate_service_accept_operation_enum() -> None:
+    from agent_wiki.bootstrap.registry_loader import PermissionConfig
+    from agent_wiki.domain.enums import Operation, PageType
+    from agent_wiki.infrastructure.identity.gates import GateService
+
+    permission = PermissionConfig(
+        actor_type="agent",
+        actor_id="claude-code",
+        allowed_operations=[Operation.CAPTURE_RAW, Operation.QUERY],
+        max_gate="B",
+        allowed_page_types=[PageType.RAW],
+    )
+
+    assert permission.allowed_operations[0] == Operation.CAPTURE_RAW
+    assert GateService().required_gate(Operation.CAPTURE_RAW, PageType.RAW) == "A"
