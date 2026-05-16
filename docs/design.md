@@ -1,8 +1,8 @@
 # Agent-Wiki Architecture Design
 
 > Universal Knowledge System for Multi-Agent Environments  
-> v1.1 — 2026-05-16  
-> Status: Design target aligned against the current Phase 1 implementation baseline
+> v1.2 — 2026-05-17  
+> Status: Design target aligned against the current Phase 1 implementation baseline, with an approved next milestone for transport completion, shared access, and Obsidian push-view
 
 ---
 
@@ -63,7 +63,13 @@ The current implementation in `src/agent_wiki/` delivers a filesystem- and JSONL
 
 ### Phase 1 simplification
 
-The current runtime does **not** yet expose full MCP or REST transports. The implemented transport surface is still a minimal CLI stub in `src/agent_wiki/transports/cli/app.py`. The design below keeps MCP/REST as target architecture, but all implementation references in this document are explicitly limited to the current `src/agent_wiki/` baseline.
+The current runtime does **not** yet expose a real FastMCP stdio server or a workflow-complete transport set. The codebase today includes a CLI workflow surface, a minimal REST app, and a local MCP facade in `src/agent_wiki/transports/mcp/server.py`, but not a true MCP wire-protocol process. The design below keeps MCP/CLI/REST as the shared architecture and now also includes an approved next milestone that adds:
+
+- `aw serve` as the primary stdio service entrypoint
+- `aw-agent` as an alias for the same service identity
+- a real FastMCP stdio server named `agent-wiki`
+- a five-tool MCP surface: `wiki.query`, `wiki.capture_raw`, `wiki.compile_update`, `wiki.lint`, `wiki.sync`
+- explicit `sync` separation so `compile_update` still writes only internal authority/workspace state
 
 ---
 
@@ -182,10 +188,11 @@ The architecture still assumes phased gates A/B/C/D.
   - raw capture path
   - compile update path
   - approvals path
-- Full gate policy enforcement is **not yet implemented**:
-  - `max_gate` from permissions is not enforced
-  - no central gate-check service exists yet
-  - no route-test or content-quality gate execution exists yet
+- `PermissionService` now enforces required operation gate versus per-rule `max_gate` for matched permissions.
+- The full gate engine is still incomplete:
+  - no workflow-complete route-test execution
+  - no content-quality gate execution for C-level decisions
+  - no single end-to-end gate orchestration layer spanning every transport and approval path
 
 ### Design note
 
@@ -212,13 +219,27 @@ Knowledge Agent / aw-agent
 Current implemented surfaces:
 
 - Python package `agent_wiki`
-- minimal CLI stub in `src/agent_wiki/transports/cli/app.py`
+- CLI commands in `src/agent_wiki/transports/cli/app.py` including `info`, `serve`, `query`, `capture-raw`, `compile-update`, `lint`, and `maintain`
+- minimal REST app in `src/agent_wiki/transports/rest/app.py`
+- local MCP facade in `src/agent_wiki/transports/mcp/server.py` for direct delegation tests
 
 Not yet implemented in the current codebase:
 
-- MCP transport package and server
-- REST transport package and app
-- CLI command surface for the full workflow
+- real FastMCP stdio MCP server process
+- `aw-agent` alias entrypoint
+- workflow-complete MCP tools for `lint` and `sync`
+- transport-parity REST workflow surface
+
+### Approved next milestone
+
+The approved next Phase 1 milestone keeps the same layered architecture but standardizes the service boundary more clearly:
+
+- `aw serve` becomes the primary stdio service entrypoint
+- `aw-agent` becomes an alias for the same service identity
+- FastMCP hosts the real MCP server named `agent-wiki`
+- trusted identity is resolved by transport context, not caller-supplied tool params
+- shared registry permissions explicitly cover `hermes`, `openclaw`, `claude-code`, with `codex` reserved as a lower-trust profile
+- Obsidian `push-view` remains explicit `sync`, not an implicit side effect of `compile_update`
 
 ### 4.3 Agent identity and permissions
 
@@ -412,6 +433,12 @@ That means Phase 1 should aim for:
 - external edits flowing back into workspace in a way the lifecycle loop can see
 - at minimum: Obsidian edit → raw capture path → compile suggestion / compile trigger
 
+The approved next milestone sharpens that design boundary further:
+
+- `compile_update` still writes only internal authority/workspace artifacts
+- Obsidian export happens only through explicit `sync`
+- `push-view` for Obsidian gains adapter-aware export plus a derived graph index page under `04-知识图谱/知识图谱索引.md`
+
 #### 7.5 Candidate relations as differentiator
 
 The 4-Signal relation system should also be reframed.
@@ -504,9 +531,18 @@ The current implementation in `src/agent_wiki/application/sync.py` is intentiona
 - `pull-view` copies `*.md` files from configured external paths into `pages/`
 - `push-view` copies `pages/*.md` to configured external paths
 
+### Approved next milestone
+
+The approved design milestone does **not** merge sync into compile. Instead it upgrades the sync boundary itself:
+
+- `wiki.sync` becomes a first-class MCP tool alongside CLI `aw sync`
+- `push-view` remains explicit and may optionally target `doc_ids` for incremental export
+- Obsidian `push-view` gains a derived graph index page in `04-知识图谱/`
+- the graph index remains an external-view artifact, not a new authority page type
+
 ### Deviation note
 
-This is a **simplified Phase 1 filesystem sync**, not full adapter-driven reverse sync. The design should continue to describe richer adapter-based sync as the target model, but must explicitly note that the current implementation is a copy-based placeholder with no gate-to-commit path yet.
+This remains a **Phase 1 sync simplification** until implemented: the current code is still a copy-based placeholder with no gate-to-commit authority promotion path. The architecture direction, however, is now explicit about two important boundaries: `compile_update` and external export stay decoupled, and Obsidian-specific graph material belongs to the view layer only.
 
 ---
 
@@ -545,6 +581,13 @@ The current code and tests already demonstrate the following Phase 1 smoke-path 
 - cross-wiki lexical query aggregation
 - C-level proposal/approval write path
 
+The approved next milestone formalizes the shared-agent registry baseline for one personal multi-agent workspace:
+
+- `hermes`: T1, `max_gate=C`
+- `openclaw`: T1, `max_gate=C`
+- `claude-code`: T2, `max_gate=B`
+- `codex`: T3 reserve profile, `max_gate=A`
+
 These are validated by:
 
 - `tests/test_multi_wiki.py`
@@ -564,13 +607,13 @@ The shared-wiki approval bypass for raw-backed provenance should be treated as a
 
 | Area | Design target | Current implementation | Status |
 |---|---|---|---|
-| Transport surface | MCP + CLI + REST | minimal CLI stub only | Not Yet Implemented |
+| Transport surface | MCP + CLI + REST | CLI workflow + REST stub + local MCP facade; no real FastMCP stdio server yet | Partial |
 | Identity resolution | caller cannot override resolved identity | explicit actor fields still override metadata | Divergence to fix |
-| Gate enforcement | operation risk + `max_gate` policy | gate classification exists, full enforcement missing | Partial |
+| Gate enforcement | operation risk + `max_gate` policy | per-rule `max_gate` enforcement exists; full workflow gate engine still incomplete | Partial |
 | Authority promotion | gate-checked commit orchestration to Git authority | Git-visible file writes only, no full orchestrator yet | Divergence to fix |
 | Propagation failure handling | rollback + stale markers + mirror state | direct append/write only | Phase 1 Simplification |
 | Retrieval runtime | provider-pluggable, load-policy aware | lexical baseline with layered output | Phase 1 Simplification |
-| Sync | adapter-driven reverse sync + gate/commit path | copy-based markdown sync | Phase 1 Simplification |
+| Sync | explicit adapter-driven sync boundary with view-specific artifacts | copy-based markdown sync, with approved milestone for Obsidian graph index export | Phase 1 Simplification |
 | Review queue | rich workflow schema | minimal append-only queue items | Phase 1 Simplification |
 | Query outcome loop | query service logs outcomes directly | feedback service records outcomes | Simplified |
 | Page sensitivity | schema-backed page access policy with query filtering | no page-level sensitivity enforcement yet | Not Yet Implemented |
@@ -624,7 +667,7 @@ These prevent raw capture from becoming a dead-end:
 These remain required before stronger multi-agent governance or broader deployment claims:
 
 - trusted identity precedence
-- central `max_gate` enforcement
+- end-to-end transport-complete gate enforcement
 - page-level sensitivity policy and filtering
 - richer review queue lifecycle records
 
@@ -732,15 +775,15 @@ Implemented or directly aligned with the current baseline:
 
 Not yet implemented in the current repository baseline:
 
-- production-grade MCP server process
-- full `aw serve` long-running process surface
+- production-grade FastMCP stdio server process
+- `aw-agent` alias entrypoint bound to the same service identity as `aw serve`
 - service-manager examples for `launchd` / `systemd`
 - docker-compose packaging for optional retrieval providers
 - REST deployment with reverse proxy, TLS, and OIDC
 
 #### Phase 1 release-readiness note
 
-The current baseline is package-installable and architecture-aligned, but not yet deployable as the documented long-running `aw-agent` service. Before stronger deployment claims are made, the project still needs a real `aw serve` process, health-checkable service behavior, and the governance controls that protect remote or multi-agent operation.
+The current baseline is package-installable and architecture-aligned, but not yet deployable as the documented long-running `aw-agent` MCP service. The approved next milestone resolves that at the design level by standardizing `aw serve` plus `aw-agent` alias on a real FastMCP stdio process, but until code lands and is verified the repository should still be treated as pre-service-completion.
 
 #### Phase 2 plan
 
@@ -1190,9 +1233,10 @@ Agent Wiki should grow by adding transports, adapters, retrieval providers, and 
 Already aligned in the design and partially in code:
 
 - registry-driven multi-wiki model provides a natural extension point
-- transport boundary already exists conceptually, with current CLI stub under `src/agent_wiki/transports/cli/app.py`
+- transport boundary already exists conceptually, with CLI, REST stub, and MCP facade code paths under `src/agent_wiki/transports/`
 - retrieval provider abstraction is present at the design level, with lexical retrieval as the Phase 1 baseline
 - agent adaptation strategy is documented in `docs/agent-differences.md`
+- the approved next milestone fixes the MCP service shape without changing the shared-core contract
 
 Not yet implemented in the current repository baseline:
 
@@ -1233,4 +1277,3 @@ The seven DFX dimensions are intentionally coupled:
 - **Extensibility** defines whether new tools can join the system without forking the core.
 
 For Agent Wiki, these are not secondary concerns layered on top of the product. They are part of the product definition itself, because the system’s value depends on trusted multi-agent knowledge operations rather than simple file storage.
-
