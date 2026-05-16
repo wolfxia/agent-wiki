@@ -112,3 +112,105 @@ def test_cross_reference_detects_relation_candidates(temp_wiki_root: Path) -> No
     assert "atom-xref-1" in pair["doc_ids"]
     assert "atom-xref-2" in pair["doc_ids"]
     assert pair["shared_refs"]
+
+
+def test_co_occurrence_enqueues_signal_candidates(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    query_service = QueryService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    capture_service.execute(
+        wiki=wiki, actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-coq-1", topic="infra", problem_cluster="cluster-coq",
+            content="# Raw coq one", source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki, actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-coq-1", page_type="atom", topic="infra",
+            problem_cluster="cluster-coq",
+            content="# Atom coq one\n\nInfra scaling patterns.",
+            source_refs=["personal-1:raw-coq-1"],
+        ),
+    )
+    capture_service.execute(
+        wiki=wiki, actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-coq-2", topic="infra", problem_cluster="cluster-coq",
+            content="# Raw coq two", source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki, actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-coq-2", page_type="atom", topic="infra",
+            problem_cluster="cluster-coq",
+            content="# Atom coq two\n\nInfra scaling limits.",
+            source_refs=["personal-1:raw-coq-2"],
+        ),
+    )
+
+    for _ in range(3):
+        query_service.execute(
+            wiki=wiki, actor=actor,
+            data=QueryInput(query="infra scaling"),
+        )
+
+    relations_service = RelationsService()
+    relations_service.detect_and_enqueue_co_occurrences(wiki, threshold=2)
+
+    queue_path = temp_wiki_root / "review_queue.jsonl"
+    entries = [json.loads(line) for line in queue_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    signals = [e for e in entries if e.get("item_type") == "signal_candidate"]
+    assert len(signals) >= 1
+    assert signals[0]["relation_type"] == "co_occurrence"
+
+
+def test_cross_reference_enqueues_signal_candidates(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    capture_service.execute(
+        wiki=wiki, actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-xrq-1", topic="db", problem_cluster="cluster-xrq",
+            content="# Raw xrq", source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki, actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-xrq-1", page_type="atom", topic="db",
+            problem_cluster="cluster-xrq",
+            content="# Atom xrq one\n\nDB indexing.",
+            source_refs=["personal-1:raw-xrq-1"],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki, actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-xrq-2", page_type="atom", topic="db",
+            problem_cluster="cluster-xrq",
+            content="# Atom xrq two\n\nDB queries.",
+            source_refs=["personal-1:raw-xrq-1"],
+        ),
+    )
+
+    relations_service = RelationsService()
+    relations_service.detect_and_enqueue_cross_references(wiki)
+
+    queue_path = temp_wiki_root / "review_queue.jsonl"
+    entries = [json.loads(line) for line in queue_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    signals = [e for e in entries if e.get("item_type") == "signal_candidate"]
+    assert len(signals) >= 1
+    assert signals[0]["relation_type"] == "cross_reference"

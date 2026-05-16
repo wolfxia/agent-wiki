@@ -4,6 +4,7 @@ from itertools import combinations
 from pathlib import Path
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
+from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 
 
@@ -72,4 +73,36 @@ class RelationsService:
                 })
 
         candidates.sort(key=lambda c: len(c["shared_refs"]), reverse=True)
+        return candidates
+
+    def detect_and_enqueue_co_occurrences(self, wiki: WikiConfig, threshold: int = 2) -> list[dict]:
+        candidates = self.detect_co_occurrences(wiki, threshold)
+        if not candidates:
+            return candidates
+        wiki_root = Path(wiki.workspace_path)
+        queue = ReviewQueueRepository(wiki_root)
+        for candidate in candidates:
+            queue.append({
+                "item_type": "signal_candidate",
+                "relation_type": "co_occurrence",
+                "doc_ids": candidate["doc_ids"],
+                "co_occurrence_count": candidate["co_occurrence_count"],
+                "status": "open",
+            })
+        return candidates
+
+    def detect_and_enqueue_cross_references(self, wiki: WikiConfig) -> list[dict]:
+        candidates = self.detect_cross_references(wiki)
+        if not candidates:
+            return candidates
+        wiki_root = Path(wiki.workspace_path)
+        queue = ReviewQueueRepository(wiki_root)
+        for candidate in candidates:
+            queue.append({
+                "item_type": "signal_candidate",
+                "relation_type": "cross_reference",
+                "doc_ids": candidate["doc_ids"],
+                "shared_refs": candidate["shared_refs"],
+                "status": "open",
+            })
         return candidates
