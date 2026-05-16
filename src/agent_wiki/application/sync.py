@@ -55,6 +55,8 @@ class SyncService:
         pending = PendingStateRepository(wiki_root)
         changed_files: list[str] = []
         for view in wiki.external_views:
+            if not self._view_allows_pull(view):
+                continue
             adapter = self._get_adapter(view)
             external_path = Path(self._view_path(view))
             for source in external_path.glob("*.md"):
@@ -75,6 +77,8 @@ class SyncService:
         wiki_root = Path(wiki.workspace_path)
         changed_files: list[str] = []
         for view in wiki.external_views:
+            if not self._view_allows_push(view):
+                continue
             adapter = self._get_adapter(view)
             external_path = Path(self._view_path(view))
             external_path.mkdir(exist_ok=True)
@@ -103,3 +107,14 @@ class SyncService:
         if isinstance(view, dict):
             return str(view.get("adapter", "plain_markdown"))
         return str(getattr(view, "adapter", "plain_markdown"))
+
+    def _view_mode(self, view: object) -> str:
+        if isinstance(view, dict):
+            return str(view.get("mode", "read_write"))
+        return str(getattr(view, "mode", "read_write"))
+
+    def _view_allows_pull(self, view: object) -> bool:
+        return self._view_mode(view) in {"read_only", "read_write"}
+
+    def _view_allows_push(self, view: object) -> bool:
+        return self._view_mode(view) == "read_write"

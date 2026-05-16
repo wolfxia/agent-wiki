@@ -1,5 +1,7 @@
 from pydantic import BaseModel
 
+from agent_wiki.domain.enums import GateLevel, PageType, Sensitivity
+
 
 class RegistryContext(BaseModel):
     registry_path: str
@@ -28,7 +30,7 @@ class CaptureResult(BaseModel):
 
 class CompileUpdateInput(BaseModel):
     doc_id: str
-    page_type: str
+    page_type: PageType | str
     topic: str
     problem_cluster: str
     content: str
@@ -36,14 +38,14 @@ class CompileUpdateInput(BaseModel):
     evidence_note: str | None = None
     review_status: str | None = None
     dispute_reason: str | None = None
-    sensitivity: str | None = None
+    sensitivity: Sensitivity | None = None
     allow_shared_write_without_sources: bool = False
 
 
 class CompileAnalysis(BaseModel):
     target_doc_id: str
     change_type: str
-    gate: str
+    gate: GateLevel | str
 
 
 class CompileResult(BaseModel):
@@ -55,7 +57,7 @@ class CompileResult(BaseModel):
 class QueryInput(BaseModel):
     query: str
     include_pending: bool = False
-    max_sensitivity: str | None = None
+    max_sensitivity: Sensitivity | None = None
 
 
 class QueryResult(BaseModel):
@@ -71,7 +73,7 @@ class QueryResult(BaseModel):
 class ProposalInput(BaseModel):
     proposal_id: str
     doc_id: str
-    page_type: str
+    page_type: PageType | str
     topic: str
     problem_cluster: str
     content: str

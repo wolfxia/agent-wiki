@@ -105,3 +105,53 @@ def test_query_filters_confidential_pages_by_sensitivity(temp_wiki_root: Path) -
     doc_ids_all = [h.doc_id for h in result_all.hits]
     assert "atom-sens-public" in doc_ids_all
     assert "atom-sens-conf" in doc_ids_all
+
+
+
+def test_query_defaults_to_internal_sensitivity_and_excludes_confidential(temp_wiki_root: Path) -> None:
+    from agent_wiki.application.query import QueryInput, QueryService
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    query_service = QueryService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    capture_service.execute(
+        wiki=wiki, actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-sens-default-1", topic="secrets", problem_cluster="cluster-sd",
+            content="# Raw sens default", source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki, actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-sens-default-public", page_type="atom", topic="secrets",
+            problem_cluster="cluster-sd",
+            content="# Public\n\nDefault sensitivity query sees this.",
+            source_refs=["personal-1:raw-sens-default-1"],
+            sensitivity="public",
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki, actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-sens-default-conf", page_type="atom", topic="secrets",
+            problem_cluster="cluster-sd",
+            content="# Confidential\n\nDefault sensitivity query must not see this.",
+            source_refs=["personal-1:raw-sens-default-1"],
+            sensitivity="confidential",
+        ),
+    )
+
+    result = query_service.execute(
+        wiki=wiki, actor=actor,
+        data=QueryInput(query="default sensitivity query"),
+    )
+
+    doc_ids = [hit.doc_id for hit in result.hits]
+    assert "atom-sens-default-public" in doc_ids
+    assert "atom-sens-default-conf" not in doc_ids

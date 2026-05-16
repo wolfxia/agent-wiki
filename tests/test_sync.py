@@ -307,3 +307,40 @@ def test_sync_pull_view_requires_permission(temp_wiki_root: Path) -> None:
         assert "permission" in str(error).lower() or "no matching" in str(error).lower()
     else:
         raise AssertionError("expected sync permission failure")
+
+
+
+def test_sync_push_skips_read_only_external_view(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    external_dir = temp_wiki_root / "external-read-only"
+    external_dir.mkdir(exist_ok=True)
+
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {"adapter": "plain_markdown", "mode": "read_only", "path": str(external_dir)}
+            ]
+        }
+    )
+
+    capture_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-sync-read-only",
+            topic="testing",
+            problem_cluster="cluster-sync-ro",
+            content="# Read only sync",
+            source_refs=[],
+        ),
+    )
+
+    result = SyncService().execute(wiki, actor, SyncInput(mode="push-view"))
+
+    assert result.mode == "push-view"
+    assert result.changed_files == []
+    assert not (external_dir / "raw-sync-read-only.md").exists()

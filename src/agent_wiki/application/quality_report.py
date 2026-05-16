@@ -2,9 +2,10 @@ import json
 from pathlib import Path
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
+from agent_wiki.domain.enums import PageType
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 
-_COMPILED_PAGE_TYPES = {"atom", "synthesis", "principle"}
+_COMPILED_PAGE_TYPES = {PageType.ATOM.value, PageType.SYNTHESIS.value, PageType.PRINCIPLE.value}
 
 
 class QualityReportService:

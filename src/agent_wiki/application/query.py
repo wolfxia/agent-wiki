@@ -3,6 +3,7 @@ import json
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor, RetrievalHit
+from agent_wiki.domain.enums import PageType, Sensitivity
 from agent_wiki.domain.models import QueryInput, QueryResult
 from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
@@ -21,8 +22,8 @@ class QueryService:
             hits.extend(self._search_pending_truth_zone(wiki_root, wiki.wiki_id, data.query))
 
         filtered_hits = [hit for hit in hits if self._include_hit(manifest, wiki_root, hit, data.include_pending)]
-        if data.max_sensitivity:
-            filtered_hits = [hit for hit in filtered_hits if self._sensitivity_allowed(manifest, hit.doc_id, data.max_sensitivity)]
+        max_sensitivity = data.max_sensitivity or Sensitivity.INTERNAL
+        filtered_hits = [hit for hit in filtered_hits if self._sensitivity_allowed(manifest, hit.doc_id, max_sensitivity)]
         purpose_reader = PurposeReader(wiki_root)
         filtered_hits.sort(key=lambda hit: (hit.score + self._purpose_boost(manifest, purpose_reader, hit.doc_id), self._manifest_priority(manifest, hit.doc_id)), reverse=True)
         l2_context = self._build_l2_context(manifest, filtered_hits)
@@ -79,7 +80,7 @@ class QueryService:
             if not line.strip():
                 continue
             pending_entry = json.loads(line)
-            if pending_entry.get("page_type") == "raw":
+            if pending_entry.get("page_type") == PageType.RAW.value:
                 continue
             page_path = wiki_root / "pages" / f"{pending_entry['doc_id']}.md"
             if not page_path.exists():
@@ -96,7 +97,7 @@ class QueryService:
             return 0
         if entry.get("review_status") == "disputed":
             return 3
-        if entry.get("page_type") in {"atom", "synthesis", "principle"}:
+        if entry.get("page_type") in {PageType.ATOM.value, PageType.SYNTHESIS.value, PageType.PRINCIPLE.value}:
             return 2
         return 1
 
@@ -109,15 +110,15 @@ class QueryService:
             return 1.5
         return 0.0
 
-    _SENSITIVITY_ORDER = {"public": 0, "internal": 1, "confidential": 2}
+    _SENSITIVITY_ORDER = {Sensitivity.PUBLIC: 0, Sensitivity.INTERNAL: 1, Sensitivity.CONFIDENTIAL: 2}
 
-    def _sensitivity_allowed(self, manifest: ManifestRepository, doc_id: str, max_sensitivity: str) -> bool:
+    def _sensitivity_allowed(self, manifest: ManifestRepository, doc_id: str, max_sensitivity: Sensitivity) -> bool:
         entry = manifest.find(doc_id)
         if entry is None:
             return True
-        doc_sensitivity = entry.get("sensitivity") or "public"
-        max_level = self._SENSITIVITY_ORDER.get(max_sensitivity, 1)
-        doc_level = self._SENSITIVITY_ORDER.get(doc_sensitivity, 0)
+        doc_sensitivity = Sensitivity(entry.get("sensitivity") or Sensitivity.PUBLIC)
+        max_level = self._SENSITIVITY_ORDER[max_sensitivity]
+        doc_level = self._SENSITIVITY_ORDER[doc_sensitivity]
         return doc_level <= max_level
 
     def _build_l2_context(self, manifest: ManifestRepository, hits: list[RetrievalHit]) -> list[dict]:

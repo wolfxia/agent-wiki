@@ -3,13 +3,15 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field
 
+from agent_wiki.domain.enums import ActorType, GateLevel, PageType
+
 
 class PermissionConfig(BaseModel):
-    actor_type: str
+    actor_type: ActorType
     actor_id: str
     allowed_operations: list[str] = Field(default_factory=list)
-    max_gate: str
-    allowed_page_types: list[str] = Field(default_factory=list)
+    max_gate: GateLevel
+    allowed_page_types: list[PageType] = Field(default_factory=list)
 
 
 class RetrievalConfig(BaseModel):
@@ -30,7 +32,7 @@ class WikiConfig(BaseModel):
     workspace_path: str
     purpose_path: str
     config_path: str
-    allowed_page_types: list[str] = Field(default_factory=list)
+    allowed_page_types: list[PageType] = Field(default_factory=list)
     external_views: list[ExternalViewConfig] = Field(default_factory=list)
     pending_query_policy: dict[str, str] = Field(default_factory=dict)
     retrieval: RetrievalConfig

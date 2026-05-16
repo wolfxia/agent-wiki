@@ -12,3 +12,46 @@ def test_registry_loader_reads_registry_fixture() -> None:
     assert registry.default_route_policy == "purpose_then_topic"
     assert len(registry.wikis) == 1
     assert registry.wikis[0].wiki_id == "personal-1"
+
+
+
+def test_registry_loader_rejects_invalid_enum_values(tmp_path: Path) -> None:
+    bad_registry = tmp_path / "bad-registry.yaml"
+    bad_registry.write_text(
+        """
+version: 1
+default_route_policy: purpose_then_topic
+wikis:
+  - wiki_id: personal-1
+    type: personal
+    workspace_path: ./tmp
+    purpose_path: purpose.md
+    config_path: config.yaml
+    allowed_page_types: [raw, wrong_type]
+    external_views:
+      - adapter: plain_markdown
+        mode: invalid_mode
+    pending_query_policy: {}
+    retrieval:
+      coarse_provider: lexical
+      optional_providers: []
+      route_priority: 80
+    permissions:
+      - actor_type: robot
+        actor_id: broken
+        allowed_operations: [query]
+        max_gate: Z
+        allowed_page_types: [raw]
+""",
+        encoding="utf-8",
+    )
+
+    loader = RegistryLoader()
+
+    try:
+        loader.load(bad_registry)
+    except Exception as error:
+        message = str(error)
+        assert "wrong_type" in message or "invalid_mode" in message or "robot" in message or "Z" in message
+    else:
+        raise AssertionError("expected invalid enum registry validation failure")
