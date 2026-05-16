@@ -67,3 +67,29 @@ def test_weekly_review_includes_purpose_alignment(temp_wiki_root: Path) -> None:
 
     assert "purpose" in report.summary.lower()
     assert "deployment" in report.summary or "security" in report.summary
+
+
+def test_weekly_review_surfaces_quality_signals_and_suggestions(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+
+    # Write queue items of different types
+    queue_path = temp_wiki_root / "review_queue.jsonl"
+    queue_path.parent.mkdir(parents=True, exist_ok=True)
+    items = [
+        {"item_type": "quality_signal", "query": "missing-topic", "status": "open"},
+        {"item_type": "quality_signal", "query": "another-gap", "status": "open"},
+        {"item_type": "compile_suggestion", "topic": "caching", "problem_cluster": "invalidation", "status": "open"},
+        {"item_type": "feedback_issue", "reason": "needs more evidence", "status": "open"},
+    ]
+    with queue_path.open("w", encoding="utf-8") as f:
+        for item in items:
+            f.write(json.dumps(item) + "\n")
+
+    report = WeeklyReviewService().generate(wiki)
+
+    assert "2 quality_signal" in report.summary
+    assert "1 compile_suggestion" in report.summary

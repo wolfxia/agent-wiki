@@ -40,8 +40,14 @@ class WeeklyReviewService:
             parts.append(f"{raw_count} raw pages in backlog")
         if purpose["topics"]:
             parts.append(f"purpose topics: {', '.join(purpose['topics'])}")
-        if queue_items:
-            parts.append(f"latest item_type={queue_items[-1].get('item_type', 'unknown')}")
+
+        # Summarize queue item types
+        type_counts: dict[str, int] = {}
+        for item in queue_items:
+            item_type = item.get("item_type", "unknown")
+            type_counts[item_type] = type_counts.get(item_type, 0) + 1
+        for item_type, count in sorted(type_counts.items()):
+            parts.append(f"{count} {item_type}")
 
         summary = "; ".join(parts)
         suggested_actions = [item.get("reason", "review queue follow-up") for item in queue_items if item.get("reason")]
