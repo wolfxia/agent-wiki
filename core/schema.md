@@ -1,7 +1,9 @@
 # wiki-schema.md — Agent-Agnostic Operation Contract
 
-> This file is the **Schema Layer** — it defines HOW any agent should ingest, compile, route, lint, promote, and maintain the wiki.
+> This file is the **Schema Layer** — it defines HOW any agent should ingest, compile, route, lint, promote, and maintain the wiki.  
 > It is NOT a directional manifesto. It is an **operation contract**.
+>
+> Status note: this contract remains the target operational model. The current `src/agent_wiki/` implementation only enforces a subset of this contract and is explicitly called out below as the **Phase 1 Implementation Profile (Current)**.
 
 ---
 
@@ -15,9 +17,9 @@ This file constrains the following executors:
 - Human editors (before triggering automated maintenance)
 
 It does NOT govern:
-- Domain-specific business logic
-- Vector store implementation details
-- Editor UI / plugin configuration
+- domain-specific business logic
+- vector store implementation details
+- editor UI / plugin configuration
 
 If `purpose.md` answers "what matters", then `wiki-schema.md` answers:
 **"How should the system maintain these knowledge objects?"**
@@ -75,21 +77,21 @@ If `purpose.md` answers "what matters", then `wiki-schema.md` answers:
 
 1. Every page must have a stable `doc_id`.
 2. Path is NOT identity; rename/move does not change `doc_id`.
-3. Path changes must be recorded in `legacy_paths[]`.
+3. Path changes should be recorded in `legacy_paths[]`.
 4. `canonical_uri` points to the authoritative location in the workspace.
 5. External store mirror paths do not participate in identity.
 6. Retrieval units must reference `doc_id`, not path alone.
 
-### 3.1 Change Rules
-- Rename: keep `doc_id`, update `canonical_uri`, old path → `legacy_paths[]`
-- Merge: keep surviving page's `doc_id`, merged page gets `superseded_by`
-- Split: original page downgraded to parent/archived, new pages get new `doc_id`
+### Important current-state note
+
+The current implementation still writes and reads pages as `pages/{doc_id}.md` in multiple services. That is a **Phase 1 implementation simplification**, not a change to the contract. The contract continues to treat path and identity as separate concerns.
 
 ---
 
-## 4. Frontmatter Contract
+## 4. Frontmatter and Manifest Contract
 
-### 4.1 Common Fields (all pages must have)
+### 4.1 Full target common fields
+All pages should eventually carry:
 - `doc_id`
 - `page_type`
 - `topic`
@@ -102,14 +104,16 @@ If `purpose.md` answers "what matters", then `wiki-schema.md` answers:
 - `updated`
 - `source_refs`
 
-### 4.2 raw-specific Fields
+### 4.2 Type-specific target fields
+
+#### raw
 - `evidence_strength`
 - `superseded_by`
 - `when_to_use`
 - `compiled_into`
 - `ingest_origin`
 
-### 4.3 atom-specific Fields
+#### atom
 - `solves`
 - `applicable_when`
 - `not_for`
@@ -117,7 +121,7 @@ If `purpose.md` answers "what matters", then `wiki-schema.md` answers:
 - `source_coverage`
 - `supports`
 
-### 4.4 synthesis-specific Fields
+#### synthesis
 - `answers`
 - `preferred_for`
 - `related_principles`
@@ -125,7 +129,7 @@ If `purpose.md` answers "what matters", then `wiki-schema.md` answers:
 - `depends_on`
 - `related_pages`
 
-### 4.5 principle-specific Fields
+#### principle
 - `principle_scope`
 - `applies_to_topics`
 - `use_for`
@@ -134,20 +138,21 @@ If `purpose.md` answers "what matters", then `wiki-schema.md` answers:
 - `promotion_basis`
 - `review_required`
 
-### 4.6 Field Consistency Rules
+### 4.3 Field consistency rules
 - `query_types` cannot be empty.
 - `route_priority` must be in predefined enum.
-- `load_policy` must match page_type.
+- `load_policy` must match page type.
 - `review_status` must not be missing.
 - `source_refs` must point to existing source in manifest.
 
 ---
 
-## 5. Ingest Contract
+## 5. Ingest and Compile Contract
 
+### 5.1 Target ingest model
 New source enters the system via Two-Step ingest:
 
-### Step 1: Analyze
+#### Step 1: Analyze
 Must answer:
 1. Which `topic` does it belong to?
 2. Which `problem_cluster`?
@@ -155,86 +160,111 @@ Must answer:
 4. Is it supplementing evidence, structure, or introducing new problems?
 5. Does it conflict with existing claims?
 
-### Step 2: Decide
+#### Step 2: Decide
 Only four options:
 - `append_raw`
 - `update_atom`
 - `update_synthesis`
 - `create_review_item`
 
-### Step 3: Record
+#### Step 3: Record
 Must update the following artifacts:
 - `MANIFEST.jsonl`
 - `retrieval_index.jsonl`
-- configured retrieval provider indexes (Phase 1 default: lexical index; optional: local vector index)
+- configured retrieval provider indexes
 - `log.md`
 - `review_queue.jsonl` (if conflict/dispute)
 
-### 5.1 Prohibited Actions
+### 5.2 Prohibited actions
 - No writing raw content directly into principle truth zone.
 - No creating synthesis without analysis when new source arrives.
 - No writing compiled page without updating manifest.
+
+### 5.3 Current implementation profile
+
+Implemented today in `src/agent_wiki/`:
+- `capture_raw` writes a raw page, manifest entry, retrieval card, and `log.md` entry.
+- Invalid raw `doc_id` values fall back to `.agent-wiki/pending_manifest.jsonl`.
+- `compile_update.analyze` currently uses simple `doc_id` / `problem_cluster` heuristics to decide create vs revise.
+- `compile_update.apply` currently supports `atom` and `synthesis` writes, validates `allowed_page_types`, validates `source_refs`, and writes operation log entries.
+- C-level principle writes currently use proposal + approval flow rather than direct compile.
+
+Not yet implemented from the full contract:
+- full evidence-chain analysis output
+- route/gate planning artifacts from analyze
+- deeper contradiction resolution logic
+- manifest/frontmatter parity enforcement beyond the current simplified fields
 
 ---
 
 ## 6. Update vs Create Rules
 
-### 6.1 Prefer Revision When
-- Problem cluster already exists
-- New source only supplements evidence
-- New source strengthens existing conclusion
-- New source only brings section-level increment
+### 6.1 Prefer revision when
+- problem cluster already exists
+- new source only supplements evidence
+- new source strengthens existing conclusion
+- new source only brings section-level increment
 
-### 6.2 Create New atom When
-- Stable problem cluster appears within same topic
-- Similar to existing atom but not equivalent
-- At least 2-3 raw sources can support it
+### 6.2 Create new atom when
+- stable problem cluster appears within same topic
+- similar to existing atom but not equivalent
+- at least 2-3 raw sources can support it
 
-### 6.3 Create New synthesis When
-- Cross-atom/problem-cluster integration needed
-- Problem has reached trend/comparison/decision level
-- Atom alone cannot fully answer high-level question
+### 6.3 Create new synthesis when
+- cross-atom/problem-cluster integration needed
+- problem has reached trend/comparison/decision level
+- atom alone cannot fully answer high-level question
 
-### 6.4 Promote to principle When (ALL must hold)
-- Has explanatory power in 2+ topics
-- Not overturned by existing evidence
-- Has clear applicability boundaries and counterexample
-- Preferably human-validated
+### 6.4 Promote to principle when
+- has explanatory power in 2+ topics
+- not overturned by existing evidence
+- has clear applicability boundaries and counterexample
+- preferably human-validated
 
-### 6.5 Judgment Matrix Principles
-- "Same topic" ≠ "same problem cluster"
-- "High similarity" ≠ "mergeable"
-- "High frequency" ≠ "principle-worthy"
+### 6.5 Current implementation note
+
+The current `CompileUpdateService.analyze()` only distinguishes create vs revise using `doc_id` and `problem_cluster`. That behavior should be treated as a baseline heuristic, not the final judgment matrix.
 
 ---
 
 ## 7. Contradiction and Provenance Rules
 
-### 7.1 Provenance Enum
-- `extracted`: Directly verifiable extraction from source
-- `inferred`: Inductive inference from multiple sources
-- `ambiguous`: Insufficient evidence or conflicting
+### 7.1 Provenance enum
+- `extracted`
+- `inferred`
+- `ambiguous`
 
-### 7.2 What Must Enter Review Queue
-- New source clearly overturns existing compiled claim
-- Same concept has conflicting conclusions in different synthesis
-- Principle lacks supporting page backlinks
-- Same problem cluster has two mutually exclusive answers
+### 7.2 What must enter review queue
+- new source clearly overturns existing compiled claim
+- same concept has conflicting conclusions in different synthesis
+- principle lacks supporting page backlinks
+- same problem cluster has two mutually exclusive answers
 
-### 7.3 Disputed Rules
+### 7.3 Disputed rules
 - `disputed` must include `dispute_reason`
-- Query hitting disputed page must include caveat in output
-- Disputed items cannot be promoted to principle before resolution
+- query hitting disputed page must include caveat in output
+- disputed items cannot be promoted to principle before resolution
 
-### 7.4 No-Provenance Prohibition
-- Claims without `source_refs` cannot enter compiled truth zone
-- Unverified insights can enter timeline but must be marked `inferred` or `ambiguous`
+### 7.4 No-provenance prohibition
+- claims without `source_refs` cannot enter compiled truth zone
+- unverified insights can enter timeline but must be marked `inferred` or `ambiguous`
+
+### Current implementation profile
+
+Implemented today:
+- `compile_update.apply` rejects compiled writes whose `source_refs` do not resolve to existing raw manifest entries, unless a shared-wiki approval path explicitly bypasses the raw-source requirement.
+- `query` surfaces dispute caveats when manifest entries carry `review_status=disputed` and `dispute_reason`.
+
+Not yet implemented:
+- richer contradiction-state transitions
+- dispute lifecycle management in queue workflow
+- automatic contradiction discovery
 
 ---
 
 ## 8. Retrieval Contract
 
-### 8.1 Query Types
+### 8.1 Query types
 Six fixed types:
 - `fact_lookup`
 - `concept_explain`
@@ -243,7 +273,7 @@ Six fixed types:
 - `decision_support`
 - `proof_trace`
 
-### 8.2 Fixed Retrieval Pipeline
+### 8.2 Fixed retrieval pipeline
 1. classify `query_type`
 2. coarse retrieve through the configured retrieval provider over `retrieval_index`
 3. aggregate by `wiki_id:doc_id`
@@ -251,33 +281,49 @@ Six fixed types:
 5. assemble layered context
 6. answer + log outcome
 
-### 8.2.1 Retrieval Provider Baseline
+### 8.2.1 Retrieval provider baseline
 - Retrieval is provider-based, not vector-mandatory.
 - Phase 1 default provider is lexical search over `retrieval_index.jsonl`.
 - Vector retrieval is an optional enhancement provider and must not be required for minimum query capability.
 - Provider outputs must use the same normalized retrieval hit shape and must reference `wiki_id:doc_id`.
 
-### 8.3 Layered Presentation
-- **L1 Answer layer**: Directly usable answer entries
-- **L2 Reasoning layer**: Why relevant, any disputes, which pages are dependencies
-- **L3 Proof layer**: Original evidence, source_refs, raw snippet
+### 8.3 Layered presentation
+- **L1** Answer layer: directly usable answer entries
+- **L2** Reasoning layer: why relevant, any disputes, which pages are dependencies
+- **L3** Proof layer: original evidence, `source_refs`, raw snippet
 
-### 8.4 Load Budget
-- First round: max 3 full-page compiled pages
-- Raw evidence: max 2 groups, unless `proof_trace`
-- Principle: cannot be sole context source
+### 8.4 Load budget
+- first round: max 3 full-page compiled pages
+- raw evidence: max 2 groups, unless `proof_trace`
+- principle: cannot be sole context source
 
-### 8.5 Dispute-aware Rule
+### 8.5 Dispute-aware rule
 When hitting disputed page:
-- Output must indicate dispute
-- Reason field must be visible
-- No strong conclusions without proof layer
+- output must indicate dispute
+- reason field must be visible
+- no strong conclusions without proof layer
+
+### Current implementation profile
+
+Implemented today in `src/agent_wiki/application/query.py`:
+- heuristic query-type classification
+- lexical retrieval over `retrieval_index.jsonl`
+- optional pending truth-zone inclusion through `include_pending=True`
+- simple hit sorting by lexical score and manifest-derived priority
+- L1/L2/L3 result assembly
+- cross-wiki aggregation through `CrossWikiQueryService`
+
+Not yet implemented:
+- explicit `load_policy` execution
+- retrieval budgets
+- vector-provider dispatch
+- automatic query outcome logging during query execution
 
 ---
 
 ## 9. Review Queue Contract
 
-### 9.1 Queue Item Minimum Fields
+### 9.1 Target queue item minimum fields
 - `item_id`
 - `wiki_id`
 - `doc_id`
@@ -292,10 +338,10 @@ When hitting disputed page:
 - `resolved_by`
 - `resolved_at`
 
-### 9.2 Status Flow
+### 9.2 Status flow
 - `open` → `assigned` → `in_progress` → `resolved` → `archived`
 
-### 9.3 Content State
+### 9.3 Content state
 `content_state` describes the knowledge claim state independently from queue workflow status:
 - `stub`
 - `ambiguous`
@@ -304,9 +350,7 @@ When hitting disputed page:
 - `stale`
 - `pending_gate_fix`
 
-Dispute handling is represented as `item_type=dispute` plus the appropriate `content_state`; it is not the global queue status machine.
-
-### 9.4 Item Types
+### 9.4 Item types
 Common `item_type` values:
 - `conflict`
 - `missing_evidence`
@@ -316,39 +360,46 @@ Common `item_type` values:
 - `principle_proposal`
 - `dispute`
 
-### 9.5 Close Rules
-- Only close when evidence is complete or conflict is adjudicated
-- Principle-related disputed close should include human confirmation
+### Current implementation profile
 
-### 9.6 Reopen Rules
-- Auto-reopen when new source overturns resolved conclusion
-- Can reopen when stale page is highly hit by new queries
+The current implementation writes a **minimal** review queue shape only:
+- `item_type`
+- `doc_id`
+- `reason`
+- `status`
+
+This is currently produced from:
+- `src/agent_wiki/application/propagation.py`
+- `src/agent_wiki/application/feedback.py`
+
+The richer queue contract remains the design target.
 
 ---
 
 ## 10. Lifecycle and Promotion Rules
 
-### 10.1 Page Lifecycle
+### Target lifecycle
 - `raw` → `compiled` → `verified` → `disputed` / `stale` → `archived`
 
-### 10.2 Stale Rules
-- Stale is a **computed derived property**, not manual state
-- Computed via `last_referenced` and `freshness_sla_days`
+### Target stale rules
+- stale is a computed derived property, not manual state
+- computed via `last_referenced` and `freshness_sla_days`
 
-### 10.3 Promotion Rules
+### Target promotion rules
 - raw → atom/synthesis: enter compiled coverage
 - compiled → verified: route tests stable, evidence sufficient, disputes closed
 - synthesis/atom → principle: meets transfer explanatory power conditions
 
-### 10.4 Demotion Rules
-- Principle with strong counterexample → demote to synthesis scaffold or disputed
-- Verified page with conflict → demote to disputed
+### Current implementation note
+
+The current runtime only implements a smoke-path principle proposal/approval flow. It does not yet implement the full promotion/demotion lifecycle semantics described above.
 
 ---
 
 ## 11. Lint Rules
 
-Must check:
+### Target lint checks
+Must eventually check:
 1. frontmatter completeness
 2. `doc_id` uniqueness
 3. `source_refs` validity
@@ -360,7 +411,7 @@ Must check:
 9. disputed has `dispute_reason`
 10. `compiled_into / superseded_by` chain consistency
 
-### 11.1 Data Flow Integrity Checks (Anti-Island)
+### 11.1 Data flow integrity checks (target)
 
 | Check | Detects | On Failure |
 |-------|---------|-----------|
@@ -372,73 +423,88 @@ Must check:
 | query_outcomes consumed within 7 days | Knowledge used but no feedback | Alert |
 | External store ↔ workspace diff < 5% | Human edits not reflected | Alert + trigger reverse propagation |
 
-When lint fails:
-- Block entry to next phase gate
-- Block auto-publish to external store
-- Data flow break items must be fixed before continuing
+### Current implementation profile
+
+The current `LintService` in `src/agent_wiki/application/linting.py` checks only:
+- every manifest entry has a `canonical_uri`
+- every manifest `canonical_uri` points to an existing page
+- every retrieval index entry has a matching manifest entry
+
+This is a deliberately small Phase 1 baseline. The larger lint contract remains the target.
 
 ---
 
 ## 12. Logging and Audit
 
-### 12.1 log.md Records
-- ingest, revise, merge, promote, dispute, archive, notable query outcome
+### Target logging
+- `log.md` records ingest, revise, merge, promote, dispute, archive, notable query outcome
+- `query_outcomes.jsonl` keeps append-only feedback/effect history
+- approval operations write durable audit records
 
-### 12.2 query_outcomes.jsonl Minimum Fields
-- `query`, `query_type`, `hit_docs`, `used_sources`, `needed_external_search`, `approved`, `missing_evidence`, `rewrite_targets`, `timestamp`
+### Current implementation profile
 
-### 12.3 Append-only Principle
-- Query outcomes: append only, never rewrite history
-- log.md: can archive but never rewrite historical events
+Current runtime artifacts:
+- `log.md` from propagation writes
+- `operation_log.jsonl` from compile updates
+- `approval_log.jsonl` from approvals
+- `query_outcomes.jsonl` from feedback submission
+
+The append-only principle still applies to these artifacts even though the runtime shape is currently minimal.
 
 ---
 
 ## 13. Human Override Rules
 
-### 13.1 Must Have Human Confirmation
-- Principle promotion / demotion
-- Cross-topic large-scale merge
-- Disputed adjudication (high-impact conclusions)
-- Workspace ↔ External store conflict merge
+### Must have human confirmation
+- principle promotion / demotion
+- cross-topic large-scale merge
+- disputed adjudication (high-impact conclusions)
+- workspace ↔ external store conflict merge
 
-### 13.2 Can Auto-Execute
-- Raw ingest
-- Atom/synthesis timeline append
-- Retrieval view rebuild
-- Vector re-embedding
-- Review item creation
-- Lint and route test execution
+### Can auto-execute
+- raw ingest
+- atom/synthesis timeline append
+- retrieval view rebuild
+- vector re-embedding
+- review item creation
+- lint and route test execution
 
-### 13.3 Human Edit Backflow Rules
-- Human edits in external store are treated as upstream changes.
-- Reverse sync applies parsed human edits to the local workspace first, so the change stays visible in the user's external view and workspace.
-- Gate-check blocks Git commit, not workspace visibility.
-- If gate-check passes, update committed artifacts and commit to Git.
-- If gate-check fails, keep the workspace-visible change, record it in `.agent-wiki/pending_manifest.jsonl`, and create a `review_queue` item with `item_type=pending_gate_fix` or `item_type=conflict`.
-- Truth-zone pending pages are excluded from default query unless `include_pending=true`; raw pending pages can be queried through the local pending index.
+### Current implementation note
+
+The current code only implements a local proposal/approval smoke path for high-risk principle writes. Broader human-override routing remains a design target.
 
 ---
 
-## 14. Worked Examples
+## 14. Phase 1 Implementation Profile (Current)
 
-### Example 1: New raw note enters, updates existing atom
-- New source belongs to `edge-ai-imaging`
-- Analyze finds it belongs to `lcm-lora-engineering`
-- Decision: `update_atom`
-- Actions: raw saved, atom truth zone revised, timeline appended, retrieval_index cards rebuilt, log.md records one revise
+The current implementation baseline in `src/agent_wiki/` enforces the following subset of the contract:
 
-### Example 2: New source overturns old synthesis claim
-- New source conflicts with a claim in `synthesis/imaging-os.md`
-- Decision: `create_review_item` + `update_synthesis`
-- Actions: original claim marked `ambiguous` or `disputed`, review_queue item added, query hits auto-include caveat, log.md records dispute
+### Implemented today
+- registry-driven multi-wiki loading
+- raw capture with committed and pending paths
+- compile update for `atom` and `synthesis`
+- lexical retrieval with L1/L2/L3 output
+- dispute caveats during query
+- pending truth-zone opt-in querying
+- minimal manifest persistence
+- minimal lint checks
+- minimal sync file-copy modes
+- feedback → review queue creation
+- weekly review summary generation
+- proposal/approval smoke path for principle writes
+- shared wiki page-type restrictions
+- cross-wiki query smoke behavior
 
-### Example 3: Cross-topic insight promoted to principle
-- "Constraint pre-positioning" has explanatory power in both imaging-os and ai-harness
-- Recent query outcomes repeatedly link back to this insight
-- Human confirms applicability boundaries and counterexamples
-- Decision: promote to principle
-- Actions: new principle page created, backlinks to related synthesis/atom, `promotion_basis` noted, added to route policy but cannot replace proof layer
+### Not yet implemented from the full contract
+- full frontmatter coverage
+- full queue item schema
+- MCP/REST transport parity
+- gate engine with `max_gate` enforcement
+- vector-provider routing
+- adapter-driven reverse sync and gate-to-Git flow
+- stale marker and mirror marker recovery
+- rich contradiction workflow
 
 ---
 
-*This file is an operation contract. If it conflicts with rules scattered in agent-specific skill prompts, this file takes precedence.*
+*This file remains the operation contract. When the current implementation is smaller than the contract, the contract still describes the intended architecture and behavior boundary.*

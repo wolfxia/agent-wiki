@@ -1,7 +1,8 @@
 # Agent-Wiki Architecture Design
 
-> Universal Knowledge System for Multi-Agent Environments
-> v1.0 — 2026-05-16
+> Universal Knowledge System for Multi-Agent Environments  
+> v1.1 — 2026-05-16  
+> Status: Design target aligned against the current Phase 1 implementation baseline
 
 ---
 
@@ -9,7 +10,7 @@
 
 **"Getting smarter" is not about accumulating more knowledge, but about improving behavior.**
 
-In cybernetic terms: knowledge base is the controlled object, agent behavior is the output, feedback loop is the controller. Without feedback, no open-loop system gets "better" at anything regardless of internal complexity.
+In cybernetic terms: knowledge base is the controlled object, agent behavior is the output, feedback loop is the controller. Without feedback, no open-loop system gets better at anything regardless of internal complexity.
 
 **Core question: Where is the closed loop from knowledge to behavior improvement?**
 
@@ -24,29 +25,45 @@ In cybernetic terms: knowledge base is the controlled object, agent behavior is 
 
 ## 1. Architecture
 
+```text
+Git authority
+  → local workspace and runtime state
+  → capture_raw / compile_update / query / lint / sync / feedback / weekly-review / approvals
+  → reviewable JSONL artifacts and markdown pages
+  → thin agent transports and adapters
 ```
-┌────────────────────────────────────────────────────────────┐
-│              Behavior Improvement Layer (Closed Loop)       │
-│ Query Outcome Loop: hit→effect→feedback→rewrite            │
-│ log.md / corrections / principle promotion                 │
-├────────────────────────────────────────────────────────────┤
-│              Retrieval Runtime Layer                        │
-│ query_profiles + wiki-query                                │
-│ coarse provider → doc aggregate → full/section → layered   │
-├────────────────────────────────────────────────────────────┤
-│              Compile & Maintenance Layer                    │
-│ raw / atom / synthesis / principle                         │
-│ review_queue / provenance / timeline / confidence          │
-├────────────────────────────────────────────────────────────┤
-│              Contract & Index Layer                         │
-│ wiki-schema.md / purpose.md / retrieval_index.jsonl        │
-│ manifest / ontology schema / route tests                   │
-├────────────────────────────────────────────────────────────┤
-│              Storage Substrate Layer                        │
-│ knowledge workspace → lint/validate → external mirror      │
-│ unified MANIFEST + retrieval_index + pluggable local index │
-└────────────────────────────────────────────────────────────┘
-```
+
+### Architecture intent
+
+The target system remains a protocol-centered `aw-agent` with shared core services behind MCP, CLI, and REST. The repository design still assumes:
+
+- one shared core engine
+- pluggable storage, retrieval, and content adapters
+- Git-first authority
+- explicit propagation, maintenance, and approval flows
+- multi-agent access through thin clients
+
+### Current Phase 1 implementation baseline
+
+The current implementation in `src/agent_wiki/` delivers a filesystem- and JSONL-backed baseline with the following active subsystems:
+
+- `src/agent_wiki/bootstrap/registry_loader.py`
+- `src/agent_wiki/application/capture_raw.py`
+- `src/agent_wiki/application/compile_update.py`
+- `src/agent_wiki/application/query.py`
+- `src/agent_wiki/application/linting.py`
+- `src/agent_wiki/application/sync.py`
+- `src/agent_wiki/application/feedback.py`
+- `src/agent_wiki/application/weekly_review.py`
+- `src/agent_wiki/application/approvals.py`
+- `src/agent_wiki/application/propagation.py`
+- `src/agent_wiki/infrastructure/storage/manifest_repo.py`
+- `src/agent_wiki/infrastructure/retrieval/retrieval_index.py`
+- `src/agent_wiki/infrastructure/runtime/*`
+
+### Phase 1 simplification
+
+The current runtime does **not** yet expose full MCP or REST transports. The implemented transport surface is still a minimal CLI stub in `src/agent_wiki/transports/cli/app.py`. The design below keeps MCP/REST as target architecture, but all implementation references in this document are explicitly limited to the current `src/agent_wiki/` baseline.
 
 ---
 
@@ -54,205 +71,346 @@ In cybernetic terms: knowledge base is the controlled object, agent behavior is 
 
 **Design principle: Write = Propagate. A write is not complete until all downstream artifacts are updated.**
 
-### 2.1 Diagnosed Breakage Points
+### 2.1 Target propagation model
 
-| # | Break Point | Symptom | Island Consequence |
-|---|-------------|---------|-------------------|
-| F1 | Write page → no manifest update | manifest pages=[] for 77% of entries | Page changed but index doesn't know |
-| F2 | Write page → no provider index update | 53 metadata key shapes, 147/374 missing source | Page changed but search can't find |
-| F3 | Write page → no retrieval_index update | retrieval_index doesn't exist | Coarse search has no data source |
-| F4 | query_outcomes → no consumer | Doesn't exist | Knowledge used but no feedback |
-| F5 | External edit → no backflow | sync is one-way push only | Human edits not reflected in agent |
+Target propagation still includes:
 
-### 2.2 Write Propagation Matrix
+- page write
+- manifest update
+- retrieval/provider index update
+- conditional review queue creation
+- logs and audit trails
+- eventual external mirror/sync handling
 
-| Operation | manifest | provider index | retrieval_index | review_queue | log.md | mirror |
-|-----------|----------|----------------|-----------------|--------------|--------|--------|
-| create raw | ✅ insert | ✅ update lexical/optional vector | ✅ add page card | — | ✅ append | ✅ push |
-| create atom | ✅ insert | ✅ update lexical/optional vector | ✅ add section/claim cards | — | ✅ append | ✅ push |
-| update compiled | ✅ update hash | ✅ update lexical/optional vector | ✅ rebuild cards | if conflict ✅ | ✅ append | ✅ push |
-| mark disputed | ✅ update status | — | ✅ update dispute caveat | ✅ insert | ✅ append | ✅ push |
-| promote principle | ✅ insert | ✅ update lexical/optional vector | ✅ add cards | ✅ insert | ✅ append | ✅ push |
-| archive page | ✅ mark archived | ✅ mark stale/remove | ✅ remove cards | — | ✅ append | ✅ archive |
+### 2.2 Implemented propagation model
 
-### 2.3 Propagation Failure Handling
+The current implementation in `src/agent_wiki/application/propagation.py` supports:
 
+- raw page write to `pages/{doc_id}.md`
+- manifest append/upsert
+- retrieval index append
+- `log.md` append
+- `operation_log.jsonl` append for compile updates
+- `review_queue.jsonl` append for evidence-related cases
+- pending raw fallback to `.agent-wiki/pending_manifest.jsonl`
+
+### 2.3 Current write flows
+
+#### A-level raw capture
+
+Implemented in:
+- `src/agent_wiki/application/capture_raw.py`
+- `src/agent_wiki/application/propagation.py`
+
+Flow:
+
+```text
+capture_raw
+  → validate allowed page type
+  → validate doc_id shape
+  → committed path: page + manifest + retrieval_index + log
+  → invalid doc_id path: pending_manifest only
 ```
-Step 1: Write page file → fail = abort, no cascade
-Step 2: Update manifest → fail = rollback Step 1
-Step 3: Update configured provider index → fail = mark "index_stale", don't rollback Step 1/2
-Step 4: Update retrieval_index → fail = mark "index_stale"
-Step 5: Update review_queue (if needed) → fail = log warning
-Step 6: Write log.md → fail = stderr alert (log can't block main flow)
-Step 7: Push mirror → fail = mark "mirror_pending"
+
+#### B-level compile update
+
+Implemented in:
+- `src/agent_wiki/application/compile_update.py`
+- `src/agent_wiki/application/propagation.py`
+
+Flow:
+
+```text
+compile_update
+  → analyze existing doc_id / problem_cluster
+  → validate allowed page type
+  → validate source_refs against raw manifest entries
+  → write page
+  → upsert manifest
+  → append retrieval card
+  → append operation log
+  → optionally append review queue item
+  → append log.md
 ```
 
-**Key rules**:
-- Step 1-2 must succeed atomically (page + manifest = identity foundation)
-- Step 3-4 failure: no rollback, mark `index_stale`, lint fixes on next run
-- Step 7 failure: no rollback, mark `mirror_pending`, sync retries next cycle
-- Lint must check `index_stale` and `mirror_pending` markers
+#### C-level proposal / approval smoke path
 
-### 2.4 Reverse Propagation (External Store → Workspace)
+Implemented in:
+- `src/agent_wiki/application/approvals.py`
 
+Flow:
+
+```text
+propose
+  → write .agent-wiki/proposals/{proposal_id}.json
+approve
+  → load proposal
+  → propagate compiled write
+  → append approval_log.jsonl
 ```
-External edit event (detected by sync adapter)
-  ↓
-Step 1: diff detect changed files
-Step 2: parse through ContentAdapter and apply to local workspace
-Step 3: run gate-check on the workspace change before Git commit
-Step 4: Pass → update manifest/retrieval_index and commit to Git
-        Fail → keep workspace-visible pending change, write `.agent-wiki/pending_manifest.jsonl`, and create review_queue item
-Step 5: update provider index according to pending policy
-Step 6: write log.md after successful commit, or local pending log on failure
-```
+
+### 2.4 Divergence from the target design
+
+The following propagation features are still design targets, not current implementation:
+
+- explicit rollback between page write and manifest write
+- `index_stale` markers
+- `mirror_pending` markers
+- provider-index refresh separate from retrieval index
+- mirror push and retry logic
+- conflict snapshots and automated reverse-propagation queueing
+
+These are **not contradictions**; they are Phase 1 simplifications of the fuller anti-island design.
 
 ---
 
 ## 3. Phase Gate System
 
-Each phase has: **Entry Gate** (prerequisites) + **Exit Gate** (acceptance) + **Rollback Strategy**.
+The architecture still assumes phased gates A/B/C/D.
 
-### Phase A: Skillified Substrate (1-2 weeks)
-- Goal: Freeze operation contract, build unified substrate
-- Exit: schema complete + retrieval provider baseline + manifest has doc_id + skillify fields 100%
-- Rollback: Revert to A Freeze Snapshot, keep old provider indexes read-only
+### Target gate intent
 
-### Phase B: Compiled Wiki (2-4 weeks)
-- Goal: Compile high-frequency topics into reusable, routable artifacts
-- Exit: compiled coverage + empty-hang rate <30% + route test ≥80% + dependency no break
-- Rollback: Revert to A Stable, don't publish unqualified compiled pages
+- **A** — raw/source capture validation
+- **B** — truth-zone atom/synthesis/dispute changes
+- **C** — principle promotion, shared high-risk writes, adjudication
+- **D** — long-cycle maintenance and evolution quality
 
-### Phase C: Hybrid Retrieval Runtime (4-8 weeks)
-- Goal: Fixed query pipeline, agent no longer ad-hoc decides what to read
-- Exit: 6 query types pass + avg steps <3 + route test ≥85% + dispute caveat
-- Rollback: Revert to B Stable, use INDEX + compiled page manual priority
+### Current implementation status
 
-### Phase D: Evolution (8-16 weeks)
-- Goal: Maintainable, incrementally upgradable, partially self-organizing
-- Exit: stale discovery <7d + maintenance coverage >80% + compression >1:10
-- Rollback: Revert to C Stable, disable graph/auto-promotion
+- Gate classification exists in `src/agent_wiki/infrastructure/identity/gates.py`.
+- A/B/C behavior is partially reflected by service boundaries:
+  - raw capture path
+  - compile update path
+  - approvals path
+- Full gate policy enforcement is **not yet implemented**:
+  - `max_gate` from permissions is not enforced
+  - no central gate-check service exists yet
+  - no route-test or content-quality gate execution exists yet
 
-**Gate rules: Cannot skip. Rollback on failure. Snapshot at every gate.**
+### Design note
+
+Keep the gate model in the design docs. The current code should be read as a baseline that matches the direction of A/B/C separation without yet implementing the full gate engine.
 
 ---
 
 ## 4. Protocol-Centered Agent Access
 
-### 4.1 Universal Access Model
+### 4.1 Target transport architecture
 
-Agent-specific adapters must stay thin. They do not implement query, ingest, lint, sync, propagation, or gate logic. Those capabilities live in `aw-agent` and are exposed through MCP, CLI, and REST.
+The design target remains:
 
-Agent adapter configuration contains connection and invocation details only:
-
-```python
-class AgentClientConfig(BaseModel):
-    agent_id: str
-    actor_type: Literal["agent", "human", "service"]
-    preferred_transport: Literal["mcp", "cli", "rest"]
-    mcp_server_name: str | None = None
-    cli_path: str | None = None
-    rest_base_url: str | None = None
-    identity_config_path: str | None = None
+```text
+Knowledge Agent / aw-agent
+├─ MCP Server
+├─ CLI / aw
+├─ REST API
+└─ Shared core services
 ```
 
-`aw-agent` resolves the actor identity from MCP client metadata, CLI config, or REST token. Request parameters cannot override identity.
+### 4.2 Current implementation status
 
-### 4.2 Storage and Retrieval Abstractions
+Current implemented surfaces:
 
-```python
-class KnowledgeStore(Protocol):
-    def read_page(self, doc_id: str) -> Page: ...
-    def write_page(self, page: Page) -> WriteResult: ...
-    def get_manifest(self, doc_id: str) -> ManifestEntry: ...
-    def update_manifest(self, entry: ManifestEntry) -> None: ...
+- Python package `agent_wiki`
+- minimal CLI stub in `src/agent_wiki/transports/cli/app.py`
 
-class RetrievalProvider(Protocol):
-    def search(self, query: str, top_k: int, filters: dict | None = None) -> list[SearchHit]: ...
-    def upsert_cards(self, cards: list[RetrievalCard]) -> None: ...
-    def delete_doc(self, wiki_id: str, doc_id: str) -> None: ...
-```
+Not yet implemented in the current codebase:
 
-### 4.3 Per-Agent Differences
+- MCP transport package and server
+- REST transport package and app
+- CLI command surface for the full workflow
 
-| Dimension | Hermes | Claude Code | OpenClaw | OpenCode |
-|-----------|--------|-------------|----------|----------|
-| **Invocation** | Skill (SKILL.md) | CLAUDE.md instruction + Bash | Skill prompt | `opencode run` |
-| **Scheduling** | cronjob (built-in) | External cron / launchd | cron (built-in) | External cron |
-| **File Access** | terminal + file tools | Bash commands | Skill prompt | `opencode run` with -f |
-| **Vector Search** | memory_search (built-in) | External (needs adapter) | External (needs adapter) | External (needs adapter) |
-| **Human Interface** | Feishu/WeChat native | Terminal | Feishu native | Terminal |
-| **Editor Sync** | Obsidian sync cron | None (code-focused) | Obsidian sync cron | None |
-| **Knowledge Write Path** | ~/hermes-projects/knowledge/ | ~/workspace/code/ | ~/.openclaw/workspace/ | Project-scoped |
-| **Config Format** | config.yaml | settings.local.json | agents/*.json | config.yaml |
+### 4.3 Agent identity and permissions
+
+Current implemented components:
+
+- `src/agent_wiki/infrastructure/identity/resolver.py`
+- `src/agent_wiki/infrastructure/identity/permissions.py`
+- `src/agent_wiki/infrastructure/identity/gates.py`
+
+### Important divergence
+
+The target design says request parameters must not override resolved identity. The current implementation still accepts explicit actor fields in `IdentityContext` and prefers them over metadata. This is a **real implementation gap**, not a design change, and the design docs should continue treating caller override as disallowed target behavior.
 
 ---
 
-## 5. Core Engine Implementation Notes
+## 5. Core Engine Mapping to `src/agent_wiki/`
 
-### 5.1 PropagationEngine
+### 5.1 Bootstrap and config
 
-The anti-island core. Every write goes through this engine:
+- `src/agent_wiki/bootstrap/registry_loader.py` — YAML registry parsing into `RegistryConfig`, `WikiConfig`, and related models
+- `src/agent_wiki/bootstrap/container.py` — minimal service wiring
 
-```python
-class PropagationEngine:
-    WRITE_PROPAGATION_MATRIX = {
-        "create_raw": ["manifest", "provider_index", "retrieval_index", "log", "mirror"],
-        "create_atom": ["manifest", "provider_index", "retrieval_index", "log", "mirror"],
-        "update_compiled": ["manifest", "provider_index", "retrieval_index", "review_queue?", "log", "mirror"],
-        "mark_disputed": ["manifest", "retrieval_index", "review_queue", "log", "mirror"],
-        "promote_principle": ["manifest", "provider_index", "retrieval_index", "review_queue", "log", "mirror"],
-        "archive_page": ["manifest", "provider_index", "retrieval_index", "log", "mirror"],
-    }
-    
-    def propagate(self, operation: str, doc_id: str, **kwargs) -> PropagationResult:
-        # Step 1-2: atomic (page + manifest)
-        # Step 3-4: resilient (mark stale on failure)
-        # Step 5-6: best-effort
-        # Step 7: async (mark pending on failure)
-        ...
-```
+### 5.2 Capture and compile
 
-### 5.2 Retrieval Providers
+- `src/agent_wiki/application/capture_raw.py`
+- `src/agent_wiki/application/compile_update.py`
+- `src/agent_wiki/application/propagation.py`
 
-Phase 1 default retrieval provider is lexical search over `retrieval_index.jsonl`. A local vector provider can be enabled as an optional enhancement without changing query contracts.
+### 5.3 Retrieval and query
 
-```python
-class LexicalRetrievalProvider:
-    def search(self, query: str, top_k: int, filters: dict | None = None) -> list[SearchHit]: ...
+- `src/agent_wiki/application/query.py`
+- `src/agent_wiki/infrastructure/retrieval/retrieval_index.py`
 
-class LocalVectorRetrievalProvider:
-    def search(self, query: str, top_k: int, filters: dict | None = None) -> list[SearchHit]: ...
-```
+### 5.4 Maintenance loop
 
-### 5.3 HybridRetriever
+- `src/agent_wiki/application/linting.py`
+- `src/agent_wiki/application/sync.py`
+- `src/agent_wiki/application/feedback.py`
+- `src/agent_wiki/application/weekly_review.py`
 
-```python
-class HybridRetriever:
-    def retrieve(self, query: str, query_type: str, budget: int = 3) -> RetrievalResult:
-        # 1. Classify query intent
-        # 2. Coarse retrieval through configured provider on retrieval_index
-        # 3. Aggregate by doc_id
-        # 4. Load by load_policy (full page or section)
-        # 5. Assemble L1/L2/L3 context
-        # 6. Return with dispute awareness
-        ...
-```
+### 5.5 Approvals and high-risk path
+
+- `src/agent_wiki/application/approvals.py`
+
+### 5.6 Persistence and runtime artifacts
+
+- `src/agent_wiki/infrastructure/storage/manifest_repo.py`
+- `src/agent_wiki/infrastructure/runtime/pending_state.py`
+- `src/agent_wiki/infrastructure/runtime/review_queue.py`
+- `src/agent_wiki/infrastructure/runtime/operation_log.py`
 
 ---
 
-## 6. Risk Matrix
+## 6. Retrieval Runtime
 
-| Risk | Probability | Impact | Mitigation |
-|------|------------|--------|-----------|
-| Phase A contract freeze不当, later rework | Medium | High | Validate full A→B chain on one topic first |
-| Phase B compiled pages = summaries not artifacts | High | High | route test + dependency check dual constraint |
-| Phase C coarse retrieve unstable | Medium | High | retrieval_index before ranking optimization |
-| Disputed annotation under-reporting | Medium | High | review_queue + dispute-aware replay script |
-| Phase D graph noise | Medium | Medium | Graph offline-only until gate passed |
-| Data flow breakage (islands) | High | High | PropagationEngine + lint data flow checks |
-| Multi-agent write conflicts | Medium | Medium | Lock by doc_id, review_queue on conflict |
+### Target retrieval design
+
+The target runtime remains:
+
+1. classify query type
+2. coarse retrieval through configured provider
+3. aggregate by `wiki_id:doc_id`
+4. load by policy
+5. assemble layered L1/L2/L3 context
+6. return with dispute awareness
+
+### Implemented baseline
+
+The current query baseline in `src/agent_wiki/application/query.py` implements:
+
+- heuristic query-type classification
+- lexical retrieval over `retrieval_index.jsonl`
+- optional pending truth-zone scan when `include_pending=True`
+- filtering via manifest/pending manifest
+- simple score-based ordering with manifest priority
+- L1 answer from top page content
+- L2 context with dispute caveat when `review_status=disputed`
+- L3 proof using manifest `source_refs`
+- cross-wiki fan-out via `CrossWikiQueryService`
+
+### Phase 1 simplification
+
+Not yet implemented in the current runtime:
+
+- provider routing beyond lexical baseline
+- vector retrieval plugin integration
+- explicit load-policy execution
+- query budget enforcement
+- query_outcome logging inside the query service itself
+
+Query outcomes are currently recorded through the separate feedback workflow, not automatically by `QueryService`.
 
 ---
 
-*Design v1.0 complete. For execution and review.*
+## 7. Sync and External Views
+
+### Target design
+
+The target Phase 1 architecture still assumes:
+
+- external views are human-facing layers
+- external edits flow back into workspace first
+- gate-check blocks Git commit, not visibility
+- adapters normalize external formats
+
+### Implemented baseline
+
+The current implementation in `src/agent_wiki/application/sync.py` is intentionally minimal:
+
+- `status` lists markdown pages in the workspace
+- `pull-view` copies `*.md` files from configured external paths into `pages/`
+- `push-view` copies `pages/*.md` to configured external paths
+
+### Deviation note
+
+This is a **simplified Phase 1 filesystem sync**, not full adapter-driven reverse sync. The design should continue to describe richer adapter-based sync as the target model, but must explicitly note that the current implementation is a copy-based placeholder with no gate-to-commit path yet.
+
+---
+
+## 8. Review Queue, Feedback, and Weekly Review
+
+### Target design
+
+The review loop should connect query usage, missing evidence, maintenance pressure, and high-risk knowledge evolution.
+
+### Implemented baseline
+
+Feedback and weekly review are currently implemented as simple JSONL flows:
+
+- `src/agent_wiki/application/feedback.py`
+  - appends feedback to `query_outcomes.jsonl`
+  - creates `feedback_issue` queue items when evidence is missing or rewrite targets exist
+- `src/agent_wiki/application/weekly_review.py`
+  - reads `review_queue.jsonl` and `query_outcomes.jsonl`
+  - summarizes queue count and feedback count
+  - emits suggested actions from queue reasons
+
+### Phase 1 simplification
+
+The current queue items are much smaller than the target review queue contract. They do not yet include the full state machine, assignment metadata, priorities, or conflict snapshots described in the original design.
+
+---
+
+## 9. Shared Wiki and Cross-Wiki Behavior
+
+### Implemented smoke coverage
+
+The current code and tests already demonstrate the following Phase 1 smoke-path behavior:
+
+- multi-wiki registry loading
+- shared wiki `allowed_page_types` restrictions
+- cross-wiki lexical query aggregation
+- C-level proposal/approval write path
+
+These are validated by:
+
+- `tests/test_multi_wiki.py`
+- `tests/test_shared_wiki.py`
+- `tests/test_cross_wiki_query.py`
+- `tests/test_approvals.py`
+
+### Design note
+
+This smoke coverage proves the interface direction is workable, but it is not yet the full transport- and policy-complete system described in the original protocol-centered design.
+
+---
+
+## 10. Known Divergences from Design v1.0
+
+| Area | Design target | Current implementation | Status |
+|---|---|---|---|
+| Transport surface | MCP + CLI + REST | minimal CLI stub only | Not Yet Implemented |
+| Identity resolution | caller cannot override resolved identity | explicit actor fields still override metadata | Divergence to fix |
+| Gate enforcement | operation risk + `max_gate` policy | gate classification exists, full enforcement missing | Partial |
+| Propagation failure handling | rollback + stale markers + mirror state | direct append/write only | Phase 1 Simplification |
+| Retrieval runtime | provider-pluggable, load-policy aware | lexical baseline with layered output | Phase 1 Simplification |
+| Sync | adapter-driven reverse sync + gate/commit path | copy-based markdown sync | Phase 1 Simplification |
+| Review queue | rich workflow schema | minimal append-only queue items | Phase 1 Simplification |
+| Query outcome loop | query service logs outcomes directly | feedback service records outcomes | Simplified |
+
+---
+
+## 11. Recommendation for Readers
+
+When using this document:
+
+- treat the architecture sections as the intended long-lived system shape
+- treat the implementation notes as the current Phase 1 baseline delivered in `src/agent_wiki/`
+- treat the divergence table as the authoritative map of what still needs to catch up
+
+This keeps the design stable without pretending the current implementation is already the full target system.
+
+---
+
+*Design v1.1 aligned against the current implementation baseline. Use with `core/schema.md`, `docs/requirements-and-architecture.md`, and the tests for current-state review.*
