@@ -3,6 +3,7 @@ from pathlib import Path
 
 from agent_wiki.domain.contracts import RetrievalHit
 from agent_wiki.domain.models import CompileUpdateInput
+from agent_wiki.infrastructure.retrieval.tokenizer import tokenize
 
 
 class RetrievalIndexRepository:
@@ -36,20 +37,22 @@ class RetrievalIndexRepository:
     def lexical_search(self, query: str) -> list[RetrievalHit]:
         if not self.index_path.exists():
             return []
-        terms = [term.lower() for term in query.split() if term.strip()]
+        terms = tokenize(query)
         hits: list[RetrievalHit] = []
         for line in self.index_path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             card = json.loads(line)
-            content = " ".join(
-                [
-                    str(card.get("topic", "")),
-                    str(card.get("problem_cluster", "")),
-                    str(card.get("content", "")),
-                ]
-            ).lower()
-            score = sum(1 for term in terms if term in content)
+            content_tokens = tokenize(
+                " ".join(
+                    [
+                        str(card.get("topic", "")),
+                        str(card.get("problem_cluster", "")),
+                        str(card.get("content", "")),
+                    ]
+                )
+            )
+            score = sum(1 for term in terms if term in content_tokens)
             if score:
                 hits.append(
                     RetrievalHit(

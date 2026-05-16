@@ -58,3 +58,45 @@ def test_tokenize_splits_cjk_and_latin() -> None:
     assert "部署" in tokens
     assert "策略" in tokens
     assert len(tokens) >= 3
+
+
+def test_lexical_search_finds_chinese_content(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    query_service = QueryService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    capture_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-query-cjk-1",
+            topic="部署",
+            problem_cluster="策略",
+            content="# 原始记录",
+            source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="synthesis-query-cjk-1",
+            page_type="synthesis",
+            topic="部署",
+            problem_cluster="策略",
+            content="# 综合\n\nPython部署策略需要灰度发布。",
+            source_refs=["personal-1:raw-query-cjk-1"],
+        ),
+    )
+
+    result = query_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=QueryInput(query="Python部署策略"),
+    )
+
+    assert result.hits[0].doc_id == "synthesis-query-cjk-1"
