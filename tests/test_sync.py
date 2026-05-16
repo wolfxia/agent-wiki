@@ -4,6 +4,7 @@ from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawServic
 from agent_wiki.application.sync import SyncInput, SyncService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
+from agent_wiki.infrastructure.adapters.plain_markdown import PlainMarkdownAdapter
 
 
 def test_sync_status_reports_workspace_files(temp_wiki_root: Path) -> None:
@@ -89,3 +90,14 @@ def test_sync_push_view_exports_workspace_markdown(temp_wiki_root: Path) -> None
 
     assert result.mode == "push-view"
     assert (external_dir / "raw-sync-2.md").exists()
+
+
+def test_plain_markdown_adapter_reads_file(temp_wiki_root: Path) -> None:
+    source = temp_wiki_root / "external-read.md"
+    source.write_text("# Imported\n\nExternal content.", encoding="utf-8")
+
+    document = PlainMarkdownAdapter().read(str(source))
+
+    assert document["content"] == "# Imported\n\nExternal content."
+    assert document["adapter_metadata"]["path"] == str(source)
+    assert document["adapter_metadata"]["stem"] == "external-read"
