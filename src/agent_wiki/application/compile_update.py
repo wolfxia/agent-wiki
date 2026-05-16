@@ -1,15 +1,19 @@
 from pathlib import Path
 
 from agent_wiki.application.propagation import PropagationService
-from agent_wiki.bootstrap.registry_loader import WikiConfig
+from agent_wiki.bootstrap.registry_loader import RegistryLoader, WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import CompileAnalysis, CompileResult, CompileUpdateInput
+from agent_wiki.domain.validators import validate_doc_id
 from agent_wiki.infrastructure.identity.permissions import PermissionService
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
-from agent_wiki.domain.validators import validate_doc_id
+from agent_wiki.settings import DEFAULT_REGISTRY_PATH
 
 
 class CompileUpdateService:
+    def __init__(self, registry_path: Path | None = None) -> None:
+        self._registry_path = registry_path or DEFAULT_REGISTRY_PATH
+
     def analyze(self, wiki: WikiConfig, actor: ResolvedActor, data: CompileUpdateInput) -> CompileAnalysis:
         manifest = ManifestRepository(Path(wiki.workspace_path))
         existing = manifest.find(data.doc_id)
@@ -50,9 +54,19 @@ class CompileUpdateService:
                 wiki_id, doc_id = source_ref.split(":", maxsplit=1)
             except ValueError:
                 return False
-            if wiki_id != wiki.wiki_id:
+            target_manifest = manifest if wiki_id == wiki.wiki_id else self._manifest_for_wiki_id(wiki_id)
+            if target_manifest is None:
                 return False
-            entry = manifest.find(doc_id)
+            entry = target_manifest.find(doc_id)
             if entry is None or entry.get("page_type") != "raw":
                 return False
         return True
+
+    def _manifest_for_wiki_id(self, wiki_id: str) -> ManifestRepository | None:
+        if not self._registry_path.exists():
+            return None
+        registry = RegistryLoader().load(self._registry_path)
+        target = next((candidate for candidate in registry.wikis if candidate.wiki_id == wiki_id), None)
+        if target is None:
+            return None
+        return ManifestRepository(Path(target.workspace_path))

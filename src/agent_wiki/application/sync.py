@@ -3,8 +3,10 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
+from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.infrastructure.adapters.obsidian import ObsidianAdapter
 from agent_wiki.infrastructure.adapters.plain_markdown import PlainMarkdownAdapter
+from agent_wiki.infrastructure.identity.permissions import PermissionService
 from agent_wiki.infrastructure.runtime.pending_state import PendingStateRepository
 
 
@@ -24,21 +26,29 @@ _ADAPTERS = {
 
 
 class SyncService:
-    def execute(self, wiki: WikiConfig, data: SyncInput) -> SyncResult:
+    def execute(self, wiki: WikiConfig, actor: ResolvedActor, data: SyncInput) -> SyncResult:
         if data.mode == "status":
+            self._check_permission(actor, wiki, "query")
             return self._status(wiki)
         if data.mode == "pull-view":
-            return self._pull_view(wiki)
+            self._check_permission(actor, wiki, "capture_raw")
+            return self._pull_view(wiki, actor)
         if data.mode == "push-view":
+            self._check_permission(actor, wiki, "capture_raw")
             return self._push_view(wiki)
         raise ValueError(f"unsupported sync mode: {data.mode}")
+
+    def _check_permission(self, actor: ResolvedActor, wiki: WikiConfig, operation: str) -> None:
+        decision = PermissionService().check(actor, operation, wiki, "raw")
+        if not decision.allowed:
+            raise PermissionError(decision.reason)
 
     def _status(self, wiki: WikiConfig) -> SyncResult:
         wiki_root = Path(wiki.workspace_path)
         changed_files = [str(path.relative_to(wiki_root)) for path in (wiki_root / "pages").glob("*.md")]
         return SyncResult(mode="status", changed_files=changed_files)
 
-    def _pull_view(self, wiki: WikiConfig) -> SyncResult:
+    def _pull_view(self, wiki: WikiConfig, actor: ResolvedActor) -> SyncResult:
         wiki_root = Path(wiki.workspace_path)
         pages_root = wiki_root / "pages"
         pages_root.mkdir(exist_ok=True)
@@ -57,6 +67,7 @@ class SyncService:
                     "doc_id": doc_id,
                     "page_type": "raw",
                     "source": "external_sync",
+                    "last_writer": actor.actor_id,
                 })
         return SyncResult(mode="pull-view", changed_files=changed_files)
 
@@ -70,7 +81,6 @@ class SyncService:
             for source in (wiki_root / "pages").glob("*.md"):
                 target = external_path / source.name
                 document: dict = {"content": source.read_text(encoding="utf-8")}
-                # Preserve existing frontmatter on push for adapters that support it
                 if target.exists():
                     existing = adapter.read(str(target))
                     adapter_metadata = existing.get("adapter_metadata", {})

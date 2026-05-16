@@ -47,6 +47,6 @@ wikis:
     permissions:
       - actor_type: agent
         actor_id: claude-code
-        allowed_operations: [query, compile_update]
+        allowed_operations: [query, compile_update, approve_proposal]
         max_gate: C
         allowed_page_types: [synthesis, principle]

@@ -28,7 +28,7 @@ def test_sync_status_reports_workspace_files(temp_wiki_root: Path) -> None:
         ),
     )
 
-    result = sync_service.execute(wiki, SyncInput(mode="status"))
+    result = sync_service.execute(wiki, actor, SyncInput(mode="status"))
 
     assert result.mode == "status"
     assert any(path.endswith("pages/raw-sync-1.md") for path in result.changed_files)
@@ -51,7 +51,7 @@ def test_sync_pull_view_imports_external_markdown(temp_wiki_root: Path) -> None:
         }
     )
 
-    result = sync_service.execute(wiki, SyncInput(mode="pull-view"))
+    result = sync_service.execute(wiki, ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"), SyncInput(mode="pull-view"))
 
     assert result.mode == "pull-view"
     assert (temp_wiki_root / "pages" / "imported.md").exists()
@@ -87,7 +87,7 @@ def test_sync_push_view_exports_workspace_markdown(temp_wiki_root: Path) -> None
         ),
     )
 
-    result = sync_service.execute(wiki, SyncInput(mode="push-view"))
+    result = sync_service.execute(wiki, actor, SyncInput(mode="push-view"))
 
     assert result.mode == "push-view"
     assert (external_dir / "raw-sync-2.md").exists()
@@ -190,7 +190,7 @@ def test_sync_pull_uses_obsidian_adapter_for_obsidian_view(temp_wiki_root: Path)
         }
     )
 
-    result = SyncService().execute(wiki, SyncInput(mode="pull-view"))
+    result = SyncService().execute(wiki, ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"), SyncInput(mode="pull-view"))
 
     assert result.mode == "pull-view"
     imported = temp_wiki_root / "pages" / "obs-note.md"
@@ -228,7 +228,7 @@ def test_sync_push_uses_obsidian_adapter_preserves_frontmatter(temp_wiki_root: P
         }
     )
 
-    result = SyncService().execute(wiki, SyncInput(mode="push-view"))
+    result = SyncService().execute(wiki, ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"), SyncInput(mode="push-view"))
 
     assert result.mode == "push-view"
     pushed = external_dir / "existing.md"
@@ -257,7 +257,7 @@ def test_sync_pull_creates_pending_manifest_entry(temp_wiki_root: Path) -> None:
         }
     )
 
-    SyncService().execute(wiki, SyncInput(mode="pull-view"))
+    SyncService().execute(wiki, ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"), SyncInput(mode="pull-view"))
 
     pending_path = temp_wiki_root / ".agent-wiki" / "pending_manifest.jsonl"
     assert pending_path.exists()
@@ -266,3 +266,44 @@ def test_sync_pull_creates_pending_manifest_entry(temp_wiki_root: Path) -> None:
     entry = next(e for e in entries if e["doc_id"] == "new-note")
     assert entry["page_type"] == "raw"
     assert entry["source"] == "external_sync"
+
+
+
+def test_sync_pull_view_requires_permission(temp_wiki_root: Path) -> None:
+    from agent_wiki.bootstrap.registry_loader import PermissionConfig
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={
+            "workspace_path": str(temp_wiki_root),
+            "permissions": [
+                PermissionConfig(
+                    actor_type="agent",
+                    actor_id="no-sync-agent",
+                    allowed_operations=["query"],
+                    max_gate="A",
+                    allowed_page_types=["raw"],
+                )
+            ],
+        }
+    )
+    external_dir = temp_wiki_root / "external"
+    external_dir.mkdir(exist_ok=True)
+    (external_dir / "blocked.md").write_text("# Blocked", encoding="utf-8")
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {"adapter": "plain_markdown", "mode": "read_write", "path": str(external_dir)}
+            ]
+        }
+    )
+
+    try:
+        SyncService().execute(
+            wiki,
+            ResolvedActor(actor_type="agent", actor_id="no-sync-agent", transport="cli"),
+            SyncInput(mode="pull-view"),
+        )
+    except PermissionError as error:
+        assert "permission" in str(error).lower() or "no matching" in str(error).lower()
+    else:
+        raise AssertionError("expected sync permission failure")
