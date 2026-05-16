@@ -5,6 +5,7 @@ from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpd
 from agent_wiki.application.query import QueryInput, QueryService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
+from agent_wiki.infrastructure.retrieval.tokenizer import tokenize
 
 
 def test_query_returns_relevant_hit_from_lexical_index(temp_wiki_root: Path) -> None:
@@ -48,3 +49,12 @@ def test_query_returns_relevant_hit_from_lexical_index(temp_wiki_root: Path) -> 
 
     assert result.hits[0].doc_id == "synthesis-query-2"
     assert result.hits[0].wiki_id == "personal-1"
+
+
+def test_tokenize_splits_cjk_and_latin() -> None:
+    tokens = tokenize("Python部署策略")
+
+    assert "python" in tokens
+    assert "部署" in tokens
+    assert "策略" in tokens
+    assert len(tokens) >= 3
