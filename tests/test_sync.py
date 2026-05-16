@@ -137,3 +137,34 @@ def test_obsidian_adapter_reads_file_without_frontmatter(temp_wiki_root: Path) -
 
     assert document["content"] == "# Plain\n\nNo frontmatter here."
     assert document["adapter_metadata"]["frontmatter"] == {}
+
+
+def test_obsidian_adapter_writes_with_frontmatter(temp_wiki_root: Path) -> None:
+    target = temp_wiki_root / "written-note.md"
+    document = {
+        "content": "# Written\n\nBody content.",
+        "adapter_metadata": {
+            "frontmatter": {"tags": ["python", "wiki"], "aliases": ["aw"]},
+        },
+    }
+
+    ObsidianAdapter().write(str(target), document)
+
+    result = target.read_text(encoding="utf-8")
+    assert result.startswith("---\n")
+    assert "tags:" in result
+    assert "# Written\n\nBody content." in result
+
+    roundtrip = ObsidianAdapter().read(str(target))
+    assert roundtrip["content"] == "# Written\n\nBody content."
+    assert roundtrip["adapter_metadata"]["frontmatter"]["tags"] == ["python", "wiki"]
+
+
+def test_obsidian_adapter_writes_without_frontmatter(temp_wiki_root: Path) -> None:
+    target = temp_wiki_root / "no-fm-note.md"
+    document = {"content": "# No FM\n\nJust content."}
+
+    ObsidianAdapter().write(str(target), document)
+
+    result = target.read_text(encoding="utf-8")
+    assert result == "# No FM\n\nJust content."
