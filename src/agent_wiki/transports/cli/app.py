@@ -5,6 +5,8 @@ import typer
 from agent_wiki.application.capture_raw import CaptureRawService
 from agent_wiki.application.compile_update import CompileUpdateService
 from agent_wiki.application.linting import LintService
+from agent_wiki.application.maintenance import MaintenanceService
+from agent_wiki.application.quality_report import QualityReportService
 from agent_wiki.application.query import QueryService
 from agent_wiki.bootstrap.container import Container
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
@@ -107,6 +109,22 @@ def lint(workspace: str | None = typer.Option(None, "--workspace")) -> None:
         for issue in result.issues:
             typer.echo(f"issue: {issue}")
         raise typer.Exit(code=1)
+
+
+@app.command("maintain")
+def maintain(workspace: str | None = typer.Option(None, "--workspace")) -> None:
+    """Run the slow self-evolution loop and print the quality report."""
+    wiki = _load_wiki(workspace)
+
+    summary = MaintenanceService().run(wiki)
+    typer.echo("maintenance summary:")
+    for key, value in summary.items():
+        typer.echo(f"  {key}={value}")
+
+    report = QualityReportService().generate(wiki)
+    typer.echo("quality report:")
+    for key, value in report.items():
+        typer.echo(f"  {key}={value}")
 
 
 def main() -> None:
