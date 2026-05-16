@@ -273,7 +273,169 @@ Current implemented components:
 
 ---
 
-## 6. Retrieval Runtime
+## 6. Query Quality as a First-Class Concern
+
+### Why this must be explicit
+
+The prior design emphasis on governance, authority, and risk gates remains valid, but Tao’s critique is directionally correct for the actual Phase 1 operating context: **Phase 1 is one person with five agents, not five people sharing one governed platform.**
+
+That changes the priority order.
+
+A knowledge system that cannot reliably return useful answers is not saved by having a stronger gate model. For the real Phase 1 workflow, **query quality is the lifeline**:
+
+- if retrieval is weak, the knowledge base is not trusted
+- if the knowledge base is not trusted, agents and humans bypass it
+- if it is bypassed, governance and audit paths become irrelevant because the system is no longer in the loop
+
+### Combined position from the three reviews
+
+- **Codex is right** that identity, `max_gate`, provenance, and deployment truthfulness are real architectural gaps.
+- **CC is right** that those gaps must be documented as blockers rather than glossed over.
+- **Tao is right** that, for Phase 1 usefulness, retrieval quality and adoption paths rank above governance completeness.
+
+The combined architectural position is therefore:
+
+1. **Usability-first for Phase 1** — retrieval quality and Obsidian-connected workflow are P0 because they determine whether the system is used at all.
+2. **Governance-hardening for Phase 1.5 / stronger claims** — identity precedence, `max_gate`, sensitivity filtering, and authority promotion remain blockers before stronger multi-agent governance claims.
+3. **Do not collapse these into one priority bucket** — “must be usable” and “must be governable” are both real, but they matter at different points in the adoption curve.
+
+### Target retrieval quality requirements
+
+Phase 1 retrieval should no longer be described merely as a lexical baseline. It should be described as a **usable lexical baseline** with concrete quality expectations:
+
+- Chinese tokenization support rather than whitespace-only assumptions
+- fuzzy keyword matching for near-miss query terms
+- weighted ranking for title/topic/problem-cluster/keyword overlap
+- hit/miss instrumentation on every query path
+- explicit tracking of repeated low-value queries as maintenance signals
+
+### Phase 1 implementation status
+
+Implemented today:
+
+- lexical retrieval over `retrieval_index.jsonl`
+- heuristic query classification
+- layered L1/L2/L3 response assembly
+- dispute caveats in query output
+- optional pending truth-zone inclusion
+
+Not yet implemented, but now promoted in architectural priority:
+
+- Chinese-aware tokenization
+- fuzzy lexical matching
+- weighted ranking beyond the current simple baseline
+- first-class hit/miss tracking in the query path itself
+- drift detection when hit quality degrades over time
+
+### Design implication
+
+This means the design should stop treating query quality as an implementation detail beneath governance. For Phase 1, retrieval quality is part of the core architecture because it determines whether the feedback loop ever receives meaningful usage.
+
+---
+
+## 7. Knowledge Lifecycle Automation
+
+### Why automation matters
+
+The current raw → atom/synthesis compile chain is architecturally sound, but Tao’s criticism is correct: the practical threshold for `compile_update` is too high for the actual agent mix.
+
+In the current Phase 1 reality:
+
+- T3 agents can capture raw but not compile
+- Hermes is not yet connected through MCP
+- Claude Code is capable but session-ephemeral
+- humans are unlikely to manually curate the compile boundary consistently
+
+Without automation, the most likely failure mode is:
+
+```text
+raw accumulates → compile_update is under-triggered → atom/synthesis stay sparse → query quality stagnates
+```
+
+That would reproduce the same failure pattern the project was created to solve.
+
+### Target lifecycle automation model
+
+Phase 1 should therefore include a **lightweight automation layer** for knowledge evolution, even before full governance hardening lands.
+
+#### 7.1 Auto-compile suggestions
+
+When raw pages on the same `topic` or `problem_cluster` accumulate past a threshold, the system should automatically create a compile suggestion.
+
+Target behavior:
+
+- threshold rule such as “N raw pages on the same topic”
+- create review queue / suggestion entry rather than blindly mutating truth-zone pages
+- route the suggestion to a T2+ executor or approval path
+
+This keeps the compile chain active without requiring full autonomy.
+
+#### 7.2 Fast feedback loop
+
+Weekly review remains useful for trend analysis, but it is too slow to be the only control loop.
+
+Target behavior:
+
+- three consecutive low-score or low-value query outcomes trigger a compile suggestion
+- sustained drop in hit rate triggers lint + reindex or retrieval-quality investigation
+- weekly review becomes the slow loop for trends, while fast feedback handles immediate drift
+
+#### 7.3 Purpose-driven knowledge evolution
+
+Tao is also correct that `purpose.md` is currently underweighted.
+
+`purpose.md` should be treated as the intent anchor for the whole wiki, not just metadata:
+
+- influences query priority and ranking
+- influences compile direction when multiple raw clusters compete for attention
+- influences archival or de-prioritization of irrelevant content
+- anchors C-level judgment about whether a principle belongs in this wiki
+
+Without that, the system risks becoming a gated file manager rather than a purpose-shaped knowledge system.
+
+#### 7.4 Obsidian-connected adoption path
+
+For Phase 1 adoption, Obsidian sync should not be framed as a nice-to-have external integration. It is the practical human entry path.
+
+That means Phase 1 should aim for:
+
+- ObsidianAdapter as a real deliverable, not only a design placeholder
+- external edits flowing back into workspace in a way the lifecycle loop can see
+- at minimum: Obsidian edit → raw capture path → compile suggestion / compile trigger
+
+#### 7.5 Candidate relations as differentiator
+
+The 4-Signal relation system should also be reframed.
+
+Without relation discovery, the system is structurally close to a governed file store. Candidate relations are part of what makes it a knowledge engine.
+
+Phase 1 should therefore aim for at least:
+
+- co-occurrence signal
+- cross-reference signal
+
+These can write to a suggestions artifact without mutating authoritative relationships until reviewed.
+
+### Phase 1 implementation status
+
+Implemented today:
+
+- raw capture path
+- manual/explicit compile update path
+- feedback capture
+- weekly review summary
+
+Not yet implemented, but now promoted in priority:
+
+- auto-compile suggestions
+- fast feedback triggers from repeated low-value queries
+- purpose-driven ranking / compile prioritization
+- ObsidianAdapter-backed reverse flow beyond file copy
+- low-cost candidate relation discovery
+
+---
+
+## 8. Retrieval Runtime
 
 ### Target retrieval design
 
@@ -314,7 +476,7 @@ Query outcomes are currently recorded through the separate feedback workflow, no
 
 ---
 
-## 7. Sync and External Views
+## 9. Sync and External Views
 
 ### Target design
 
@@ -339,7 +501,7 @@ This is a **simplified Phase 1 filesystem sync**, not full adapter-driven revers
 
 ---
 
-## 8. Review Queue, Feedback, and Weekly Review
+## 10. Review Queue, Feedback, and Weekly Review
 
 ### Target design
 
@@ -419,6 +581,60 @@ This keeps the design stable without pretending the current implementation is al
 ---
 
 *Design v1.1 aligned against the current implementation baseline. Use with `core/schema.md`, `docs/requirements-and-architecture.md`, and the tests for current-state review.*
+
+---
+
+### Phase 1 synthesis of priorities
+
+The three review perspectives imply a more nuanced Phase 1 priority stack than either a pure governance-first or pure convenience-first reading.
+
+#### P0 — Must be usable
+
+These determine whether the system is actually used:
+
+- query quality improvements to the lexical baseline
+  - Chinese tokenization
+  - fuzzy matching
+  - weighted keyword/topic ranking
+  - hit/miss tracking in the query path
+- Obsidian-connected workflow
+  - ObsidianAdapter as a real Phase 1 deliverable
+  - reverse flow visible to the knowledge lifecycle loop
+
+#### P1 — Must keep knowledge evolving
+
+These prevent raw capture from becoming a dead-end:
+
+- auto-compile suggestions when raw pages accumulate by topic/problem cluster
+- fast feedback triggers from repeated low-value queries
+- purpose-driven ranking, compile direction, and health evaluation
+- low-cost candidate relations, especially co-occurrence and cross-reference signals
+
+#### P2 — Must support stronger governance claims
+
+These remain required before stronger multi-agent governance or broader deployment claims:
+
+- trusted identity precedence
+- central `max_gate` enforcement
+- page-level sensitivity policy and filtering
+- richer review queue lifecycle records
+
+#### P3 — Must complete the authority and service story
+
+These deepen operational maturity:
+
+- authority-promotion / commit orchestration
+- `aw serve` and real service deployment path
+- broader DFX readiness criteria and operational runbooks
+
+### Design implication
+
+This is not a rejection of Codex or CC. It is a synthesis:
+
+- **Codex/CC correctly identify the governance blockers for stronger claims.**
+- **Tao correctly identifies the adoption blockers for actual Phase 1 usefulness.**
+
+The design should therefore present both truths clearly: governance matters, but if query quality and Obsidian-connected workflow fail, the rest of the system will never become the user’s real knowledge loop.
 
 ---
 

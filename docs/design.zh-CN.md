@@ -104,7 +104,169 @@ C级操作采用 proposal → approval 两步流程：
 
 默认不包含pending（未提交）的内容。仅在显式请求时包含，并用caveat标记。
 
-## 4. 页面类型体系
+## 3. 查询质量是一等公民（Query Quality as First-Class Concern）
+
+### 为什么这件事必须被显式写出来
+
+此前设计对治理、权威源与风险 gate 的强调仍然成立，但桃🍑的批评对 Phase 1 的真实场景是正确的：**Phase 1 不是 5 个人共用 1 个受治理系统，而是 1 个人调度 5 个 Agent。**
+
+这会直接改变优先级排序。
+
+一个知识系统如果不能稳定给出有用答案，再完整的 gate 模型也救不了它。对真实的 Phase 1 工作流来说，**查询质量就是生死线**：
+
+- 检索弱，知识库就不可信
+- 知识库不可信，人和 Agent 就会绕过它
+- 一旦被绕过，治理与审计路径就失去意义，因为系统本身已经不在闭环里
+
+### 三方视角合并后的结论
+
+- **Codex 是对的**：identity、`max_gate`、provenance 与 deployability 都是真实的架构缺口。
+- **CC 是对的**：这些缺口必须在文档里被明确标成 blocker，不能被淡化。
+- **桃🍑 也是对的**：就 Phase 1 的可用性而言，retrieval quality 与 Obsidian 接入路径优先级高于治理完整性。
+
+因此，合并后的架构立场是：
+
+1. **Phase 1 先以可用性为中心** —— 查询质量与 Obsidian 连通路径是 P0，因为它们决定系统会不会被真实使用。
+2. **Phase 1.5 / 更强声明再补治理硬化** —— 身份优先级、`max_gate`、sensitivity filtering 与 authority promotion 仍然是更强多 Agent 治理声明前的 blocker。
+3. **不要把这两类优先级混成一个桶** —— “必须能用” 与 “必须可治理” 都是真需求，只是发生在采用曲线的不同阶段。
+
+### 查询质量的目标要求
+
+Phase 1 不应再只把 retrieval 描述成一个 lexical baseline，而应描述成一个**可用的 lexical baseline**，具备明确质量要求：
+
+- 支持中文分词，而不是默认按空格切词
+- 支持模糊匹配，处理 query term 的近似命中
+- 支持 title/topic/problem-cluster/keyword 的加权排序
+- 每次查询都记录 hit/miss 信号
+- 对重复低价值查询显式形成维护信号
+
+### Phase 1 实现状态
+
+今天已实现：
+
+- 基于 `retrieval_index.jsonl` 的词法检索
+- 启发式 query classification
+- L1/L2/L3 分层输出
+- 查询结果中的 dispute caveat
+- pending truth-zone 的可选纳入
+
+尚未实现，但现在被提升为架构优先项：
+
+- 中文分词
+- 模糊词法匹配
+- 超越当前简单 baseline 的加权排序
+- 在 query path 中一等公民化的 hit/miss tracking
+- 当命中质量长期下滑时的 drift detection
+
+### 设计含义
+
+这意味着设计文档不应再把 query quality 当作治理之下的实现细节。对于 Phase 1，retrieval quality 是核心架构的一部分，因为它决定反馈闭环是否真的会接收到有意义的使用数据。
+
+---
+
+## 4. 知识生命周期自动化（Knowledge Lifecycle Automation）
+
+### 为什么自动化是必须的
+
+当前 raw → atom/synthesis 的 compile 链路在架构上是成立的，但桃🍑的批评也是对的：对真实的 Agent 组合来说，`compile_update` 的门槛太高了。
+
+在当前 Phase 1 现实里：
+
+- T3 Agent 可以 capture raw，但不能 compile
+- Hermes 还没有通过 MCP 接入
+- Claude Code 虽然能做，但 session 是临时的
+- 人类很难持续手动维护 compile 边界
+
+如果没有自动化，最可能的失败模式就是：
+
+```text
+raw 持续累积 → compile_update 触发不足 → atom/synthesis 稀缺 → query quality 停滞
+```
+
+这会把新系统重新带回它试图解决的旧问题。
+
+### 目标生命周期自动化模型
+
+因此，即便完整治理尚未补齐，Phase 1 也应当具备一个**轻量自动化层**来推动知识演化。
+
+#### 4.1 Auto-compile 建议
+
+当同一 `topic` 或 `problem_cluster` 下的 raw 页面累积超过阈值时，系统应自动生成 compile suggestion。
+
+目标行为：
+
+- 使用类似“同一 topic 下 N 篇 raw 页面”的阈值规则
+- 生成 review queue / suggestion，而不是盲目直接修改 truth-zone 页面
+- 把建议路由给 T2+ 执行者或 approval path
+
+这样可以让 compile 链路持续活着，而不是完全依赖人工记得去做。
+
+#### 4.2 快速反馈闭环
+
+weekly review 仍有价值，但它更适合看趋势，不适合作为唯一控制回路。
+
+目标行为：
+
+- 连续 3 次低分/低价值 query outcome 自动触发 compile suggestion
+- hit rate 持续下滑时自动触发 lint + reindex 或 retrieval 质量调查
+- weekly review 负责慢回路趋势分析，fast feedback 负责即时漂移修正
+
+#### 4.3 purpose.md 驱动的知识演化
+
+桃🍑对 `purpose.md` 的判断也成立：它当前被低估了。
+
+`purpose.md` 应被视为整个 wiki 的意图锚点，而不只是一个元数据文件：
+
+- 影响查询优先级与排序
+- 在多个 raw cluster 竞争时影响 compile 方向
+- 影响无关内容的降级或归档
+- 作为 C 级判断某个 principle 是否属于此 wiki 的依据
+
+如果没有这层驱动，系统很容易退化成一个“带 gate 的文件管理器”。
+
+#### 4.4 Obsidian-connected adoption path
+
+对 Phase 1 的采用来说，Obsidian sync 不应被描述成一个可有可无的外部集成，而应是实际的人类入口路径。
+
+这意味着 Phase 1 应以以下目标为准：
+
+- ObsidianAdapter 是真实交付物，而不是纯设计占位
+- 外部编辑能以知识生命周期可见的方式回流到 workspace
+- 最低目标：Obsidian 编辑 → raw capture path → compile suggestion / compile trigger
+
+#### 4.5 候选关系是差异化能力
+
+4-Signal relation 系统也应该被重新定性。
+
+如果没有关系发现能力，这个系统在结构上仍很接近一个受治理的文件仓库。Candidate relations 是它成为知识引擎的关键之一。
+
+因此 Phase 1 至少应以以下两种 signal 为目标：
+
+- co-occurrence signal
+- cross-reference signal
+
+这些 signal 可以先写入 suggestions 工件，而不直接修改权威关系，直到经过 review。
+
+### Phase 1 实现状态
+
+今天已实现：
+
+- raw capture path
+- 手动/显式 compile update path
+- feedback capture
+- weekly review summary
+
+尚未实现，但现在被提升为优先项：
+
+- auto-compile suggestions
+- 基于重复低价值查询的 fast feedback trigger
+- purpose 驱动的 ranking / compile prioritization
+- 超越 file copy 的 ObsidianAdapter reverse flow
+- 低成本的 candidate relation discovery
+
+---
+
+## 5. 页面类型体系
 
 | 类型 | 说明 | 可变性 | Gate级别 |
 |------|------|--------|----------|
@@ -235,8 +397,61 @@ query → 记录outcome → weekly review → 识别改进点 → 更新规则/�
 
 ---
 
-## 12. DFX 设计
+### Phase 1 综合优先级
 
+三方评审视角意味着，Phase 1 的优先级结构要比“纯治理优先”或“纯便利优先”都更细致。
+
+#### P0 — 必须先能用
+
+这些决定系统会不会被真正使用：
+
+- 查询质量提升到可用水平
+  - 中文分词
+  - 模糊匹配
+  - 基于关键词/topic 的加权排序
+  - query path 中的 hit/miss 记录
+- Obsidian-connected workflow
+  - ObsidianAdapter 作为真实 Phase 1 交付物
+  - reverse flow 能进入知识生命周期闭环
+
+#### P1 — 必须让知识持续演化
+
+这些防止 raw capture 变成死路：
+
+- 当 raw 页面按 topic/problem cluster 累积时自动生成 compile suggestion
+- 由重复低价值查询触发的 fast feedback
+- purpose 驱动的 ranking、compile direction 与健康评估
+- 低成本候选关系，至少 co-occurrence 与 cross-reference
+
+#### P2 — 必须支撑更强治理声明
+
+这些仍然是更强多 Agent 治理或更广部署声明成立前的必要项：
+
+- 可信身份优先级
+- 中央化 `max_gate` enforcement
+- 页面级 sensitivity policy 与 filtering
+- 更完整的 review queue lifecycle records
+
+#### P3 — 必须补完权威与服务路径
+
+这些补齐系统的运维成熟度：
+
+- authority-promotion / commit orchestration
+- `aw serve` 与真实的 service deployment path
+- 更完整的 DFX readiness criteria 与 runbook
+
+### 设计含义
+
+这并不是对 Codex 或 CC 的否定，而是一个合并结论：
+
+- **Codex/CC 正确指出了更强声明成立前必须补齐的治理 blocker。**
+- **桃🍑 正确指出了 Phase 1 实际采用之前必须先解决的可用性 blocker。**
+
+因此，设计文档必须同时写清楚这两件事：治理很重要，但如果 query quality 与 Obsidian-connected workflow 失败，系统就不会进入真实知识闭环。
+
+---
+
+## 12. DFX 设计
 > Agent Wiki 的可部署性、可靠性、安全性、可观测性、性能、可维护性与可扩展性  
 > v1.0 — 2026-05-16  
 > 状态：已与当前 Phase 1 实现基线对齐的设计目标
