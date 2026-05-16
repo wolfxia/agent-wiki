@@ -102,3 +102,53 @@ def test_query_execution_appends_query_outcome(temp_wiki_root: Path) -> None:
     assert entries[0]["query"] == "outcome logging"
     assert entries[0]["hit_count"] == len(result.hits)
     assert entries[0]["actor_id"] == "claude-code"
+
+
+def test_query_result_includes_hit_count_and_miss_signal(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    query_service = QueryService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    capture_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-metrics-1",
+            topic="metrics",
+            problem_cluster="cluster-m1",
+            content="# Raw metrics one",
+            source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-metrics-1",
+            page_type="atom",
+            topic="metrics",
+            problem_cluster="cluster-m1",
+            content="# Atom metrics\n\nHit count should be exposed.",
+            source_refs=["personal-1:raw-metrics-1"],
+        ),
+    )
+
+    result_with_hits = query_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=QueryInput(query="hit count metrics"),
+    )
+    assert result_with_hits.hit_count >= 1
+    assert result_with_hits.miss_signal is False
+
+    result_no_hits = query_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=QueryInput(query="zzzznonexistenttopic"),
+    )
+    assert result_no_hits.hit_count == 0
+    assert result_no_hits.miss_signal is True

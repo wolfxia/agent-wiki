@@ -32,6 +32,8 @@ class QueryService:
             l2_context=l2_context,
             l3_proof=l3_proof,
             hits=filtered_hits,
+            hit_count=len(filtered_hits),
+            miss_signal=len(filtered_hits) == 0,
         )
 
     def _classify_query_type(self, query: str) -> str:

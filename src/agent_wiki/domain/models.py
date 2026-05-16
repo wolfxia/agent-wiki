@@ -62,6 +62,8 @@ class QueryResult(BaseModel):
     l2_context: list[dict]
     l3_proof: list[dict]
     hits: list
+    hit_count: int = 0
+    miss_signal: bool = False
 
 
 class ProposalInput(BaseModel):
