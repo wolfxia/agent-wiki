@@ -21,6 +21,8 @@ class QueryService:
             hits.extend(self._search_pending_truth_zone(wiki_root, wiki.wiki_id, data.query))
 
         filtered_hits = [hit for hit in hits if self._include_hit(manifest, wiki_root, hit, data.include_pending)]
+        if data.max_sensitivity:
+            filtered_hits = [hit for hit in filtered_hits if self._sensitivity_allowed(manifest, hit.doc_id, data.max_sensitivity)]
         purpose_reader = PurposeReader(wiki_root)
         filtered_hits.sort(key=lambda hit: (hit.score + self._purpose_boost(manifest, purpose_reader, hit.doc_id), self._manifest_priority(manifest, hit.doc_id)), reverse=True)
         l2_context = self._build_l2_context(manifest, filtered_hits)
@@ -106,6 +108,17 @@ class QueryService:
         if topic and purpose_reader.is_aligned(topic):
             return 1.5
         return 0.0
+
+    _SENSITIVITY_ORDER = {"public": 0, "internal": 1, "confidential": 2}
+
+    def _sensitivity_allowed(self, manifest: ManifestRepository, doc_id: str, max_sensitivity: str) -> bool:
+        entry = manifest.find(doc_id)
+        if entry is None:
+            return True
+        doc_sensitivity = entry.get("sensitivity") or "public"
+        max_level = self._SENSITIVITY_ORDER.get(max_sensitivity, 1)
+        doc_level = self._SENSITIVITY_ORDER.get(doc_sensitivity, 0)
+        return doc_level <= max_level
 
     def _build_l2_context(self, manifest: ManifestRepository, hits: list[RetrievalHit]) -> list[dict]:
         context = []

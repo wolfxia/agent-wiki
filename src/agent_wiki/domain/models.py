@@ -55,6 +55,7 @@ class CompileResult(BaseModel):
 class QueryInput(BaseModel):
     query: str
     include_pending: bool = False
+    max_sensitivity: str | None = None
 
 
 class QueryResult(BaseModel):

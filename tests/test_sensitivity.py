@@ -45,3 +45,63 @@ def test_compile_update_preserves_sensitivity_in_manifest(temp_wiki_root: Path) 
     entry = manifest.find("atom-sens-1")
     assert entry is not None
     assert entry["sensitivity"] == "confidential"
+
+
+def test_query_filters_confidential_pages_by_sensitivity(temp_wiki_root: Path) -> None:
+    from agent_wiki.application.query import QueryInput, QueryService
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    query_service = QueryService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    capture_service.execute(
+        wiki=wiki, actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-sens-q1", topic="secrets", problem_cluster="cluster-sq",
+            content="# Raw sens query", source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki, actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-sens-public", page_type="atom", topic="secrets",
+            problem_cluster="cluster-sq",
+            content="# Public atom\n\nPublic secret handling patterns.",
+            source_refs=["personal-1:raw-sens-q1"],
+            sensitivity="public",
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki, actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-sens-conf", page_type="atom", topic="secrets",
+            problem_cluster="cluster-sq",
+            content="# Confidential atom\n\nConfidential secret handling patterns.",
+            source_refs=["personal-1:raw-sens-q1"],
+            sensitivity="confidential",
+        ),
+    )
+
+    # Default query (max_sensitivity=internal) should exclude confidential
+    result = query_service.execute(
+        wiki=wiki, actor=actor,
+        data=QueryInput(query="secret handling patterns", max_sensitivity="internal"),
+    )
+
+    doc_ids = [h.doc_id for h in result.hits]
+    assert "atom-sens-public" in doc_ids
+    assert "atom-sens-conf" not in doc_ids
+
+    # Query with max_sensitivity=confidential should include both
+    result_all = query_service.execute(
+        wiki=wiki, actor=actor,
+        data=QueryInput(query="secret handling patterns", max_sensitivity="confidential"),
+    )
+
+    doc_ids_all = [h.doc_id for h in result_all.hits]
+    assert "atom-sens-public" in doc_ids_all
+    assert "atom-sens-conf" in doc_ids_all
