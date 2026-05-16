@@ -36,6 +36,7 @@ class CompileUpdateInput(BaseModel):
     evidence_note: str | None = None
     review_status: str | None = None
     dispute_reason: str | None = None
+    sensitivity: str | None = None
     allow_shared_write_without_sources: bool = False
 
 

@@ -73,6 +73,7 @@ class PropagationService:
                 "source_refs": data.source_refs,
                 "review_status": data.review_status,
                 "dispute_reason": data.dispute_reason,
+                "sensitivity": data.sensitivity,
             }
         )
         self.retrieval_index_repository.append_compiled_card(wiki.wiki_id, data)
