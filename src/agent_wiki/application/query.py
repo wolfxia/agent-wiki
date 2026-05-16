@@ -152,6 +152,14 @@ class QueryService:
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
+        # Write per-query hit details for co-occurrence detection
+        hits_path = wiki_root / "query_hits.jsonl"
+        outcomes_count = sum(1 for _ in path.read_text(encoding="utf-8").splitlines() if _.strip())
+        query_idx = outcomes_count - 1
+        with hits_path.open("a", encoding="utf-8") as handle:
+            for hit in hits:
+                handle.write(json.dumps({"query_idx": query_idx, "doc_id": hit.doc_id}, ensure_ascii=False) + "\n")
+
 
 class CrossWikiQueryService:
     def execute(self, wikis: list[WikiConfig], actor: ResolvedActor, data: QueryInput) -> QueryResult:
