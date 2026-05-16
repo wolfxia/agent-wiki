@@ -6,20 +6,20 @@
 
 ## Capability Matrix
 
-| Capability | Hermes | Claude Code | OpenClaw | OpenCode |
-|-----------|--------|-------------|----------|----------|
-| **Execution Model** | Skill (SKILL.md) | CLAUDE.md + Bash | Skill prompt | CLI `opencode run` |
-| **Scheduling** | Built-in cronjob | External cron/launchd | Built-in cron | External cron |
-| **File I/O** | terminal + file tools | Bash commands | Skill prompt | `-f` file attach |
-| **Vector Search** | `memory_search` built-in | ❌ Needs adapter | ❌ Needs adapter | ❌ Needs adapter |
-| **Semantic Memory** | `memory` tool built-in | ❌ None | ❌ None | ❌ None |
-| **Human Interface** | Feishu/WeChat native | Terminal | Feishu native | Terminal |
-| **Editor Sync** | Obsidian sync cron | None (code-focused) | Obsidian sync cron | None |
-| **Knowledge Path** | `~/hermes-projects/knowledge/` | `~/workspace/code/` | `~/.openclaw/workspace/` | Project-scoped |
-| **Config Format** | config.yaml | settings.local.json | agents/*.json | config.yaml |
-| **Background Tasks** | Built-in (cronjob) | Manual | Built-in (cron) | Manual |
-| **Multi-tool** | Rich (browser, web, etc.) | Terminal only | Rich (browser, web) | Terminal only |
-| **Context Injection** | Memory + Skills + .env | CLAUDE.md + hooks | Skills + identity | Config + flags |
+| Capability | Hermes | Claude Code | Codex | OpenClaw | OpenCode |
+|-----------|--------|-------------|-------|----------|----------|
+| **Execution Model** | Skill (SKILL.md) | CLAUDE.md + Bash | CLI `aw` + identity profile | Skill prompt | CLI `opencode run` |
+| **Scheduling** | Built-in cronjob | External cron/launchd | None | Built-in cron | External cron |
+| **File I/O** | terminal + file tools | Bash commands | CLI commands | Skill prompt | `-f` file attach |
+| **Vector Search** | `memory_search` built-in | ❌ Needs adapter | ❌ Needs adapter | ❌ Needs adapter | ❌ Needs adapter |
+| **Semantic Memory** | `memory` tool built-in | ❌ None | ❌ None | ❌ None | ❌ None |
+| **Human Interface** | Feishu/WeChat native | Terminal | Terminal | Feishu native | Terminal |
+| **Editor Sync** | Obsidian sync cron | None (code-focused) | None | Obsidian sync cron | None |
+| **Knowledge Path** | `~/hermes-projects/knowledge/` | `~/workspace/code/` | Project-scoped | `~/.openclaw/workspace/` | Project-scoped |
+| **Config Format** | config.yaml | settings.local.json | identity profile / config.yaml | agents/*.json | config.yaml |
+| **Background Tasks** | Built-in (cronjob) | Manual | Manual | Built-in (cron) | Manual |
+| **Multi-tool** | Rich (browser, web, etc.) | Terminal only | Terminal only | Rich (browser, web) | Terminal only |
+| **Context Injection** | Memory + Skills + .env | CLAUDE.md + hooks | aw CLI + identity profile | Skills + identity | Config + flags |
 
 ---
 
@@ -114,6 +114,38 @@ adapters/openclaw/
 │   └── wiki-lint/SKILL.md        ← Lint skill in OpenClaw format
 ├── cron/
 │   └── wiki-maintenance.json     ← Cron config
+├── config.yaml
+└── README.md
+```
+
+### Codex (CLI Agent — Minimal)
+
+**Leverage**: `aw` CLI, identity profile, short-lived runs, provider-agnostic execution
+
+**Adapter approach**:
+- Codex calls the same `aw` CLI as other minimal agents
+- Identity comes from a Codex-specific profile that resolves `actor_type=agent` and `actor_id=codex`
+- No MCP capability in Phase 1
+- No persistent state or scheduler; all state lives in Git/workspace only
+
+**Unique optimization**:
+- Good for one-shot knowledge work and code-heavy capture/query tasks
+- Can run without a dedicated background service
+- Reuses the same low-risk CLI contract as OpenCode, but with a separate identity profile
+
+**Limitation**:
+- No MCP tool access
+- No background memory
+- No built-in scheduling
+- Must use the shared `aw-agent` core through CLI transport only
+
+**Codex Adapter Structure**:
+```
+adapters/codex/
+├── commands/
+│   ├── wiki-query.sh          ← aw query wrapper
+│   ├── wiki-capture.sh        ← aw capture-raw wrapper
+│   └── wiki-lint.sh           ← aw lint wrapper
 ├── config.yaml
 └── README.md
 ```

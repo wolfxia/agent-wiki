@@ -1,50 +1,48 @@
+import json
 from pathlib import Path
 
 from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
 from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
-from agent_wiki.application.query import QueryInput, QueryService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
 
 
-def test_query_returns_relevant_hit_from_lexical_index(temp_wiki_root: Path) -> None:
+def test_compile_apply_creates_review_queue_item_for_missing_evidence(temp_wiki_root: Path) -> None:
     wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
         update={"workspace_path": str(temp_wiki_root)}
     )
     capture_service = CaptureRawService()
     compile_service = CompileUpdateService()
-    query_service = QueryService()
     actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
 
     capture_service.execute(
         wiki=wiki,
         actor=actor,
         data=CaptureRawInput(
-            doc_id="raw-query-2",
+            doc_id="raw-source-3",
             topic="testing",
-            problem_cluster="cluster-q2",
-            content="# Raw query two",
+            problem_cluster="cluster-c",
+            content="# Source three",
             source_refs=[],
         ),
     )
+
     compile_service.apply(
         wiki=wiki,
         actor=actor,
         data=CompileUpdateInput(
-            doc_id="synthesis-query-2",
-            page_type="synthesis",
+            doc_id="atom-review",
+            page_type="atom",
             topic="testing",
-            problem_cluster="cluster-q2",
-            content="# Synthesis query two\n\nLexical retrieval is the baseline provider.",
-            source_refs=["personal-1:raw-query-2"],
+            problem_cluster="cluster-c",
+            content="# Atom review",
+            source_refs=["personal-1:raw-source-3"],
+            evidence_note="needs-more-evidence",
         ),
     )
 
-    result = query_service.execute(
-        wiki=wiki,
-        actor=actor,
-        data=QueryInput(query="lexical retrieval baseline"),
-    )
-
-    assert result.hits[0].doc_id == "synthesis-query-2"
-    assert result.hits[0].wiki_id == "personal-1"
+    queue_path = temp_wiki_root / "review_queue.jsonl"
+    assert queue_path.exists()
+    item = json.loads(queue_path.read_text().strip())
+    assert item["item_type"] == "missing_evidence"
+    assert item["doc_id"] == "atom-review"

@@ -10,15 +10,15 @@
 
 ## 四Agent能力矩阵
 
-| 能力 | Hermes | Claude Code | OpenClaw | OpenCode |
-|------|--------|-------------|----------|----------|
-| 执行方式 | Skill + Cron | Hook + CLAUDE.md | Skill + Cron | CLI run |
-| 知识写入 | terminal + file | Bash + Write | skill prompt | opencode run |
-| 知识读取 | memory_search + file | Read + Glob | skill prompt | opencode run -f |
-| 定时任务 | cronjob | 外部cron | cron | 外部cron |
-| 向量检索 | 内置memory_search | 无（需外部） | 无（需外部） | 无（需外部） |
-| 人类界面 | 飞书/微信 | Terminal | 飞书 | Terminal |
-| 编辑器集成 | Obsidian sync | VSCode | Obsidian sync | 无 |
+| 能力 | Hermes | Claude Code | Codex | OpenClaw | OpenCode |
+|------|--------|-------------|-------|----------|----------|
+| 执行方式 | Skill + Cron | Hook + CLAUDE.md | CLI aw + identity profile | Skill + Cron | CLI run |
+| 知识写入 | terminal + file | Bash + Write | aw capture_raw / query | skill prompt | opencode run |
+| 知识读取 | memory_search + file | Read + Glob | aw query | skill prompt | opencode run -f |
+| 定时任务 | cronjob | 外部cron | 无 | cron | 外部cron |
+| 向量检索 | 内置memory_search | 无（需外部） | 无（需外部） | 无（需外部） | 无（需外部） |
+| 人类界面 | 飞书/微信 | Terminal | Terminal | 飞书 | Terminal |
+| 编辑器集成 | Obsidian sync | VSCode | 无 | Obsidian sync | 无 |
 
 ## 项目结构
 
@@ -68,6 +68,11 @@ agent-wiki/
 │   │   ├── skills/              ← OpenClaw skill格式
 │   │   ├── cron/                ← OpenClaw cron配置
 │   │   └── config.yaml          ← OpenClaw-specific 配置
+│   │
+│   ├── codex/                   ← Codex 适配
+│   │   ├── README.md
+│   │   ├── commands/            ← aw CLI wrapper scripts
+│   │   └── config.yaml          ← Codex-specific identity profile
 │   │
 │   └── opencode/                ← OpenCode 适配
 │       ├── README.md
@@ -212,8 +217,11 @@ cp adapters/claude-code/CLAUDE.md ~/workspace/code/CLAUDE.md.append
 # OpenClaw:
 cp -r adapters/openclaw/skills/* ~/.openclaw/skills/
 
-# OpenCode:
-# 配置 opencode 的 config.yaml 指向 wiki-root
+# Codex:
+# CLI agent, use an identity profile that marks actor_type=agent and actor_id=codex.
+# 只通过 aw CLI 调用，不走 MCP，也不依赖持久状态。
+aw query --wiki /path/to/wiki --query "what changed in the sync flow?"
+aw capture-raw --wiki /path/to/wiki --doc-id note-1 --topic notes --problem-cluster sync --content-file ./note.md
 
 # 4. 构建初始索引
 python3 scripts/build-retrieval-views.py --wiki-root /path/to/your/wiki-root

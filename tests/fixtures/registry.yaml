@@ -1,0 +1,27 @@
+version: 1
+default_route_policy: purpose_then_topic
+wikis:
+  - wiki_id: personal-1
+    type: personal
+    workspace_path: ./tests/fixtures/sample_wiki
+    purpose_path: purpose.md
+    config_path: config.yaml
+    allowed_page_types: [raw, atom, synthesis, principle]
+    external_views:
+      - adapter: plain_markdown
+        mode: read_write
+    pending_query_policy:
+      raw: include_by_default
+      atom: exclude_by_default
+      synthesis: exclude_by_default
+      principle: exclude_by_default
+    retrieval:
+      coarse_provider: lexical
+      optional_providers: [local_vector]
+      route_priority: 80
+    permissions:
+      - actor_type: agent
+        actor_id: claude-code
+        allowed_operations: [query, capture_raw, compile_update, lint]
+        max_gate: B
+        allowed_page_types: [raw, atom, synthesis]

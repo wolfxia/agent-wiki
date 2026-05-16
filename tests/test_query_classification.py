@@ -7,7 +7,7 @@ from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
 
 
-def test_query_returns_relevant_hit_from_lexical_index(temp_wiki_root: Path) -> None:
+def test_query_classifies_fact_lookup_from_simple_question(temp_wiki_root: Path) -> None:
     wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
         update={"workspace_path": str(temp_wiki_root)}
     )
@@ -20,10 +20,10 @@ def test_query_returns_relevant_hit_from_lexical_index(temp_wiki_root: Path) -> 
         wiki=wiki,
         actor=actor,
         data=CaptureRawInput(
-            doc_id="raw-query-2",
+            doc_id="raw-query-1",
             topic="testing",
-            problem_cluster="cluster-q2",
-            content="# Raw query two",
+            problem_cluster="cluster-q1",
+            content="# Raw query one",
             source_refs=[],
         ),
     )
@@ -31,20 +31,20 @@ def test_query_returns_relevant_hit_from_lexical_index(temp_wiki_root: Path) -> 
         wiki=wiki,
         actor=actor,
         data=CompileUpdateInput(
-            doc_id="synthesis-query-2",
-            page_type="synthesis",
+            doc_id="atom-query-1",
+            page_type="atom",
             topic="testing",
-            problem_cluster="cluster-q2",
-            content="# Synthesis query two\n\nLexical retrieval is the baseline provider.",
-            source_refs=["personal-1:raw-query-2"],
+            problem_cluster="cluster-q1",
+            content="# Atom query one\n\nPytest uses assert rewriting.",
+            source_refs=["personal-1:raw-query-1"],
         ),
     )
 
     result = query_service.execute(
         wiki=wiki,
         actor=actor,
-        data=QueryInput(query="lexical retrieval baseline"),
+        data=QueryInput(query="What does pytest use?"),
     )
 
-    assert result.hits[0].doc_id == "synthesis-query-2"
-    assert result.hits[0].wiki_id == "personal-1"
+    assert result.query_type == "fact_lookup"
+    assert result.l1_answer
