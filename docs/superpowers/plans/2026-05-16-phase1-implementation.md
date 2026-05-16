@@ -542,6 +542,47 @@ Add authority-promotion / commit orchestration, real `aw serve`, MCP + REST tran
 
 ---
 
+# Milestone P1.5 — Quality evaluation and self-evolution bootstrap
+
+## Goal
+Wire the existing detectors into a single closed loop that an agent can actually run, and expose a read-only quality report. Authoritative design lives in `docs/superpowers/specs/2026-05-16-quality-evaluation-design.md`. This milestone implements only the minimum viable scope from that spec.
+
+## Current gap
+- Detectors (`CompileSuggestService`, `FastFeedbackService`, `RelationsService`) exist but are never invoked together.
+- No structured way for an agent or a CLI caller to inspect retrieval quality, compile rate, or orphan count.
+- No CLI surface for the slow loop.
+
+## Ordered tasks
+
+### Q-01 Add MaintenanceService orchestrator
+- **Failing test focus:** seeded raw accumulation + zero-hit queries + shared `source_refs` produces queue items of every relevant type after `MaintenanceService.run`.
+- **Likely files:** new `tests/test_maintenance.py`, new `src/agent_wiki/application/maintenance.py`.
+- **Depends on:** P1-02, P1-04, P1-09, P1-11.
+- **Parallelizable:** no.
+- **Commit scope:** orchestrator only — no new detectors, no new item types.
+
+### Q-02 Add QualityReportService aggregator
+- **Failing test focus:** `generate(wiki)` returns `query_count`, `hit_rate`, `raw_count`, `compiled_count`, `compile_rate`, `orphan_count` over fixture data.
+- **Likely files:** new `tests/test_quality_report.py`, new `src/agent_wiki/application/quality_report.py`.
+- **Depends on:** P0-06 (query outcome logging), P2-07 (manifest topic/sensitivity propagation).
+- **Parallelizable:** yes (independent of Q-01).
+- **Commit scope:** read-only aggregator — no writes, no scoring.
+
+### Q-03 Wire `aw maintain` CLI command
+- **Failing test focus:** `aw maintain --workspace <path>` runs `MaintenanceService` and prints the `QualityReportService` payload.
+- **Likely files:** `tests/test_cli_smoke.py`, `src/agent_wiki/transports/cli/app.py`.
+- **Depends on:** Q-01, Q-02.
+- **Parallelizable:** no.
+- **Commit scope:** CLI command only — no new policy.
+
+## Out of scope for this milestone
+- New detectors (freshness, authority drift, queue velocity).
+- New review queue item types.
+- Any aggregate health score or dashboard.
+- Any automatic action beyond surfacing queue items the existing detectors already produce.
+
+---
+
 # Cross-milestone dependencies
 
 ## Critical path

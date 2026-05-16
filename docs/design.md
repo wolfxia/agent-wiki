@@ -380,6 +380,15 @@ Target behavior:
 - sustained drop in hit rate triggers lint + reindex or retrieval-quality investigation
 - weekly review becomes the slow loop for trends, while fast feedback handles immediate drift
 
+#### 7.2.1 Quality evaluation and self-evolution loop
+
+The lightweight automation layer above is governed by a separate quality-evaluation design. See `docs/superpowers/specs/2026-05-16-quality-evaluation-design.md` for the full three-layer six-dimension framework, the three-loop architecture (fast / slow / reporting), and the explicit scope for the current iteration (`MaintenanceService`, `QualityReportService`, `aw maintain`). The quality-evaluation design is the authoritative source for what dimensions are tracked, what triggers fire, and what is intentionally deferred. This section only summarizes its placement in the lifecycle.
+
+Two non-negotiable rules govern that design:
+
+- **Helping agents get stronger, not producing reports.** Every metric must trigger an action, otherwise the metric is removed.
+- **No fake precision.** The framework returns trends, counts, and ratios. There is no aggregate health score. Decisions stay with the agent.
+
 #### 7.3 Purpose-driven knowledge evolution
 
 Tao is also correct that `purpose.md` is currently underweighted.
