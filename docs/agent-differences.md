@@ -1,5 +1,9 @@
 # Agent Differences & Adaptation Strategy
 
+> Version: v1.2  
+> Date: 2026-05-16  
+> Status: Design target aligned against the current Phase 1 implementation baseline
+>
 > How agent-wiki adapts to each agent's unique capabilities
 
 ---
@@ -41,7 +45,7 @@ All agents call the same `aw-agent` core. Agent-specific code must be a thin cli
 **Unique optimization**:
 - `memory_search` can supplement vector search for semantic recall
 - `memory_search` can be an optional signal, but `aw-agent` Phase 1 query must still work through lexical retrieval baseline
-- `cronjob` enables automated Phase D maintenance
+- `cronjob` enables automated DFX maintenance (not a runtime gate level)
 - `send_message` for human-in-the-loop on principle promotion
 
 **Limitation**: Memory 5000-char cap; knowledge must live in files, not memory
@@ -227,7 +231,7 @@ Current implementation note:
 
 ## Recommended Priority
 
-1. **Hermes adapter first** — Most capable, already has most pieces
-2. **OpenClaw adapter second** — Similar architecture, can reuse patterns
-3. **Claude Code adapter third** — Different model, but high value (code knowledge)
-4. **OpenCode adapter last** — Most limited, can use same scripts as Codex/CC
+1. **P0** — Query quality and Obsidian-connected workflow
+2. **P1** — Knowledge lifecycle automation and purpose-driven evolution
+3. **P2** — Governance hardening for stronger multi-agent claims
+4. **P3** — Authority/deployability/operational maturity

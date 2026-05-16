@@ -1,5 +1,9 @@
 # Agent Wiki
 
+> Version: v1.2  
+> Date: 2026-05-16  
+> Status: Repository overview aligned against the current Phase 1 implementation
+>
 > A universal, agent-agnostic knowledge system for AI agents.
 >
 > One knowledge asset base, many agent frontends: Hermes can search it, Claude Code can update it, Codex can query it, OpenClaw can maintain it, and OpenCode can reuse it.
@@ -106,6 +110,27 @@ This is enough to inspect packaging and runtime wiring, but it is **not** yet a 
 - **Write = propagate** — writes are not just page edits; they update manifest, retrieval, logs, and queue state.
 - **Compile before retrieve** — raw sources feed compiled artifacts, then retrieval operates over those artifacts.
 - **Agent adapters stay thin** — core behavior belongs to the shared engine, not individual agent integrations.
+
+## Phase 1 global priorities
+
+The canonical release priority ordering across the doc suite is:
+
+- **P0** — usable retrieval quality and Obsidian-connected workflow
+- **P1** — knowledge lifecycle automation and purpose-driven evolution
+- **P2** — governance hardening for stronger multi-agent claims
+- **P3** — authority/deployability/operational maturity
+
+This ordering reflects the combined synthesis from Codex, Claude Code, and Tao: Phase 1 must be usable first, then self-evolving, then safely governable for stronger claims.
+
+## Gate model
+
+The canonical runtime gate model is:
+
+- **A** — raw/source capture
+- **B** — atom/synthesis/dispute updates
+- **C** — principle and other high-risk writes
+
+`D` is reserved only as a DFX maintenance/design note and is **not** a formal runtime gate level.
 
 ## Agent capability matrix
 
@@ -227,6 +252,7 @@ Start here if you want the design and implementation context:
 - `core/schema.md`
 - `docs/agent-differences.md`
 - `docs/superpowers/specs/2026-05-16-phase-1-design.md`
+- `docs/reviews/`
 
 ## Example workflows
 
@@ -280,6 +306,7 @@ query
 - `docs/requirements-and-architecture.md` — requirements baseline and phase-boundary decisions
 - `core/schema.md` — operation contract and schema expectations
 - `docs/agent-differences.md` — per-agent adaptation notes
+- `docs/reviews/` — internal review materials and review responses
 
 ## Testing status
 
@@ -300,30 +327,36 @@ python3 -m pytest
 
 ## Roadmap
 
-### Near-term documentation and alignment
+### P0 — Must be usable
 
-- align architecture docs to the current implementation baseline
-- keep design intent explicit where implementation is still partial
-- expand README and architecture materials for external reviewability
+- strengthen lexical retrieval quality for real use
+- add Chinese-aware tokenization and fuzzy matching
+- add hit/miss tracking in the query path
+- ship Obsidian-connected workflow as a real adoption path
 
-### Near-term implementation gaps
+### P1 — Must keep knowledge evolving
 
-- flesh out the `aw` CLI beyond the current minimal stub
-- add MCP transport surface
-- add REST transport surface
-- enforce `max_gate` and richer permission checks
-- deepen lint and sync behavior to match the target design
+- add auto-compile suggestions when raw pages accumulate by topic/problem cluster
+- add fast feedback triggers from repeated low-value queries
+- make `purpose.md` influence ranking, compile direction, and health evaluation
+- add low-cost candidate relations such as co-occurrence and cross-reference
 
-### Phase 2 direction
+### P2 — Must support stronger governance claims
 
-- stronger multi-writer coordination
-- team-facing RBAC/OIDC
-- richer external adapters
-- deeper retrieval providers and graph-assisted workflows
+- enforce trusted identity precedence
+- enforce `max_gate` centrally
+- add page-level sensitivity policy and filtering
+- expand review queue lifecycle records
+
+### P3 — Must complete authority and operational maturity
+
+- add authority-promotion / commit orchestration
+- implement `aw serve` and a real long-running service path
+- deepen DFX readiness criteria and runbooks
 
 ## Honest status note
 
-This repository now has a working, tested **Phase 1 baseline implementation**, but it is not yet the full end-state architecture described in the design docs. In particular, MCP/REST, richer propagation guarantees, and deeper schema enforcement remain design targets rather than fully implemented runtime features.
+This repository now has a working, tested **Phase 1 baseline implementation**, but it is not yet the full end-state architecture described in the design docs. In particular, MCP/REST, richer propagation guarantees, deeper schema enforcement, and a real long-running service surface remain design targets rather than fully implemented runtime features.
 
 That split is intentional: the project is being built from the Phase 2 target architecture, but landed incrementally in Phase 1.
 
