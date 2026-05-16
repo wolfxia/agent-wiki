@@ -6,6 +6,7 @@ from agent_wiki.domain.contracts import ResolvedActor, RetrievalHit
 from agent_wiki.domain.models import QueryInput, QueryResult
 from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
+from agent_wiki.infrastructure.storage.purpose_reader import PurposeReader
 
 
 class QueryService:
@@ -20,7 +21,8 @@ class QueryService:
             hits.extend(self._search_pending_truth_zone(wiki_root, wiki.wiki_id, data.query))
 
         filtered_hits = [hit for hit in hits if self._include_hit(manifest, wiki_root, hit, data.include_pending)]
-        filtered_hits.sort(key=lambda hit: (hit.score, self._manifest_priority(manifest, hit.doc_id)), reverse=True)
+        purpose_reader = PurposeReader(wiki_root)
+        filtered_hits.sort(key=lambda hit: (hit.score + self._purpose_boost(manifest, purpose_reader, hit.doc_id), self._manifest_priority(manifest, hit.doc_id)), reverse=True)
         l2_context = self._build_l2_context(manifest, filtered_hits)
         l3_proof = self._build_l3_proof(manifest, filtered_hits)
         l1_answer = self._build_l1_answer(filtered_hits, wiki_root)
@@ -95,6 +97,15 @@ class QueryService:
         if entry.get("page_type") in {"atom", "synthesis", "principle"}:
             return 2
         return 1
+
+    def _purpose_boost(self, manifest: ManifestRepository, purpose_reader: PurposeReader, doc_id: str) -> float:
+        entry = manifest.find(doc_id)
+        if entry is None:
+            return 0.0
+        topic = entry.get("topic", "")
+        if topic and purpose_reader.is_aligned(topic):
+            return 1.5
+        return 0.0
 
     def _build_l2_context(self, manifest: ManifestRepository, hits: list[RetrievalHit]) -> list[dict]:
         context = []

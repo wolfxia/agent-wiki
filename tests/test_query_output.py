@@ -244,3 +244,67 @@ def test_retrieval_quality_integration(temp_wiki_root: Path) -> None:
     assert len(entries) >= 2
     assert entries[0]["query"] == "部署策略"
     assert entries[0]["hit_count"] >= 1
+
+
+def test_query_ranking_boosted_by_purpose_alignment(temp_wiki_root: Path) -> None:
+    """Pages aligned to purpose.md outrank equally-scored non-aligned pages."""
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    query_service = QueryService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    # Write purpose.md that aligns with "deployment"
+    (temp_wiki_root / "purpose.md").write_text(
+        "# Purpose\n\n## Topics\n\n- deployment\n",
+        encoding="utf-8",
+    )
+
+    # Create two pages with similar content scores but different topic alignment
+    capture_service.execute(
+        wiki=wiki, actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-purpose-1", topic="deployment",
+            problem_cluster="cluster-p1", content="# Raw purpose one", source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki, actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-purpose-aligned", page_type="atom", topic="deployment",
+            problem_cluster="cluster-p1",
+            content="# Aligned\n\nThis page discusses release strategy patterns.",
+            source_refs=["personal-1:raw-purpose-1"],
+        ),
+    )
+
+    capture_service.execute(
+        wiki=wiki, actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-purpose-2", topic="unrelated",
+            problem_cluster="cluster-p2", content="# Raw purpose two", source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki, actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-purpose-unaligned", page_type="atom", topic="unrelated",
+            problem_cluster="cluster-p2",
+            content="# Unaligned\n\nThis page discusses release strategy patterns. Release strategy is key.",
+            source_refs=["personal-1:raw-purpose-2"],
+        ),
+    )
+
+    result = query_service.execute(
+        wiki=wiki, actor=actor,
+        data=QueryInput(query="release strategy patterns"),
+    )
+
+    # Both should be found
+    doc_ids = [h.doc_id for h in result.hits]
+    assert "atom-purpose-aligned" in doc_ids
+    assert "atom-purpose-unaligned" in doc_ids
+    # Purpose-aligned page should rank first
+    assert doc_ids.index("atom-purpose-aligned") < doc_ids.index("atom-purpose-unaligned")
