@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.infrastructure.adapters.obsidian import ObsidianAdapter
 from agent_wiki.infrastructure.adapters.plain_markdown import PlainMarkdownAdapter
+from agent_wiki.infrastructure.runtime.pending_state import PendingStateRepository
 
 
 class SyncInput(BaseModel):
@@ -41,6 +42,7 @@ class SyncService:
         wiki_root = Path(wiki.workspace_path)
         pages_root = wiki_root / "pages"
         pages_root.mkdir(exist_ok=True)
+        pending = PendingStateRepository(wiki_root)
         changed_files: list[str] = []
         for view in wiki.external_views:
             adapter = self._get_adapter(view)
@@ -50,6 +52,12 @@ class SyncService:
                 target = pages_root / source.name
                 target.write_text(document["content"], encoding="utf-8")
                 changed_files.append(str(target.relative_to(wiki_root)))
+                doc_id = source.stem
+                pending.append_pending_manifest({
+                    "doc_id": doc_id,
+                    "page_type": "raw",
+                    "source": "external_sync",
+                })
         return SyncResult(mode="pull-view", changed_files=changed_files)
 
     def _push_view(self, wiki: WikiConfig) -> SyncResult:

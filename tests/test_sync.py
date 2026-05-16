@@ -236,3 +236,33 @@ def test_sync_push_uses_obsidian_adapter_preserves_frontmatter(temp_wiki_root: P
     # Should preserve frontmatter from original external file
     assert "tags:" in content
     assert "# Existing\n\nNew content." in content
+
+
+def test_sync_pull_creates_pending_manifest_entry(temp_wiki_root: Path) -> None:
+    """Pulling a new external file creates a pending manifest entry for lifecycle visibility."""
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    external_dir = temp_wiki_root / "external"
+    external_dir.mkdir(exist_ok=True)
+    (external_dir / "new-note.md").write_text("# New Note\n\nExternal content.", encoding="utf-8")
+
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {"adapter": "plain_markdown", "mode": "read_write", "path": str(external_dir)}
+            ]
+        }
+    )
+
+    SyncService().execute(wiki, SyncInput(mode="pull-view"))
+
+    pending_path = temp_wiki_root / ".agent-wiki" / "pending_manifest.jsonl"
+    assert pending_path.exists()
+    entries = [json.loads(line) for line in pending_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert any(e["doc_id"] == "new-note" for e in entries)
+    entry = next(e for e in entries if e["doc_id"] == "new-note")
+    assert entry["page_type"] == "raw"
+    assert entry["source"] == "external_sync"
