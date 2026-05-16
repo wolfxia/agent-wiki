@@ -2,6 +2,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
+from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 
 RAW_ACCUMULATION_THRESHOLD = 3
@@ -29,4 +30,21 @@ class CompileSuggestService:
                 })
 
         candidates.sort(key=lambda c: c["raw_count"], reverse=True)
+        return candidates
+
+    def detect_and_enqueue(self, wiki: WikiConfig, threshold: int = RAW_ACCUMULATION_THRESHOLD) -> list[dict]:
+        candidates = self.detect(wiki, threshold)
+        if not candidates:
+            return candidates
+
+        wiki_root = Path(wiki.workspace_path)
+        queue = ReviewQueueRepository(wiki_root)
+        for candidate in candidates:
+            queue.append({
+                "item_type": "compile_suggestion",
+                "topic": candidate["topic"],
+                "problem_cluster": candidate["problem_cluster"],
+                "raw_count": candidate["raw_count"],
+                "status": "open",
+            })
         return candidates

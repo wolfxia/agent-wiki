@@ -60,3 +60,37 @@ def test_no_suggestion_below_threshold(temp_wiki_root: Path) -> None:
     candidates = suggest_service.detect(wiki)
 
     assert len(candidates) == 0
+
+
+def test_compile_suggestions_written_to_review_queue(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    for i in range(3):
+        capture_service.execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-queue-{i}",
+                topic="observability",
+                problem_cluster="logging-gaps",
+                content=f"# Raw queue {i}",
+                source_refs=[],
+            ),
+        )
+
+    suggest_service = CompileSuggestService()
+    suggest_service.detect_and_enqueue(wiki)
+
+    queue_path = temp_wiki_root / "review_queue.jsonl"
+    entries = [json.loads(line) for line in queue_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    suggestions = [e for e in entries if e.get("item_type") == "compile_suggestion"]
+    assert len(suggestions) >= 1
+    assert suggestions[0]["topic"] == "observability"
+    assert suggestions[0]["problem_cluster"] == "logging-gaps"
+    assert suggestions[0]["status"] == "open"
