@@ -4,6 +4,7 @@ from pathlib import Path
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
+from agent_wiki.infrastructure.storage.purpose_reader import PurposeReader
 
 RAW_ACCUMULATION_THRESHOLD = 3
 
@@ -12,6 +13,7 @@ class CompileSuggestService:
     def detect(self, wiki: WikiConfig, threshold: int = RAW_ACCUMULATION_THRESHOLD) -> list[dict]:
         wiki_root = Path(wiki.workspace_path)
         manifest = ManifestRepository(wiki_root)
+        purpose_reader = PurposeReader(wiki_root)
         entries = manifest.read_all()
 
         cluster_counts: dict[tuple[str, str], int] = defaultdict(int)
@@ -27,9 +29,10 @@ class CompileSuggestService:
                     "topic": topic,
                     "problem_cluster": problem_cluster,
                     "raw_count": count,
+                    "purpose_aligned": purpose_reader.is_aligned(topic),
                 })
 
-        candidates.sort(key=lambda c: c["raw_count"], reverse=True)
+        candidates.sort(key=lambda c: (c["purpose_aligned"], c["raw_count"]), reverse=True)
         return candidates
 
     def detect_and_enqueue(self, wiki: WikiConfig, threshold: int = RAW_ACCUMULATION_THRESHOLD) -> list[dict]:

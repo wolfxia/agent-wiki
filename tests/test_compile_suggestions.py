@@ -94,3 +94,48 @@ def test_compile_suggestions_written_to_review_queue(temp_wiki_root: Path) -> No
     assert suggestions[0]["topic"] == "observability"
     assert suggestions[0]["problem_cluster"] == "logging-gaps"
     assert suggestions[0]["status"] == "open"
+
+
+def test_compile_suggestions_prioritized_by_purpose(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    # Write purpose.md that aligns with "deployment"
+    (temp_wiki_root / "purpose.md").write_text(
+        "# Purpose\n\n## Topics\n\n- deployment\n",
+        encoding="utf-8",
+    )
+
+    # Create 3 raw pages for non-aligned topic
+    for i in range(3):
+        capture_service.execute(
+            wiki=wiki, actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-unaligned-{i}", topic="testing",
+                problem_cluster="test-cluster",
+                content=f"# Raw unaligned {i}", source_refs=[],
+            ),
+        )
+
+    # Create 3 raw pages for purpose-aligned topic
+    for i in range(3):
+        capture_service.execute(
+            wiki=wiki, actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-aligned-{i}", topic="deployment",
+                problem_cluster="deploy-cluster",
+                content=f"# Raw aligned {i}", source_refs=[],
+            ),
+        )
+
+    suggest_service = CompileSuggestService()
+    candidates = suggest_service.detect(wiki)
+
+    # Both clusters should appear
+    assert len(candidates) == 2
+    # Purpose-aligned cluster should sort first
+    assert candidates[0]["topic"] == "deployment"
+    assert candidates[1]["topic"] == "testing"
