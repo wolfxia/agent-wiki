@@ -308,3 +308,50 @@ def test_query_ranking_boosted_by_purpose_alignment(temp_wiki_root: Path) -> Non
     assert "atom-purpose-unaligned" in doc_ids
     # Purpose-aligned page should rank first
     assert doc_ids.index("atom-purpose-aligned") < doc_ids.index("atom-purpose-unaligned")
+
+
+
+def test_query_logging_writes_stable_query_id_to_outcomes_and_hits(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    query_service = QueryService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    capture_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-query-id-1",
+            topic="testing",
+            problem_cluster="cluster-qid",
+            content="# Raw query id one",
+            source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-query-id-1",
+            page_type="atom",
+            topic="testing",
+            problem_cluster="cluster-qid",
+            content="# Atom query id one\n\nStable query ids matter.",
+            source_refs=["personal-1:raw-query-id-1"],
+        ),
+    )
+
+    query_service.execute(wiki=wiki, actor=actor, data=QueryInput(query="stable query ids"))
+
+    outcomes = [json.loads(line) for line in (temp_wiki_root / "query_outcomes.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    hits = [json.loads(line) for line in (temp_wiki_root / "query_hits.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    assert len(outcomes) == 1
+    assert outcomes[0].get("query_id")
+    assert "query_idx" not in outcomes[0]
+    assert hits
+    assert all(hit.get("query_id") == outcomes[0]["query_id"] for hit in hits)
+    assert all("query_idx" not in hit for hit in hits)

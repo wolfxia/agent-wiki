@@ -46,3 +46,15 @@ def test_identity_resolver_falls_back_to_metadata() -> None:
 
     assert actor.actor_type == "service"
     assert actor.actor_id == "aw-agent"
+
+
+
+def test_identity_resolver_raises_when_identity_missing() -> None:
+    resolver = IdentityResolver()
+
+    try:
+        resolver.resolve(IdentityContext(transport="cli"))
+    except Exception as error:
+        assert error.__class__.__name__ == "IdentityResolutionError"
+    else:
+        raise AssertionError("expected IdentityResolutionError")

@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import uuid
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor, RetrievalHit
@@ -158,7 +159,9 @@ class QueryService:
         hits: list[RetrievalHit],
     ) -> None:
         path = wiki_root / "query_outcomes.jsonl"
+        query_id = str(uuid.uuid4())
         entry = {
+            "query_id": query_id,
             "query": data.query,
             "hit_count": len(hits),
             "actor_id": actor.actor_id,
@@ -166,13 +169,10 @@ class QueryService:
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-        # Write per-query hit details for co-occurrence detection
         hits_path = wiki_root / "query_hits.jsonl"
-        outcomes_count = sum(1 for _ in path.read_text(encoding="utf-8").splitlines() if _.strip())
-        query_idx = outcomes_count - 1
         with hits_path.open("a", encoding="utf-8") as handle:
             for hit in hits:
-                handle.write(json.dumps({"query_idx": query_idx, "doc_id": hit.doc_id}, ensure_ascii=False) + "\n")
+                handle.write(json.dumps({"query_id": query_id, "doc_id": hit.doc_id}, ensure_ascii=False) + "\n")
 
 
 class CrossWikiQueryService:

@@ -19,13 +19,13 @@ class RelationsService:
         if not hits_path.exists():
             return []
 
-        query_hits: dict[int, list[str]] = {}
+        query_hits: dict[str, list[str]] = {}
         for line in hits_path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             entry = json.loads(line)
-            query_idx = entry["query_idx"]
-            query_hits.setdefault(query_idx, []).append(entry["doc_id"])
+            query_id = entry["query_id"]
+            query_hits.setdefault(query_id, []).append(entry["doc_id"])
 
         pair_counts: dict[tuple[str, str], int] = defaultdict(int)
         for doc_ids in query_hits.values():

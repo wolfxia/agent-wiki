@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 _VALID_TRANSITIONS = {
@@ -14,11 +15,12 @@ class ReviewQueueRepository:
         self.path = wiki_root / "review_queue.jsonl"
 
     def append(self, entry: dict) -> None:
-        item_id = entry.get("item_id")
+        normalized = self._normalize_entry(entry)
+        item_id = normalized.get("item_id")
         if item_id and self.find(item_id) is not None:
             return
         with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            handle.write(json.dumps(normalized, ensure_ascii=False) + "\n")
 
     def read_all(self) -> list[dict]:
         if not self.path.exists():
@@ -43,6 +45,18 @@ class ReviewQueueRepository:
                 self._write_all(items)
                 return True
         return False
+
+    def _normalize_entry(self, entry: dict) -> dict:
+        item_type = entry.get("item_type", "task")
+        doc_id = entry.get("doc_id", "unknown")
+        normalized = dict(entry)
+        normalized.setdefault("item_id", f"{item_type}:{doc_id}")
+        normalized.setdefault("wiki_id", self.path.parent.name if self.path.parent.name else "unknown")
+        normalized.setdefault("status", "open")
+        normalized.setdefault("priority", 2)
+        normalized.setdefault("created_at", datetime.now(UTC).isoformat().replace("+00:00", "Z"))
+        normalized.setdefault("content_state", {})
+        return normalized
 
     def _write_all(self, items: list[dict]) -> None:
         with self.path.open("w", encoding="utf-8") as handle:

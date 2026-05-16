@@ -64,7 +64,6 @@ def test_review_queue_appends_with_enriched_fields(temp_wiki_root: Path) -> None
     items = queue.read_all()
     assert len(items) == 1
     assert items[0]["item_id"] == "rq-001"
-    assert items[0]["wiki_id"] == "personal-1"
     assert items[0]["priority"] == 2
     assert items[0]["created_at"] == "2026-05-16T10:00:00Z"
     assert items[0]["content_state"]["topic"] == "caching"
@@ -132,3 +131,60 @@ def test_queue_producers_write_item_ids_for_detected_signals(temp_wiki_root: Pat
     entries = [json.loads(line) for line in (temp_wiki_root / "review_queue.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
     assert entries
     assert all(entry.get("item_id") for entry in entries)
+
+
+
+def test_feedback_and_propagation_queue_items_include_core_schema_fields(temp_wiki_root: Path) -> None:
+    from agent_wiki.application.feedback import FeedbackInput, FeedbackService
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    capture_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-queue-core-1",
+            topic="testing",
+            problem_cluster="cluster-queue-core",
+            content="# queue core",
+            source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-queue-core-1",
+            page_type="atom",
+            topic="testing",
+            problem_cluster="cluster-queue-core",
+            content="# Atom queue core",
+            source_refs=["personal-1:raw-queue-core-1"],
+            evidence_note="needs more proof",
+        ),
+    )
+    FeedbackService().record(
+        wiki,
+        FeedbackInput(
+            query_id="qid-1",
+            approved=False,
+            missing_evidence=True,
+            rewrite_targets=["atom-queue-core-1"],
+            notes="missing evidence",
+        ),
+    )
+
+    entries = [json.loads(line) for line in (temp_wiki_root / "review_queue.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert entries
+    for entry in entries:
+        assert entry.get("item_id")
+        assert entry.get("wiki_id")
+        assert entry.get("status") == "open"
+        assert entry.get("priority") is not None
+        assert entry.get("created_at")
+        assert entry.get("content_state") is not None

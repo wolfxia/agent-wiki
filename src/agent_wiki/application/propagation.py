@@ -90,7 +90,9 @@ class PropagationService:
                 {
                     "item_type": "missing_evidence",
                     "doc_id": data.doc_id,
+                    "wiki_id": wiki.wiki_id,
                     "reason": data.evidence_note,
+                    "content_state": {"reason": data.evidence_note},
                     "status": "open",
                 }
             )

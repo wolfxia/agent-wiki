@@ -31,8 +31,10 @@ class FeedbackService:
             ReviewQueueRepository(wiki_root).append(
                 {
                     "item_type": "feedback_issue",
+                    "wiki_id": wiki.wiki_id,
                     "doc_id": data.rewrite_targets[0] if data.rewrite_targets else data.query_id,
                     "reason": data.notes,
+                    "content_state": {"query_id": data.query_id, "rewrite_targets": data.rewrite_targets},
                     "status": "open",
                 }
             )
