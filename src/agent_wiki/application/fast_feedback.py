@@ -3,6 +3,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
+from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 
 ZERO_HIT_THRESHOLD = 3
 
@@ -31,4 +32,20 @@ class FastFeedbackService:
                 })
 
         signals.sort(key=lambda s: s["zero_hit_count"], reverse=True)
+        return signals
+
+    def detect_and_enqueue(self, wiki: WikiConfig, threshold: int = ZERO_HIT_THRESHOLD) -> list[dict]:
+        signals = self.detect_low_value_queries(wiki, threshold)
+        if not signals:
+            return signals
+
+        wiki_root = Path(wiki.workspace_path)
+        queue = ReviewQueueRepository(wiki_root)
+        for signal in signals:
+            queue.append({
+                "item_type": "quality_signal",
+                "query": signal["query"],
+                "zero_hit_count": signal["zero_hit_count"],
+                "status": "open",
+            })
         return signals
