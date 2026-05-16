@@ -84,9 +84,9 @@ def test_compile_apply_denied_when_actor_gate_insufficient(temp_wiki_root: Path)
                 PermissionConfig(
                     actor_type="agent",
                     actor_id="low-gate-agent",
-                    allowed_operations=["compile_update"],
+                    allowed_operations=["capture_raw", "compile_update"],
                     max_gate="A",
-                    allowed_page_types=["atom", "synthesis"],
+                    allowed_page_types=["raw", "atom", "synthesis"],
                 )
             ],
         }

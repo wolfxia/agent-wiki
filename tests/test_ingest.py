@@ -58,3 +58,37 @@ def test_capture_raw_invalid_doc_id_goes_to_pending(temp_wiki_root: Path) -> Non
     pending_manifest = temp_wiki_root / ".agent-wiki" / "pending_manifest.jsonl"
     assert pending_manifest.exists()
     assert "Raw Invalid" in pending_manifest.read_text()
+
+
+def test_capture_raw_denied_when_no_permission(temp_wiki_root: Path) -> None:
+    from agent_wiki.bootstrap.registry_loader import PermissionConfig
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={
+            "workspace_path": str(temp_wiki_root),
+            "permissions": [
+                PermissionConfig(
+                    actor_type="agent",
+                    actor_id="restricted-agent",
+                    allowed_operations=["query"],
+                    max_gate="A",
+                    allowed_page_types=["raw"],
+                )
+            ],
+        }
+    )
+    service = CaptureRawService()
+
+    try:
+        service.execute(
+            wiki=wiki,
+            actor=ResolvedActor(actor_type="agent", actor_id="restricted-agent", transport="cli"),
+            data=CaptureRawInput(
+                doc_id="raw-denied-1", topic="testing", problem_cluster="cluster-d",
+                content="# Denied", source_refs=[],
+            ),
+        )
+    except PermissionError as error:
+        assert "permission" in str(error).lower() or "no matching" in str(error).lower()
+    else:
+        raise AssertionError("expected permission denial")
