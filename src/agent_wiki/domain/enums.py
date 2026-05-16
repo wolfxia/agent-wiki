@@ -18,3 +18,9 @@ class PageType(StrEnum):
     ATOM = "atom"
     SYNTHESIS = "synthesis"
     PRINCIPLE = "principle"
+
+
+class Sensitivity(StrEnum):
+    PUBLIC = "public"
+    INTERNAL = "internal"
+    CONFIDENTIAL = "confidential"
