@@ -24,6 +24,7 @@ def test_readme_avoids_hardcoded_test_count_and_points_to_authoritative_spec() -
 
     assert "151 tests" not in readme
     assert "151 passing tests" not in readme
+    assert "Chinese-aware tokenization" not in readme
     assert "docs/specs/knowledge-system-architecture.md" in readme
 
 
@@ -69,3 +70,25 @@ def test_cli_help_surface_covers_documented_commands() -> None:
     assert approvals_result.exit_code == 0
     for command in ["propose", "approve", "reject"]:
         assert command in approvals_result.stdout
+
+
+
+def test_docs_alignment_keeps_key_claims_in_sync() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+    assert "151 tests" not in readme
+    assert "Chinese-aware tokenization" not in readme
+    assert "docs/specs/knowledge-system-architecture.md" in readme
+
+    assert [tool["name"] for tool in MCPServer().list_tools()] == [
+        "wiki.query",
+        "wiki.capture_raw",
+        "wiki.compile_update",
+        "wiki.lint",
+        "wiki.sync",
+    ]
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "serve" in result.stdout
+    assert "health" in result.stdout
