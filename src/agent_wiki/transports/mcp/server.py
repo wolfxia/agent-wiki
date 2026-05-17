@@ -46,11 +46,17 @@ def _metadata_from_context(ctx: Context | None) -> dict[str, str]:
         return {}
 
     metadata: dict[str, str] = {}
-    client_id = getattr(ctx, "client_id", None)
+    try:
+        client_id = getattr(ctx, "client_id", None)
+    except ValueError:
+        client_id = None
     if client_id:
         metadata["client_id"] = client_id
 
-    request_context = getattr(ctx, "request_context", None)
+    try:
+        request_context = getattr(ctx, "request_context", None)
+    except ValueError:
+        request_context = None
     request_meta = getattr(request_context, "meta", None) if request_context is not None else None
     if request_meta is not None:
         actor_type = getattr(request_meta, "actor_type", None)
@@ -108,12 +114,6 @@ def build_fastmcp_server(registry_path: str | None = None) -> FastMCP:
                     "problem_cluster": problem_cluster,
                     "content": content,
                     "source_refs": source_refs or [],
-                    "summary": summary,
-                    "aliases": aliases or [],
-                    "confidence": confidence,
-                    "contested": contested,
-                    "wikilinks": wikilinks or [],
-                    "sensitivity": sensitivity,
                 },
                 session_metadata=_metadata_from_context(ctx),
             )
@@ -147,6 +147,12 @@ def build_fastmcp_server(registry_path: str | None = None) -> FastMCP:
                     "problem_cluster": problem_cluster,
                     "content": content,
                     "source_refs": source_refs or [],
+                    "summary": summary,
+                    "aliases": aliases or [],
+                    "confidence": confidence,
+                    "contested": contested,
+                    "wikilinks": wikilinks or [],
+                    "sensitivity": sensitivity,
                 },
                 session_metadata=_metadata_from_context(ctx),
             )

@@ -373,3 +373,33 @@ def test_mcp_identity_errors_when_no_env_no_metadata_no_registry_defaults(monkey
         assert error.__class__.__name__ == "IdentityResolutionError"
     else:
         raise AssertionError("expected IdentityResolutionError")
+
+
+def test_fastmcp_capture_raw_tool_does_not_reference_compile_fields(temp_wiki_root: Path) -> None:
+    import asyncio
+    import yaml
+
+    from agent_wiki.transports.mcp.server import build_fastmcp_server
+
+    registry_path = temp_wiki_root.parent / "registry-fastmcp-capture.yaml"
+    registry_data = yaml.safe_load(Path("tests/fixtures/registry.yaml").read_text())
+    registry_data["wikis"][0]["workspace_path"] = str(temp_wiki_root)
+    registry_path.write_text(yaml.safe_dump(registry_data, sort_keys=False), encoding="utf-8")
+    app = build_fastmcp_server(registry_path=str(registry_path))
+
+    result = asyncio.run(app.call_tool(
+        "wiki.capture_raw",
+        {
+            "wiki_id": "personal-1",
+            "doc_id": "raw-fastmcp-cap-1",
+            "topic": "testing",
+            "problem_cluster": "cluster-fastmcp-cap",
+            "content": "# Raw FastMCP cap",
+            "source_refs": [],
+        },
+    ))
+
+    payload = result[1] if isinstance(result, tuple) else result
+
+    assert payload["status"] == "committed"
+    assert (temp_wiki_root / "pages" / "raw-fastmcp-cap-1.md").exists()
