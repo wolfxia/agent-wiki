@@ -101,3 +101,34 @@ def test_lint_detects_missing_source_refs_on_compiled_page(temp_wiki_root: Path)
 
     assert result.ok is False
     assert any("source_refs" in issue for issue in result.issues)
+
+
+
+def test_lint_passes_after_pull_view_promotes_raw_pages_to_manifest(temp_wiki_root: Path) -> None:
+    from agent_wiki.application.sync import SyncInput, SyncService
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    external_dir = temp_wiki_root / "lint-pull-vault"
+    external_dir.mkdir(exist_ok=True)
+    (external_dir / "pulled-lint-note.md").write_text("# Pulled Lint Note\n\nSuccessful pull-view imports should lint cleanly.", encoding="utf-8")
+
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {"adapter": "obsidian", "mode": "read_write", "path": str(external_dir)}
+            ]
+        }
+    )
+
+    SyncService().execute(
+        wiki,
+        ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        SyncInput(mode="pull-view"),
+    )
+
+    result = LintService().run(wiki)
+
+    assert result.ok is True
+    assert result.issues == []

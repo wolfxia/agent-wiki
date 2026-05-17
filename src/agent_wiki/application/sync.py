@@ -77,15 +77,28 @@ class SyncService:
                 seen_targets.add(target)
                 doc_id = source.stem
                 vault_relative_path = str(source.relative_to(external_path))
+                topic = source.parent.name
                 retrieval_index.append_raw_card(
                     wiki.wiki_id,
                     type("PullViewRawCard", (), {
                         "doc_id": doc_id,
-                        "topic": source.parent.name,
-                        "problem_cluster": source.parent.name,
+                        "topic": topic,
+                        "problem_cluster": topic,
                         "content": document["content"],
                     })(),
                 )
+                ManifestRepository(wiki_root).upsert({
+                    "wiki_id": wiki.wiki_id,
+                    "doc_id": doc_id,
+                    "page_type": "raw",
+                    "topic": topic,
+                    "problem_cluster": topic,
+                    "canonical_uri": f"pages/{doc_id}.md",
+                    "last_writer": actor.actor_id,
+                    "source": "external_sync",
+                    "vault_relative_path": vault_relative_path,
+                    "adapter_metadata": {"vault_relative_path": vault_relative_path},
+                })
                 pending.append_pending_manifest({
                     "doc_id": doc_id,
                     "page_type": "raw",

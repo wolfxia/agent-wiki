@@ -32,16 +32,25 @@ class LintService:
             if page_type in {PageType.ATOM.value, PageType.SYNTHESIS.value, PageType.PRINCIPLE.value} and not entry.get("source_refs"):
                 issues.append(f"missing source_refs for compiled page {entry.get('doc_id')}")
 
+        pending_state = PendingStateRepository(wiki_root)
+        pending_entries: list[dict] = []
+        if pending_state.pending_manifest_path.exists():
+            pending_entries = [
+                json.loads(line)
+                for line in pending_state.pending_manifest_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        pending_doc_ids = {entry.get("doc_id") for entry in pending_entries if entry.get("doc_id")}
+
         retrieval_index_path = wiki_root / "retrieval_index.jsonl"
         if retrieval_index_path.exists():
             for line in retrieval_index_path.read_text(encoding="utf-8").splitlines():
                 if not line.strip():
                     continue
                 card = json.loads(line)
-                if manifest.find(card["doc_id"]) is None:
+                if manifest.find(card["doc_id"]) is None and card["doc_id"] not in pending_doc_ids:
                     issues.append(f"retrieval index entry without manifest entry: {card['doc_id']}")
 
-        pending_state = PendingStateRepository(wiki_root)
         for marker in pending_state.read_stale_markers():
             issues.append(f"stale marker for {marker.get('doc_id', 'unknown')}: {marker.get('reason', '')}")
 
