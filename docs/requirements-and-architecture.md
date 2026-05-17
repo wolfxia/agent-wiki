@@ -123,7 +123,8 @@ The design still assumes:
 
 Current implementation note:
 - gate classification exists
-- full `max_gate` enforcement and gate-check execution remain incomplete
+- per-rule `max_gate` enforcement exists in `PermissionService.check()`
+- full content-quality gates and workflow-complete gate-check execution remain incomplete
 - the current baseline should not be treated as policy-complete governance yet
 
 ---
@@ -138,7 +139,7 @@ The following remain the active requirements baseline:
 2. Git stores the persistent authority of the workspace: pages, `purpose.md`, config, `MANIFEST.jsonl`, `retrieval_index.jsonl`, and audit/log artifacts.
 3. Workspace holds runtime, pending, proposals, indexes, and conflict state.
 4. `.agent-wiki/` holds local runtime state and is not committed.
-5. `retrieval_index.jsonl` is the Phase 1 coarse retrieval baseline; FTS5 `retrieval.db` is the v0.2 accelerated index (not in Git, rebuildable).
+5. v0.2 retrieval uses FTS5+jieba in `.agent-wiki/retrieval.db` as the accelerated local index, merges structured `topic_index.md`, and keeps `retrieval_index.jsonl` as the Git-tracked JSONL lexical fallback.
 6. Vector retrieval remains optional.
 
 **Data flow:**
@@ -194,6 +195,7 @@ Current implementation note:
 - these artifacts are used directly by the current runtime
 - `pages/` are currently written as `pages/{doc_id}.md`
 - path/identity separation remains a design requirement, but is not yet fully implemented in code
+- `aw migrate --normalize-doc-ids` is available for lowercase/hyphen `doc_id` normalization; same-name pull-view conflicts are addressed through relative-path-derived ids and migration support
 
 ### 3.4 Agent capability tiers
 
@@ -222,7 +224,7 @@ Current implementation note:
 - `compile_update` analyze/apply is implemented in a simplified form
 - principle writes currently use a local proposal/approval smoke path
 - analyze is currently heuristic, not a full evidence-planning engine
-- the current intake path still needs stronger metadata continuity so imported raw pages reliably feed compilation
+- intake code path has improved through `normalize_raw_intake`, Obsidian frontmatter handling, raw metadata repair, and lint checks for missing raw metadata; live data still needs cleanup/migration where old imports remain weak or pending-heavy
 
 ### 3.6 External views and sync
 
@@ -234,7 +236,9 @@ Target design remains:
 
 Current implementation note:
 - current Phase 1 sync is a copy-based markdown sync with `status`, `pull-view`, and `push-view`
-- adapter-driven reverse sync and gate-to-Git promotion remain future work
+- adapter-driven reverse sync exists for markdown views, including recursive pull-view, `.obsidian` / trash ignores, frontmatter date sanitization, relative-path `doc_id`s, and index updates
+- Obsidian `push-view` category routing exists (`raw -> 00-收件箱`, `atom + learning -> 01-学习笔记`, `synthesis -> 02-行业洞察`, `graph -> 04-知识图谱`)
+- gate-to-Git promotion and commit orchestration remain future work
 
 ### 3.7 Pending and query policy
 
@@ -274,9 +278,9 @@ Still required:
   - L3 proof/evidence
 
 Current implementation note:
-- the lexical baseline and layered output are implemented
-- the current baseline uses file-backed lexical retrieval with CJK bigram tokenization, simple fuzzy matching, and weighted topic/problem-cluster/content scoring
-- vector routing, load budgets, and richer provider orchestration are not yet implemented
+- FTS5+jieba primary retrieval, structured `topic_index.md` merge, JSONL lexical fallback, and layered output are implemented
+- debug scoring includes lexical/structured scores plus page type, purpose, freshness, and manifest-priority boosts
+- vector routing, load-policy execution, query budgets, and richer provider orchestration are not yet implemented
 
 ### 3.10 Feedback and weekly review loop
 
@@ -321,7 +325,7 @@ Current implementation note:
 - identity, permission, and gate helper modules exist
 - remote/shared transports now resolve trusted identity from transport context; CLI still prefers explicit local actor/config
 - per-rule `max_gate` enforcement exists, but the full workflow gate engine is still incomplete
-- these are implementation gaps to be fixed, not design changes
+- identity fallback/dev behavior and registry fallback warnings remain operational concerns, not a remaining MCP/REST caller-override blocker
 
 ### 3.14 Transports and naming
 
@@ -352,6 +356,9 @@ The current implementation baseline covers the following subsystems under `src/a
 - cross-wiki query smoke behavior
 - lint
 - sync status/pull/push
+- Obsidian date sanitization and push-view category routing
+- doc_id normalization migration
+- knowledge graph visualizer and graph index export
 - feedback
 - weekly review
 - approvals
@@ -364,11 +371,11 @@ This means the project now has a **working Phase 1 baseline**, but not yet the f
 
 The following items should be treated as blockers before any stronger claim of production-ready multi-agent governance:
 
-- trusted identity precedence over caller-supplied actor fields
-- central `max_gate` enforcement
+- identity fallback/dev behavior and registry fallback warning policy; MCP/REST trusted metadata precedence is fixed
+- content-quality gates and the full workflow gate engine; central `max_gate` enforcement already exists
 - authority-promotion / commit orchestration for Git-first governance
-- page-level sensitivity schema plus retrieval/response filtering
-- stronger compilation foundation: authority raw intake, metadata continuity, and repair of pending-heavy imports
+- complete `access_policy` plus transport-aware sensitivity filtering; basic `QueryInput.max_sensitivity` manifest filtering exists
+- live-data cleanup/migration for pending-heavy imports and old weak metadata
 
 ---
 
@@ -381,12 +388,12 @@ The following items should be treated as blockers before any stronger claim of p
 | Identity safety | caller cannot override resolved identity | trusted transport context is enforced for MCP/REST; CLI still prefers explicit local actor/config | Partial |
 | Propagation recovery | rollback + stale markers + mirror handling | direct write/append model only | Phase 1 Simplification |
 | Authority promotion | gate-checked commit orchestration to Git authority | Git-visible file writes only, no full orchestrator yet | Divergence |
-| Retrieval runtime | provider-pluggable, load-policy aware, budgeted | lexical baseline + layered output; stronger routed retrieval remains future work | Phase 1 Simplification |
-| Compilation foundation | compile-ready raw authority intake with metadata continuity | imported raw intake can still produce weak or pending-heavy metadata state | Divergence |
-| Sync | adapter-driven reverse sync and gate-to-authority path | adapter-driven markdown sync plus explicit Obsidian graph export | Phase 1 Simplification |
+| Retrieval runtime | provider-pluggable, load-policy aware, budgeted | FTS5+structured routing implemented; load_policy/budget/vector not implemented | Partial |
+| Compilation foundation | compile-ready raw authority intake with metadata continuity | code path improved through normalization, repair, and lint; live data still needs cleanup/migration | Partial |
+| Sync | adapter-driven reverse sync and gate-to-authority path | adapter-driven markdown sync, Obsidian date sanitization, category push-view, and explicit graph export; gate-to-authority path missing | Partial |
 | Review queue | rich workflow schema | minimal queue entries | Phase 1 Simplification |
 | Query outcomes | query path logs outcomes directly | query path logs outcomes directly; feedback appends human-evaluation records | Simplified |
-| Page sensitivity | schema-backed page access policy with query filtering | no page-level sensitivity enforcement yet | Not Yet Implemented |
+| Page sensitivity | schema-backed page access policy with query filtering | basic sensitivity filtering via `QueryInput.max_sensitivity`; `access_policy` and transport-aware filtering incomplete | Partial |
 
 ---
 
@@ -415,4 +422,4 @@ This order gives you:
 
 This document should be read as the **requirements and architecture baseline**, not as a claim that every target capability is already implemented. Where the current implementation is smaller than the design, the design remains authoritative and the current runtime is treated as a Phase 1 baseline or simplification.
 
-In particular, compilation-foundation repair, identity precedence, the full workflow gate engine, authority-promotion/commit orchestration, and page-level sensitivity filtering remain the most important unresolved blockers for stronger governance claims.
+In particular, live-data cleanup, identity fallback warning policy, the full workflow gate engine, authority-promotion/commit orchestration, and complete `access_policy` / transport-aware sensitivity filtering remain the most important unresolved blockers for stronger governance claims.
