@@ -74,3 +74,32 @@ def test_retrieval_router_uses_sqlite_fts_runtime_index(temp_wiki_root: Path) ->
     assert hits
     assert hits[0].doc_id == "raw-runtime-fts"
     assert hits[0].section == "fts5"
+
+
+def test_retrieval_router_merges_lexical_and_structured_debug_scores(temp_wiki_root: Path) -> None:
+    topic_index = TopicIndexRepository(temp_wiki_root)
+    topic_index.upsert({
+        "doc_id": "atom-debug-1",
+        "page_type": "atom",
+        "topic": "deployment",
+        "problem_cluster": "canary",
+        "summary": "Canary rollout summary.",
+    })
+    lexical = RetrievalIndexRepository(temp_wiki_root)
+    lexical.append_compiled_card(
+        "personal-1",
+        type("CompiledCard", (), {
+            "doc_id": "atom-debug-1",
+            "page_type": "atom",
+            "topic": "deployment",
+            "problem_cluster": "canary",
+            "content": "canary rollout lexical body",
+        })(),
+    )
+
+    hit = RetrievalRouter(temp_wiki_root, wiki_id="personal-1").search("canary rollout")[0]
+
+    assert hit.doc_id == "atom-debug-1"
+    assert hit.metadata["lexical_score"] > 0
+    assert hit.metadata["structured_score"] > 0
+    assert hit.metadata["final_score"] == hit.score

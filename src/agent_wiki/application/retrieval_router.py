@@ -19,19 +19,43 @@ class RetrievalRouter:
         merged: dict[str, RetrievalHit] = {}
 
         fts_hits = self.fts.search(query, top_k=top_k)
-        if fts_hits:
-            for hit in fts_hits:
-                merged[hit.doc_id] = hit
-        else:
-            for hit in self.lexical.search(self.wiki_root, query):
-                merged[hit.doc_id] = hit
+        lexical_hits = fts_hits or self.lexical.search(self.wiki_root, query)
+        for hit in lexical_hits:
+            merged[hit.doc_id] = self._with_scores(
+                hit,
+                lexical_score=hit.score,
+                structured_score=0.0,
+                section=hit.section or "lexical",
+            )
 
         for hit in self.structured.search(query, top_k=top_k):
-            boosted = hit.model_copy(update={"score": hit.score + 0.25})
             existing = merged.get(hit.doc_id)
-            if existing is None or boosted.score > existing.score:
-                merged[hit.doc_id] = boosted
+            lexical_score = float(existing.metadata.get("lexical_score", 0.0)) if existing else 0.0
+            structured_score = hit.score
+            merged[hit.doc_id] = self._with_scores(
+                hit,
+                lexical_score=lexical_score,
+                structured_score=structured_score,
+                section="topic_index",
+            )
 
         hits = list(merged.values())
         hits.sort(key=lambda hit: hit.score, reverse=True)
         return hits[:top_k]
+
+    def _with_scores(
+        self,
+        hit: RetrievalHit,
+        *,
+        lexical_score: float,
+        structured_score: float,
+        section: str,
+    ) -> RetrievalHit:
+        final_score = lexical_score + structured_score
+        metadata = {
+            **hit.metadata,
+            "lexical_score": lexical_score,
+            "structured_score": structured_score,
+            "final_score": final_score,
+        }
+        return hit.model_copy(update={"score": final_score, "section": section, "metadata": metadata})

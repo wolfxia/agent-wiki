@@ -31,7 +31,7 @@ class QueryService:
         max_sensitivity = data.max_sensitivity or Sensitivity.INTERNAL
         filtered_hits = [hit for hit in filtered_hits if self._sensitivity_allowed(manifest, hit.doc_id, max_sensitivity)]
         purpose_reader = PurposeReader(wiki_root)
-        filtered_hits.sort(key=lambda hit: (self._manifest_priority(manifest, hit.doc_id), hit.score + self._purpose_boost(manifest, purpose_reader, hit.doc_id)), reverse=True)
+        filtered_hits = self._apply_ranking(manifest, purpose_reader, filtered_hits)
         l2_context = self._build_l2_context(manifest, filtered_hits)
         l3_proof = self._build_l3_proof(manifest, filtered_hits)
         l1_answer = self._build_l1_answer(filtered_hits, wiki_root, manifest)
@@ -105,6 +105,29 @@ class QueryService:
         if topic and purpose_reader.is_aligned(topic):
             return 1.5
         return 0.0
+
+    def _apply_ranking(self, manifest: ManifestRepository, purpose_reader: PurposeReader, hits: list[RetrievalHit]) -> list[RetrievalHit]:
+        ranked: list[RetrievalHit] = []
+        for hit in hits:
+            manifest_entry = manifest.find(hit.doc_id) or {}
+            page_type_boost = 0.0
+            if manifest_entry.get("page_type") in {PageType.ATOM.value, PageType.SYNTHESIS.value, PageType.PRINCIPLE.value}:
+                page_type_boost = 2.0
+            purpose_boost = self._purpose_boost(manifest, purpose_reader, hit.doc_id)
+            freshness = float(manifest_entry.get("updated_at_score") or 0.0)
+            manifest_priority = float(self._manifest_priority(manifest, hit.doc_id))
+            final_score = hit.score + page_type_boost + purpose_boost + freshness + manifest_priority
+            metadata = {
+                **hit.metadata,
+                "page_type_boost": page_type_boost,
+                "purpose_boost": purpose_boost,
+                "freshness": freshness,
+                "manifest_priority": manifest_priority,
+                "final_score": final_score,
+            }
+            ranked.append(hit.model_copy(update={"score": final_score, "metadata": metadata}))
+        ranked.sort(key=lambda hit: hit.score, reverse=True)
+        return ranked
 
     _SENSITIVITY_ORDER = {Sensitivity.PUBLIC: 0, Sensitivity.INTERNAL: 1, Sensitivity.CONFIDENTIAL: 2}
 

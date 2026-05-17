@@ -174,7 +174,7 @@ def create_app(
             "l3_proof": result.l3_proof,
             "hit_count": result.hit_count,
             "miss_signal": result.miss_signal,
-            "hits": [{"doc_id": h.doc_id, "wiki_id": h.wiki_id, "score": h.score} for h in result.hits],
+            "hits": [{"doc_id": h.doc_id, "wiki_id": h.wiki_id, "score": h.score, "metadata": h.metadata} for h in result.hits],
         }
 
     @app.post("/capture-raw")

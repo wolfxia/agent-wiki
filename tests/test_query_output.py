@@ -408,3 +408,46 @@ def test_query_l1_prefers_summary_from_topic_index(temp_wiki_root: Path) -> None
     )
 
     assert result.l1_answer == "Preferred summary answer."
+
+
+def test_query_hits_include_ranking_debug_metadata(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    (temp_wiki_root / "purpose.md").write_text("# Purpose\n\n## Topics\n\n- deployment\n", encoding="utf-8")
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-rank-debug-1",
+            topic="deployment",
+            problem_cluster="canary",
+            content="# Raw rank debug",
+            source_refs=[],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-rank-debug-1",
+            page_type="atom",
+            topic="deployment",
+            problem_cluster="canary",
+            summary="Ranking debug summary.",
+            content="# Atom rank debug\n\ncanary rollout debug body",
+            source_refs=["personal-1:raw-rank-debug-1"],
+        ),
+    )
+
+    result = QueryService().execute(wiki=wiki, actor=actor, data=QueryInput(query="canary rollout"))
+
+    metadata = result.hits[0].metadata
+    assert result.hits[0].doc_id == "atom-rank-debug-1"
+    assert metadata["lexical_score"] >= 0
+    assert metadata["structured_score"] >= 0
+    assert metadata["page_type_boost"] > 0
+    assert metadata["purpose_boost"] > 0
+    assert "freshness" in metadata
+    assert metadata["final_score"] == result.hits[0].score

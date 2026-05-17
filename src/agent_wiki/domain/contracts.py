@@ -27,6 +27,7 @@ class RetrievalHit(BaseModel):
     doc_id: str
     score: float
     section: str | None = None
+    metadata: dict = Field(default_factory=dict)
 
 
 @runtime_checkable
