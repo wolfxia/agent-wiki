@@ -30,3 +30,19 @@ def doc_id_from_relative_path(relative_path: str | Path) -> str:
     path = Path(str(relative_path))
     without_suffix = path.with_suffix("")
     return slugify_doc_id(without_suffix.as_posix())
+
+
+def normalize_doc_id(value: str) -> str:
+    parts: list[str] = []
+    previous_separator = False
+    for char in value.replace("\\", "/"):
+        lowered = char.lower()
+        if lowered.isalnum():
+            parts.append(lowered)
+            previous_separator = False
+            continue
+        if parts and not previous_separator:
+            parts.append("-")
+            previous_separator = True
+    normalized = "".join(parts).strip("-")
+    return normalized or "untitled"
