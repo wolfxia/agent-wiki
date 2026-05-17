@@ -22,17 +22,17 @@
 
 | # | Task | 描述 |
 |---|------|------|
-| T5 | **wewe-rss 数据源接入** | ExternalView adapter（plain_markdown 复用）+ registry 配置；等 T3/T4 完成后再接入 |
+| T5 | **wewe-rss 数据源接入** | post-v0.2 scope；ExternalView adapter（plain_markdown 复用）+ registry 配置 |
 | T9 | **性能基准测试** | 500/1000 页合成数据跑 query P50/P95；pytest -m perf |
-| T10 | **索引一致性健康检查** | aw health/wiki.lint 检查 MANIFEST/pages/FTS doc_id 集合一致性 + rebuild 建议 |
-| T11 | **query 排序改进** | page_type_boost + lexical_score + structured_score + purpose_boost + freshness；各分数写入 hit debug metadata |
+| T10 ✅ | **索引一致性健康检查** | aw health/wiki.lint 检查 MANIFEST/pages/FTS doc_id 集合一致性 + rebuild 建议 |
+| T11 ✅ | **query 排序改进** | page_type_boost + lexical_score + structured_score + purpose_boost + freshness；各分数写入 hit debug metadata |
 
 ### 不做
 
 | # | 原因 |
 |---|------|
-| T6 query cache | FTS5 后 433 页不需要缓存；cache invalidation 是新复杂度 |
-| push-view 双向同步 | 等 v0.1 观察期结束再评估 |
+| T6 query cache | FTS5 后 1472 页不需要缓存；cache invalidation 是新复杂度 |
+| push-view 双向同步 | 不做自动双向conflict merge；显式push-view已实现 |
 | 多 wiki | v0.3 |
 
 ### 数据源可插拔架构（老板要求）
