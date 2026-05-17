@@ -73,3 +73,31 @@ def test_sqlite_fts_rebuilds_from_manifest_pages(temp_wiki_root: Path) -> None:
 
     assert [hit.doc_id for hit in provider.search("rebuild", top_k=10)] == ["raw-keep"]
     assert provider.search("stale", top_k=10) == []
+
+
+def test_sqlite_fts_uses_pre_tokenized_text_for_chinese_terms(temp_wiki_root: Path) -> None:
+    from agent_wiki.infrastructure.retrieval.tokenizer import JiebaTokenizer
+
+    class FakeTokenizer:
+        def tokenize(self, text: str) -> list[str]:
+            return ["鸿蒙", "策略"] if "鸿蒙" in text else [text]
+
+    provider = SQLiteFTSIndexProvider(temp_wiki_root, wiki_id="personal-1", tokenizer=FakeTokenizer())
+    provider.upsert(
+        "raw-harmony",
+        {
+            "wiki_id": "personal-1",
+            "doc_id": "raw-harmony",
+            "page_type": "raw",
+            "topic": "鸿蒙策略",
+            "problem_cluster": "OS",
+            "summary": "鸿蒙生态策略",
+            "content": "鸿蒙策略不应该被错误切成蒙策。",
+        },
+    )
+
+    hits = provider.search("鸿蒙", top_k=5)
+
+    assert hits
+    assert hits[0].doc_id == "raw-harmony"
+    assert isinstance(JiebaTokenizer(), JiebaTokenizer)

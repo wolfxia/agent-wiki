@@ -6,13 +6,15 @@ from pathlib import Path
 from time import time
 
 from agent_wiki.domain.contracts import RetrievalHit
+from agent_wiki.infrastructure.retrieval.tokenizer import JiebaTokenizer, Tokenizer
 
 
 class SQLiteFTSIndexProvider:
-    def __init__(self, wiki_root: Path, wiki_id: str) -> None:
+    def __init__(self, wiki_root: Path, wiki_id: str, tokenizer: Tokenizer | None = None) -> None:
         self.wiki_root = wiki_root
         self.wiki_id = wiki_id
         self.db_path = wiki_root / ".agent-wiki" / "retrieval.db"
+        self.tokenizer = tokenizer or JiebaTokenizer()
 
     def upsert(self, doc_id: str, payload: dict) -> None:
         self._ensure_schema()
@@ -22,8 +24,8 @@ class SQLiteFTSIndexProvider:
             connection.execute(
                 """
                 INSERT INTO retrieval_fts(
-                    doc_id, wiki_id, page_type, topic, problem_cluster, summary, content, sensitivity, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    doc_id, wiki_id, page_type, topic, problem_cluster, summary, content, tokens, sensitivity, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     normalized["doc_id"],
@@ -33,6 +35,7 @@ class SQLiteFTSIndexProvider:
                     normalized["problem_cluster"],
                     normalized["summary"],
                     normalized["content"],
+                    normalized["tokens"],
                     normalized["sensitivity"],
                     normalized["updated_at"],
                 ),
@@ -112,6 +115,7 @@ class SQLiteFTSIndexProvider:
                     problem_cluster,
                     summary,
                     content,
+                    tokens,
                     sensitivity UNINDEXED,
                     updated_at UNINDEXED
                 )
@@ -132,11 +136,21 @@ class SQLiteFTSIndexProvider:
             "problem_cluster": payload.get("problem_cluster") or "",
             "summary": payload.get("summary") or "",
             "content": payload.get("content") or "",
+            "tokens": self._token_text(payload),
             "sensitivity": payload.get("sensitivity") or "",
             "updated_at": payload.get("updated_at") or str(time()),
         }
 
     def _match_query(self, query: str) -> str:
-        terms = [term for term in re.split(r"\s+", query.strip()) if term]
+        terms = self.tokenizer.tokenize(query)
+        if not terms:
+            terms = [term for term in re.split(r"\s+", query.strip()) if term]
         sanitized = [term.replace('"', ' ') for term in terms]
         return " ".join(f'"{term.strip()}"' for term in sanitized if term.strip())
+
+    def _token_text(self, payload: dict) -> str:
+        source = " ".join(
+            str(payload.get(field) or "")
+            for field in ("topic", "problem_cluster", "summary", "content")
+        )
+        return " ".join(self.tokenizer.tokenize(source))
