@@ -7,6 +7,17 @@ from agent_wiki.infrastructure.retrieval.fuzzy import fuzzy_match
 from agent_wiki.infrastructure.retrieval.tokenizer import tokenize
 
 
+class LexicalRetrievalProvider:
+    def __init__(self, repository_cls: type["RetrievalIndexRepository"]) -> None:
+        self.repository_cls = repository_cls
+
+    def build(self, wiki_root: Path) -> "RetrievalIndexRepository":
+        return self.repository_cls(wiki_root)
+
+    def search(self, wiki_root: Path, query: str) -> list[RetrievalHit]:
+        return self.build(wiki_root).lexical_search(query)
+
+
 class RetrievalIndexRepository:
     def __init__(self, wiki_root: Path) -> None:
         self.index_path = wiki_root / "retrieval_index.jsonl"

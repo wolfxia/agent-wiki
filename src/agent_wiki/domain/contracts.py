@@ -1,4 +1,4 @@
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
@@ -15,6 +15,7 @@ class PermissionDecision(BaseModel):
     required_gate: str | None = None
 
 
+@runtime_checkable
 class KnowledgeStore(Protocol):
     def read_page(self, doc_id: str) -> str: ...
 
@@ -28,10 +29,24 @@ class RetrievalHit(BaseModel):
     section: str | None = None
 
 
+@runtime_checkable
 class RetrievalProvider(Protocol):
     def search(self, query: str, top_k: int, filters: dict | None = None) -> list[RetrievalHit]: ...
 
 
+@runtime_checkable
+class EmbeddingProvider(Protocol):
+    def embed_texts(self, texts: list[str]) -> list[list[float]]: ...
+
+
+@runtime_checkable
+class IndexProvider(Protocol):
+    def upsert(self, doc_id: str, payload: dict) -> None: ...
+
+    def delete(self, doc_id: str) -> None: ...
+
+
+@runtime_checkable
 class ContentAdapter(Protocol):
     def read(self, source: str) -> dict: ...
 
