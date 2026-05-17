@@ -406,3 +406,59 @@ def test_rest_approvals_endpoints_support_propose_and_approve(tmp_path: Path) ->
     assert payload["status"] == "approved"
     assert payload["doc_id"] == "principle-rest-1"
     assert (shared_root / "pages" / "principle-rest-1.md").exists()
+
+
+def test_rest_compile_update_maps_permission_error_to_structured_response(temp_wiki_root: Path) -> None:
+    registry_path = temp_wiki_root.parent / "registry-rest-permission.yaml"
+    registry_data = yaml.safe_load(Path("tests/fixtures/registry.yaml").read_text())
+    registry_data["wikis"][0]["permissions"].append(
+        {
+            "actor_type": "agent",
+            "actor_id": "codex",
+            "allowed_operations": ["query", "capture_raw"],
+            "max_gate": "A",
+            "allowed_page_types": ["raw"],
+        }
+    )
+    registry_path.write_text(yaml.safe_dump(registry_data, sort_keys=False), encoding="utf-8")
+
+    from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+    from agent_wiki.bootstrap.registry_loader import RegistryLoader
+    from agent_wiki.domain.contracts import ResolvedActor
+
+    wiki = RegistryLoader().load(registry_path).wikis[0].model_copy(update={"workspace_path": str(temp_wiki_root)})
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=ResolvedActor(actor_type="agent", actor_id="codex", transport="rest"),
+        data=CaptureRawInput(
+            doc_id="raw-rest-perm-1",
+            topic="testing",
+            problem_cluster="cluster-rest-perm",
+            content="# Raw rest permission",
+            source_refs=[],
+        ),
+    )
+
+    app = create_app(
+        wiki_workspace=str(temp_wiki_root),
+        registry_path=str(registry_path),
+        token_identities={"token-codex": {"actor_type": "agent", "actor_id": "codex"}},
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/compile-update",
+        headers={"Authorization": "Bearer token-codex"},
+        json={
+            "doc_id": "atom-rest-perm-1",
+            "page_type": "atom",
+            "topic": "testing",
+            "problem_cluster": "cluster-rest-perm",
+            "content": "# Atom denied",
+            "source_refs": ["personal-1:raw-rest-perm-1"],
+        },
+    )
+
+    assert response.status_code == 403
+    payload = response.json()
+    assert payload["error"]["type"] == "permission_denied"

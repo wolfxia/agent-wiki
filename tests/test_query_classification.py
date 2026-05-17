@@ -4,7 +4,15 @@ from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawServic
 from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
 from agent_wiki.application.query import QueryInput, QueryService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
-from agent_wiki.domain.contracts import ResolvedActor
+from agent_wiki.domain.contracts import QueryClassifier, ResolvedActor
+from agent_wiki.infrastructure.query.classifier import RuleBasedQueryClassifier
+
+
+def test_rule_based_query_classifier_is_default_classifier() -> None:
+    classifier = RuleBasedQueryClassifier()
+
+    assert isinstance(classifier, QueryClassifier)
+    assert classifier.classify("why does this work") == "concept_explain"
 
 
 def test_query_classifies_fact_lookup_from_simple_question(temp_wiki_root: Path) -> None:

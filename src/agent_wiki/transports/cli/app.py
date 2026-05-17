@@ -1,6 +1,8 @@
 from pathlib import Path
 import os
 
+import json
+
 import typer
 
 from agent_wiki.application.approvals import ApprovalService
@@ -19,7 +21,9 @@ from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import CaptureRawInput, CompileUpdateInput, IdentityContext, ProposalInput, QueryInput
 from agent_wiki.infrastructure.identity.resolver import IdentityResolver
 from agent_wiki.settings import DEFAULT_REGISTRY_PATH
-from agent_wiki.transports.mcp.server import run_stdio_server
+from agent_wiki.transports.errors import map_exception
+from agent_wiki.transports.errors import error_payload
+from agent_wiki.transports.mcp.server import MCPServer, run_stdio_server
 
 app = typer.Typer(help="Agent Wiki CLI")
 sync_app = typer.Typer(help="Sync workspace and external views")
@@ -45,6 +49,14 @@ def _load_wiki(registry: str | None, workspace: str | None, wiki_id: str | None)
     return wiki
 
 
+def _run_cli(action) -> None:
+    try:
+        action()
+    except Exception as exc:
+        typer.echo(json.dumps(error_payload(exc), ensure_ascii=False, separators=(",", ":")))
+        raise typer.Exit(code=1) from exc
+
+
 def _actor() -> ResolvedActor:
     return IdentityResolver().resolve(
         IdentityContext(
@@ -66,6 +78,30 @@ def info() -> None:
     typer.echo(f"agent-wiki ready: {container.__class__.__name__}")
 
 
+@app.command("health")
+def health(
+    workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+) -> None:
+    def _command() -> None:
+        registry_path = _resolve_registry_path(registry)
+        registry_config = RegistryLoader().load(registry_path)
+        wiki_count = len(registry_config.wikis)
+        if wiki_count == 0:
+            raise ValueError("registry must contain at least one wiki")
+
+        if workspace:
+            _load_wiki(registry, workspace, None)
+
+        tools = MCPServer(registry_path=str(registry_path)).list_tools()
+        typer.echo("status=ok")
+        typer.echo(f"registry_path={registry_path}")
+        typer.echo(f"wiki_count={wiki_count}")
+        typer.echo(f"tool_count={len(tools)}")
+
+    _run_cli(_command)
+
+
 @app.command("serve")
 def serve(
     workspace: str | None = typer.Option(None, "--workspace"),
@@ -84,12 +120,15 @@ def query(
     registry: str | None = typer.Option(None, "--registry"),
     wiki_id: str | None = typer.Option(None, "--wiki-id"),
 ) -> None:
-    wiki = _load_wiki(registry, workspace, wiki_id)
-    result = QueryService().execute(wiki=wiki, actor=_actor(), data=QueryInput(query=text))
-    typer.echo(f"hit_count={result.hit_count}")
-    typer.echo(f"l1_answer={result.l1_answer}")
-    for hit in result.hits:
-        typer.echo(f"  hit: {hit.doc_id} score={hit.score}")
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
+        result = QueryService().execute(wiki=wiki, actor=_actor(), data=QueryInput(query=text))
+        typer.echo(f"hit_count={result.hit_count}")
+        typer.echo(f"l1_answer={result.l1_answer}")
+        for hit in result.hits:
+            typer.echo(f"  hit: {hit.doc_id} score={hit.score}")
+
+    _run_cli(_command)
 
 
 @app.command("capture-raw")
@@ -102,15 +141,18 @@ def capture_raw(
     registry: str | None = typer.Option(None, "--registry"),
     wiki_id: str | None = typer.Option(None, "--wiki-id"),
 ) -> None:
-    wiki = _load_wiki(registry, workspace, wiki_id)
-    result = CaptureRawService().execute(
-        wiki=wiki, actor=_actor(),
-        data=CaptureRawInput(
-            doc_id=doc_id, topic=topic, problem_cluster=problem_cluster,
-            content=content, source_refs=[],
-        ),
-    )
-    typer.echo(f"status={result.status} doc_id={result.doc_id}")
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
+        result = CaptureRawService().execute(
+            wiki=wiki, actor=_actor(),
+            data=CaptureRawInput(
+                doc_id=doc_id, topic=topic, problem_cluster=problem_cluster,
+                content=content, source_refs=[],
+            ),
+        )
+        typer.echo(f"status={result.status} doc_id={result.doc_id}")
+
+    _run_cli(_command)
 
 
 @app.command("compile-update")
@@ -125,16 +167,19 @@ def compile_update(
     registry: str | None = typer.Option(None, "--registry"),
     wiki_id: str | None = typer.Option(None, "--wiki-id"),
 ) -> None:
-    wiki = _load_wiki(registry, workspace, wiki_id)
-    refs = [r.strip() for r in source_refs.split(",") if r.strip()]
-    result = CompileUpdateService().apply(
-        wiki=wiki, actor=_actor(),
-        data=CompileUpdateInput(
-            doc_id=doc_id, page_type=page_type, topic=topic,
-            problem_cluster=problem_cluster, content=content, source_refs=refs,
-        ),
-    )
-    typer.echo(f"status={result.status} doc_id={result.doc_id}")
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
+        refs = [r.strip() for r in source_refs.split(",") if r.strip()]
+        result = CompileUpdateService().apply(
+            wiki=wiki, actor=_actor(),
+            data=CompileUpdateInput(
+                doc_id=doc_id, page_type=page_type, topic=topic,
+                problem_cluster=problem_cluster, content=content, source_refs=refs,
+            ),
+        )
+        typer.echo(f"status={result.status} doc_id={result.doc_id}")
+
+    _run_cli(_command)
 
 
 @app.command("lint")
@@ -143,14 +188,17 @@ def lint(
     registry: str | None = typer.Option(None, "--registry"),
     wiki_id: str | None = typer.Option(None, "--wiki-id"),
 ) -> None:
-    wiki = _load_wiki(registry, workspace, wiki_id)
-    result = LintService().run(wiki)
-    if result.ok:
-        typer.echo("ok: no issues")
-    else:
-        for issue in result.issues:
-            typer.echo(f"issue: {issue}")
-        raise typer.Exit(code=1)
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
+        result = LintService().run(wiki)
+        if result.ok:
+            typer.echo("ok: no issues")
+        else:
+            for issue in result.issues:
+                typer.echo(f"issue: {issue}")
+            raise typer.Exit(code=1)
+
+    _run_cli(_command)
 
 
 @sync_app.command("status")
@@ -159,11 +207,14 @@ def sync_status(
     registry: str | None = typer.Option(None, "--registry"),
     wiki_id: str | None = typer.Option(None, "--wiki-id"),
 ) -> None:
-    wiki = _load_wiki(registry, workspace, wiki_id)
-    result = SyncService().execute(wiki, _actor(), SyncInput(mode="status"))
-    typer.echo(f"mode={result.mode}")
-    for changed_file in result.changed_files:
-        typer.echo(changed_file)
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
+        result = SyncService().execute(wiki, _actor(), SyncInput(mode="status"))
+        typer.echo(f"mode={result.mode}")
+        for changed_file in result.changed_files:
+            typer.echo(changed_file)
+
+    _run_cli(_command)
 
 
 @sync_app.command("pull-view")
@@ -172,11 +223,14 @@ def sync_pull_view(
     registry: str | None = typer.Option(None, "--registry"),
     wiki_id: str | None = typer.Option(None, "--wiki-id"),
 ) -> None:
-    wiki = _load_wiki(registry, workspace, wiki_id)
-    result = SyncService().execute(wiki, _actor(), SyncInput(mode="pull-view"))
-    typer.echo(f"mode={result.mode}")
-    for changed_file in result.changed_files:
-        typer.echo(changed_file)
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
+        result = SyncService().execute(wiki, _actor(), SyncInput(mode="pull-view"))
+        typer.echo(f"mode={result.mode}")
+        for changed_file in result.changed_files:
+            typer.echo(changed_file)
+
+    _run_cli(_command)
 
 
 @sync_app.command("push-view")
@@ -186,11 +240,14 @@ def sync_push_view(
     registry: str | None = typer.Option(None, "--registry"),
     wiki_id: str | None = typer.Option(None, "--wiki-id"),
 ) -> None:
-    wiki = _load_wiki(registry, workspace, wiki_id)
-    result = SyncService().execute(wiki, _actor(), SyncInput(mode="push-view", doc_ids=doc_ids or None))
-    typer.echo(f"mode={result.mode}")
-    for changed_file in result.changed_files:
-        typer.echo(changed_file)
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
+        result = SyncService().execute(wiki, _actor(), SyncInput(mode="push-view", doc_ids=doc_ids or None))
+        typer.echo(f"mode={result.mode}")
+        for changed_file in result.changed_files:
+            typer.echo(changed_file)
+
+    _run_cli(_command)
 
 
 @app.command("feedback")
@@ -204,18 +261,21 @@ def feedback(
     registry: str | None = typer.Option(None, "--registry"),
     wiki_id: str | None = typer.Option(None, "--wiki-id"),
 ) -> None:
-    wiki = _load_wiki(registry, workspace, wiki_id)
-    result = FeedbackService().record(
-        wiki,
-        FeedbackInput(
-            query_id=query_id,
-            approved=approved,
-            missing_evidence=missing_evidence,
-            rewrite_targets=rewrite_targets or [],
-            notes=notes,
-        ),
-    )
-    typer.echo(f"created_review_item={result.created_review_item}")
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
+        result = FeedbackService().record(
+            wiki,
+            FeedbackInput(
+                query_id=query_id,
+                approved=approved,
+                missing_evidence=missing_evidence,
+                rewrite_targets=rewrite_targets or [],
+                notes=notes,
+            ),
+        )
+        typer.echo(f"created_review_item={result.created_review_item}")
+
+    _run_cli(_command)
 
 
 @app.command("weekly-review")
@@ -224,11 +284,14 @@ def weekly_review(
     registry: str | None = typer.Option(None, "--registry"),
     wiki_id: str | None = typer.Option(None, "--wiki-id"),
 ) -> None:
-    wiki = _load_wiki(registry, workspace, wiki_id)
-    report = WeeklyReviewService().generate(wiki)
-    typer.echo(report.summary)
-    for action in report.suggested_actions:
-        typer.echo(action)
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
+        report = WeeklyReviewService().generate(wiki)
+        typer.echo(report.summary)
+        for action in report.suggested_actions:
+            typer.echo(action)
+
+    _run_cli(_command)
 
 
 @approvals_app.command("propose")
@@ -244,21 +307,24 @@ def approvals_propose(
     wiki_id: str | None = typer.Option(None, "--wiki-id"),
     workspace: str | None = typer.Option(None, "--workspace"),
 ) -> None:
-    wiki = _load_wiki(registry, workspace, wiki_id)
-    result = ApprovalService(registry_path=_resolve_registry_path(registry)).propose(
-        wiki=wiki,
-        actor=_actor(),
-        data=ProposalInput(
-            proposal_id=proposal_id,
-            doc_id=doc_id,
-            page_type=page_type,
-            topic=topic,
-            problem_cluster=problem_cluster,
-            content=content,
-            source_refs=source_refs or [],
-        ),
-    )
-    typer.echo(f"status={result.status} proposal_id={result.proposal_id}")
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
+        result = ApprovalService(registry_path=_resolve_registry_path(registry)).propose(
+            wiki=wiki,
+            actor=_actor(),
+            data=ProposalInput(
+                proposal_id=proposal_id,
+                doc_id=doc_id,
+                page_type=page_type,
+                topic=topic,
+                problem_cluster=problem_cluster,
+                content=content,
+                source_refs=source_refs or [],
+            ),
+        )
+        typer.echo(f"status={result.status} proposal_id={result.proposal_id}")
+
+    _run_cli(_command)
 
 
 @approvals_app.command("approve")
@@ -268,13 +334,16 @@ def approvals_approve(
     wiki_id: str | None = typer.Option(None, "--wiki-id"),
     workspace: str | None = typer.Option(None, "--workspace"),
 ) -> None:
-    wiki = _load_wiki(registry, workspace, wiki_id)
-    result = ApprovalService(registry_path=_resolve_registry_path(registry)).approve(
-        wiki=wiki,
-        actor=_actor(),
-        proposal_id=proposal_id,
-    )
-    typer.echo(f"status={result.status} doc_id={result.doc_id}")
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
+        result = ApprovalService(registry_path=_resolve_registry_path(registry)).approve(
+            wiki=wiki,
+            actor=_actor(),
+            proposal_id=proposal_id,
+        )
+        typer.echo(f"status={result.status} doc_id={result.doc_id}")
+
+    _run_cli(_command)
 
 
 @approvals_app.command("reject")
@@ -299,17 +368,20 @@ def maintain(
     wiki_id: str | None = typer.Option(None, "--wiki-id"),
 ) -> None:
     """Run the slow self-evolution loop and print the quality report."""
-    wiki = _load_wiki(registry, workspace, wiki_id)
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
 
-    summary = MaintenanceService().run(wiki)
-    typer.echo("maintenance summary:")
-    for key, value in summary.items():
-        typer.echo(f"  {key}={value}")
+        summary = MaintenanceService().run(wiki)
+        typer.echo("maintenance summary:")
+        for key, value in summary.items():
+            typer.echo(f"  {key}={value}")
 
-    report = QualityReportService().generate(wiki)
-    typer.echo("quality report:")
-    for key, value in report.items():
-        typer.echo(f"  {key}={value}")
+        report = QualityReportService().generate(wiki)
+        typer.echo("quality report:")
+        for key, value in report.items():
+            typer.echo(f"  {key}={value}")
+
+    _run_cli(_command)
 
 
 def main() -> None:

@@ -423,3 +423,86 @@ def test_cli_query_uses_registry_option_and_identity_env(temp_wiki_root) -> None
 
     assert result.exit_code == 0
     assert "atom-cli-env-1" in result.stdout
+
+
+def test_cli_compile_update_maps_permission_error_to_structured_output(temp_wiki_root) -> None:
+    from pathlib import Path
+    from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+    from agent_wiki.bootstrap.registry_loader import RegistryLoader
+    from agent_wiki.domain.contracts import ResolvedActor
+
+    registry_path = temp_wiki_root.parent / "registry-cli-permission.yaml"
+    registry_data = yaml.safe_load(Path("tests/fixtures/registry.yaml").read_text())
+    registry_data["wikis"][0]["permissions"].append(
+        {
+            "actor_type": "agent",
+            "actor_id": "codex",
+            "allowed_operations": ["query", "capture_raw"],
+            "max_gate": "A",
+            "allowed_page_types": ["raw"],
+        }
+    )
+    registry_path.write_text(yaml.safe_dump(registry_data, sort_keys=False), encoding="utf-8")
+
+    wiki = RegistryLoader().load(registry_path).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=ResolvedActor(actor_type="agent", actor_id="codex", transport="cli"),
+        data=CaptureRawInput(
+            doc_id="raw-cli-perm-1",
+            topic="testing",
+            problem_cluster="cluster-cli-perm",
+            content="# Raw cli permission",
+            source_refs=[],
+        ),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "compile-update",
+            "atom-cli-perm-1",
+            "--page-type",
+            "atom",
+            "--topic",
+            "testing",
+            "--problem-cluster",
+            "cluster-cli-perm",
+            "--content",
+            "# Atom denied",
+            "--source-refs",
+            "personal-1:raw-cli-perm-1",
+            "--workspace",
+            str(temp_wiki_root),
+            "--registry",
+            str(registry_path),
+        ],
+        env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "codex"},
+    )
+
+    assert result.exit_code == 1
+    assert '"type":"permission_denied"' in result.stdout
+
+
+
+def test_cli_health_command_reports_registry_and_tool_surface(temp_wiki_root) -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "health",
+            "--workspace",
+            str(temp_wiki_root),
+            "--registry",
+            "tests/fixtures/registry.yaml",
+        ],
+        env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"},
+    )
+
+    assert result.exit_code == 0
+    assert "status=ok" in result.stdout
+    assert "wiki_count=1" in result.stdout
+    assert "tool_count=5" in result.stdout

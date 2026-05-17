@@ -1,35 +1,44 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from mcp.server.fastmcp import Context, FastMCP
 
 from agent_wiki.transports.mcp.dispatcher import MCPDispatcher
 
 
+class ToolErrorResult(BaseModel):
+    type: str
+    message: str
+
+
 class QueryToolResult(BaseModel):
-    query_type: str
-    l1_answer: str
-    l2_context: list[dict]
-    l3_proof: list[dict]
-    hits: list[dict]
-    hit_count: int
-    miss_signal: bool
+    query_type: str | None = None
+    l1_answer: str | None = None
+    l2_context: list[dict] = Field(default_factory=list)
+    l3_proof: list[dict] = Field(default_factory=list)
+    hits: list[dict] = Field(default_factory=list)
+    hit_count: int = 0
+    miss_signal: bool = False
+    error: ToolErrorResult | None = None
 
 
 class MutationToolResult(BaseModel):
-    status: str
-    doc_id: str
+    status: str | None = None
+    doc_id: str | None = None
     page_path: str | None = None
     reason: str | None = None
+    error: ToolErrorResult | None = None
 
 
 class LintToolResult(BaseModel):
-    ok: bool
-    issues: list[str]
-    issue_count: int
+    ok: bool | None = None
+    issues: list[str] = Field(default_factory=list)
+    issue_count: int = 0
+    error: ToolErrorResult | None = None
 
 
 class SyncToolResult(BaseModel):
-    mode: str
-    changed_files: list[str]
+    mode: str | None = None
+    changed_files: list[str] = Field(default_factory=list)
+    error: ToolErrorResult | None = None
 
 
 def _metadata_from_context(ctx: Context | None) -> dict[str, str]:

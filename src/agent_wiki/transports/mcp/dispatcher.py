@@ -14,6 +14,7 @@ from agent_wiki.domain.models import (
 )
 from agent_wiki.infrastructure.identity.resolver import IdentityResolver
 from agent_wiki.settings import DEFAULT_REGISTRY_PATH
+from agent_wiki.transports.errors import map_exception
 
 
 class MCPDispatcher:
@@ -28,18 +29,26 @@ class MCPDispatcher:
         session_metadata: dict | None = None,
         wiki_workspace_overrides: dict[str, str] | None = None,
     ) -> dict:
-        handler = {
-            "wiki.query": self._tool_query,
-            "wiki.capture_raw": self._tool_capture_raw,
-            "wiki.compile_update": self._tool_compile_update,
-            "wiki.lint": self._tool_lint,
-            "wiki.sync": self._tool_sync,
-        }.get(tool_name)
-        if handler is None:
-            raise ValueError(f"unknown tool: {tool_name}")
-        actor = self.resolve_identity(request_metadata or {}, session_metadata or {})
-        wiki = self._resolve_wiki(params["wiki_id"], wiki_workspace_overrides or {})
-        return handler(params, wiki, actor)
+        try:
+            handler = {
+                "wiki.query": self._tool_query,
+                "wiki.capture_raw": self._tool_capture_raw,
+                "wiki.compile_update": self._tool_compile_update,
+                "wiki.lint": self._tool_lint,
+                "wiki.sync": self._tool_sync,
+            }.get(tool_name)
+            if handler is None:
+                raise ValueError(f"unknown tool: {tool_name}")
+            actor = self.resolve_identity(request_metadata or {}, session_metadata or {})
+            wiki = self._resolve_wiki(params["wiki_id"], wiki_workspace_overrides or {})
+            return handler(params, wiki, actor)
+        except Exception as exc:
+            mapped = map_exception(exc)
+            payload: dict = {"error": mapped.as_dict()}
+            if tool_name in {"wiki.capture_raw", "wiki.compile_update"}:
+                payload["status"] = "denied" if mapped.type in {"permission_denied", "gate_blocked"} else "error"
+                payload["reason"] = mapped.message
+            return payload
 
     def resolve_identity(self, request_metadata: dict, session_metadata: dict):
         return IdentityResolver().resolve(
@@ -94,21 +103,18 @@ class MCPDispatcher:
         return {"status": result.status, "doc_id": result.doc_id, "page_path": result.page_path}
 
     def _tool_compile_update(self, params: dict, wiki, actor) -> dict:
-        try:
-            result = CompileUpdateService().apply(
-                wiki=wiki,
-                actor=actor,
-                data=CompileUpdateInput(
-                    doc_id=params["doc_id"],
-                    page_type=params["page_type"],
-                    topic=params["topic"],
-                    problem_cluster=params["problem_cluster"],
-                    content=params["content"],
-                    source_refs=params.get("source_refs", []),
-                ),
-            )
-        except PermissionError as exc:
-            return {"status": "denied", "reason": str(exc)}
+        result = CompileUpdateService().apply(
+            wiki=wiki,
+            actor=actor,
+            data=CompileUpdateInput(
+                doc_id=params["doc_id"],
+                page_type=params["page_type"],
+                topic=params["topic"],
+                problem_cluster=params["problem_cluster"],
+                content=params["content"],
+                source_refs=params.get("source_refs", []),
+            ),
+        )
         return {"status": result.status, "doc_id": result.doc_id, "page_path": result.page_path}
 
     def _tool_lint(self, params: dict, wiki, actor) -> dict:

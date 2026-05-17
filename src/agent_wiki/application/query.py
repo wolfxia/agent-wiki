@@ -6,14 +6,18 @@ from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor, RetrievalHit
 from agent_wiki.domain.enums import PageType, Sensitivity
 from agent_wiki.domain.models import QueryInput, QueryResult
+from agent_wiki.infrastructure.query.classifier import RuleBasedQueryClassifier
 from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 from agent_wiki.infrastructure.storage.purpose_reader import PurposeReader
 
 
 class QueryService:
+    def __init__(self) -> None:
+        self._classifier = RuleBasedQueryClassifier()
+
     def execute(self, wiki: WikiConfig, actor: ResolvedActor, data: QueryInput, *, write_outcome: bool = True) -> QueryResult:
-        query_type = self._classify_query_type(data.query)
+        query_type = self._classifier.classify(data.query)
         wiki_root = Path(wiki.workspace_path)
         manifest = ManifestRepository(wiki_root)
         retrieval_index = RetrievalIndexRepository(wiki_root)
@@ -42,20 +46,6 @@ class QueryService:
             hit_count=len(filtered_hits),
             miss_signal=len(filtered_hits) == 0,
         )
-
-    def _classify_query_type(self, query: str) -> str:
-        lowered = query.lower()
-        if any(token in lowered for token in ["proof", "evidence", "source"]):
-            return "proof_trace"
-        if any(token in lowered for token in ["compare", "tradeoff", "vs"]):
-            return "compare_tradeoff"
-        if any(token in lowered for token in ["why", "explain", "how"]):
-            return "concept_explain"
-        if any(token in lowered for token in ["trend", "scan"]):
-            return "trend_scan"
-        if any(token in lowered for token in ["should", "decision"]):
-            return "decision_support"
-        return "fact_lookup"
 
     def _include_hit(self, manifest: ManifestRepository, wiki_root: Path, hit: RetrievalHit, include_pending: bool) -> bool:
         entry = manifest.find(hit.doc_id)
@@ -181,11 +171,12 @@ class CrossWikiQueryService:
         combined_hits: list[RetrievalHit] = []
         l2_context: list[dict] = []
         l3_proof: list[dict] = []
-        query_type = QueryService()._classify_query_type(data.query)
+        query_service = QueryService()
+        query_type = query_service._classifier.classify(data.query)
         l1_answer = "No matching knowledge found."
 
         for wiki in wikis:
-            result = QueryService().execute(wiki, actor, data, write_outcome=False)
+            result = query_service.execute(wiki, actor, data, write_outcome=False)
             if result.hits and l1_answer == "No matching knowledge found.":
                 l1_answer = result.l1_answer
             combined_hits.extend(result.hits)

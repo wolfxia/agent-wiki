@@ -250,6 +250,57 @@ def test_mcp_invoke_uses_session_identity_not_caller_actor(temp_wiki_root: Path)
     assert not (temp_wiki_root / "pages" / "atom-mcp-auth-1.md").exists()
 
 
+def test_mcp_compile_update_maps_permission_error_to_structured_response(temp_wiki_root: Path) -> None:
+    from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+    from agent_wiki.domain.contracts import ResolvedActor
+
+    registry_path = temp_wiki_root.parent / "registry-mcp-permission.yaml"
+    registry_data = yaml.safe_load(Path("tests/fixtures/registry.yaml").read_text())
+    registry_data["wikis"][0]["permissions"].append(
+        {
+            "actor_type": "agent",
+            "actor_id": "codex",
+            "allowed_operations": ["query", "capture_raw"],
+            "max_gate": "A",
+            "allowed_page_types": ["raw"],
+        }
+    )
+    registry_path.write_text(yaml.safe_dump(registry_data, sort_keys=False), encoding="utf-8")
+
+    wiki = RegistryLoader().load(registry_path).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=ResolvedActor(actor_type="agent", actor_id="codex", transport="mcp"),
+        data=CaptureRawInput(
+            doc_id="raw-mcp-perm-1",
+            topic="testing",
+            problem_cluster="cluster-mcp-perm",
+            content="# Raw mcp permission",
+            source_refs=[],
+        ),
+    )
+
+    server = MCPServer(registry_path=str(registry_path))
+    result = server.invoke(
+        "wiki.compile_update",
+        {
+            "wiki_id": "personal-1",
+            "doc_id": "atom-mcp-perm-1",
+            "page_type": "atom",
+            "topic": "testing",
+            "problem_cluster": "cluster-mcp-perm",
+            "content": "# Atom denied",
+            "source_refs": ["personal-1:raw-mcp-perm-1"],
+        },
+        session_metadata={"actor_type": "agent", "actor_id": "codex"},
+        wiki_workspace_overrides={"personal-1": str(temp_wiki_root)},
+    )
+
+    assert result["error"]["type"] == "permission_denied"
+
+
 def test_build_fastmcp_server_registers_agent_wiki_tools() -> None:
     import asyncio
 

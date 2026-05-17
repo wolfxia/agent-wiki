@@ -35,6 +35,21 @@ class RetrievalProvider(Protocol):
 
 
 @runtime_checkable
+class QueryClassifier(Protocol):
+    def classify(self, query: str) -> str: ...
+
+
+@runtime_checkable
+class CompileSuggestionEvaluator(Protocol):
+    def evaluate(self, cluster: dict) -> dict: ...
+
+
+@runtime_checkable
+class QualityEvaluator(Protocol):
+    def evaluate(self, inputs: dict) -> dict: ...
+
+
+@runtime_checkable
 class EmbeddingProvider(Protocol):
     def embed_texts(self, texts: list[str]) -> list[list[float]]: ...
 

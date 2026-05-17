@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from agent_wiki.application.approvals import ApprovalService
@@ -17,6 +18,7 @@ from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import CaptureRawInput, IdentityContext, QueryInput, ProposalInput
 from agent_wiki.infrastructure.identity.resolver import IdentityResolver
 from agent_wiki.settings import DEFAULT_REGISTRY_PATH
+from agent_wiki.transports.errors import error_payload, map_exception
 
 
 class QueryRequest(BaseModel):
@@ -71,12 +73,28 @@ class ApproveRequest(BaseModel):
     proposal_id: str
 
 
+from agent_wiki.transports.errors import map_exception
+
+
 def create_app(
     wiki_workspace: str | None = None,
     registry_path: str | None = None,
     token_identities: dict[str, dict[str, str]] | None = None,
 ) -> FastAPI:
     app = FastAPI(title="agent-wiki")
+
+    @app.exception_handler(Exception)
+    async def _map_domain_exceptions(request: Any, exc: Exception):  # type: ignore[arg-type]
+        from fastapi.responses import JSONResponse
+
+        if isinstance(exc, HTTPException):
+            raise exc
+        mapped = map_exception(exc)
+        return JSONResponse(
+            status_code=mapped.http_status,
+            content={"error": {"type": mapped.type, "message": mapped.message}},
+        )
+
     state: dict[str, Any] = {
         "wiki_workspace": wiki_workspace,
         "registry_path": Path(registry_path) if registry_path else DEFAULT_REGISTRY_PATH,
@@ -98,6 +116,13 @@ def create_app(
         if state["wiki_workspace"]:
             wiki = wiki.model_copy(update={"workspace_path": state["wiki_workspace"]})
         return wiki
+
+    def _rest_call(action):
+        try:
+            return action()
+        except Exception as exc:
+            mapped = map_exception(exc)
+            return JSONResponse(status_code=mapped.status_code, content=error_payload(exc))
 
     def _resolve_actor(authorization: str | None) -> ResolvedActor:
         if not authorization or not authorization.startswith("Bearer "):
@@ -122,6 +147,9 @@ def create_app(
 
     @app.post("/query")
     def query(request: QueryRequest, authorization: str | None = Header(default=None)) -> dict:
+        return _rest_call(lambda: _query_impl(request, authorization))
+
+    def _query_impl(request: QueryRequest, authorization: str | None) -> dict:
         wiki = _resolve_wiki()
         actor = _resolve_actor(authorization)
         result = QueryService().execute(
@@ -145,6 +173,9 @@ def create_app(
 
     @app.post("/capture-raw")
     def capture_raw(request: CaptureRequest, authorization: str | None = Header(default=None)) -> dict:
+        return _rest_call(lambda: _capture_raw_impl(request, authorization))
+
+    def _capture_raw_impl(request: CaptureRequest, authorization: str | None) -> dict:
         wiki = _resolve_wiki()
         actor = _resolve_actor(authorization)
         result = CaptureRawService().execute(
@@ -162,6 +193,9 @@ def create_app(
 
     @app.post("/compile-update")
     def compile_update(request: CompileUpdateRequest, authorization: str | None = Header(default=None)) -> dict:
+        return _rest_call(lambda: _compile_update_impl(request, authorization))
+
+    def _compile_update_impl(request: CompileUpdateRequest, authorization: str | None) -> dict:
         wiki = _resolve_wiki()
         actor = _resolve_actor(authorization)
         result = CompileUpdateService().apply(
@@ -180,6 +214,9 @@ def create_app(
 
     @app.get("/lint")
     def lint(authorization: str | None = Header(default=None)) -> dict:
+        return _rest_call(lambda: _lint_impl(authorization))
+
+    def _lint_impl(authorization: str | None) -> dict:
         wiki = _resolve_wiki()
         _resolve_actor(authorization)
         result = LintService().run(wiki)
@@ -187,6 +224,9 @@ def create_app(
 
     @app.post("/sync")
     def sync(request: SyncRequest, authorization: str | None = Header(default=None)) -> dict:
+        return _rest_call(lambda: _sync_impl(request, authorization))
+
+    def _sync_impl(request: SyncRequest, authorization: str | None) -> dict:
         wiki = _resolve_wiki()
         actor = _resolve_actor(authorization)
         result = SyncService().execute(wiki, actor, SyncInput(mode=request.mode, doc_ids=request.doc_ids))
@@ -194,6 +234,9 @@ def create_app(
 
     @app.post("/feedback")
     def feedback(request: FeedbackRequest, authorization: str | None = Header(default=None)) -> dict:
+        return _rest_call(lambda: _feedback_impl(request, authorization))
+
+    def _feedback_impl(request: FeedbackRequest, authorization: str | None) -> dict:
         wiki = _resolve_wiki()
         _resolve_actor(authorization)
         result = FeedbackService().record(
@@ -210,6 +253,9 @@ def create_app(
 
     @app.get("/weekly-review")
     def weekly_review(authorization: str | None = Header(default=None)) -> dict:
+        return _rest_call(lambda: _weekly_review_impl(authorization))
+
+    def _weekly_review_impl(authorization: str | None) -> dict:
         wiki = _resolve_wiki()
         _resolve_actor(authorization)
         result = WeeklyReviewService().generate(wiki)
@@ -217,6 +263,9 @@ def create_app(
 
     @app.post("/approvals/propose")
     def approvals_propose(request: ProposalRequest, authorization: str | None = Header(default=None)) -> dict:
+        return _rest_call(lambda: _approvals_propose_impl(request, authorization))
+
+    def _approvals_propose_impl(request: ProposalRequest, authorization: str | None) -> dict:
         wiki = _resolve_wiki_by_id(request.wiki_id)
         actor = _resolve_actor(authorization)
         result = ApprovalService(registry_path=state["registry_path"]).propose(
@@ -236,6 +285,9 @@ def create_app(
 
     @app.post("/approvals/approve")
     def approvals_approve(request: ApproveRequest, authorization: str | None = Header(default=None)) -> dict:
+        return _rest_call(lambda: _approvals_approve_impl(request, authorization))
+
+    def _approvals_approve_impl(request: ApproveRequest, authorization: str | None) -> dict:
         wiki = _resolve_wiki_by_id(request.wiki_id)
         actor = _resolve_actor(authorization)
         result = ApprovalService(registry_path=state["registry_path"]).approve(
