@@ -7,6 +7,7 @@ from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.infrastructure.adapters.obsidian import ObsidianAdapter
 from agent_wiki.infrastructure.adapters.plain_markdown import PlainMarkdownAdapter
 from agent_wiki.infrastructure.identity.permissions import PermissionService
+from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRepository
 from agent_wiki.infrastructure.runtime.pending_state import PendingStateRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 
@@ -53,6 +54,7 @@ class SyncService:
         pages_root = wiki_root / "pages"
         pages_root.mkdir(exist_ok=True)
         pending = PendingStateRepository(wiki_root)
+        retrieval_index = RetrievalIndexRepository(wiki_root)
         changed_files: list[str] = []
         seen_targets: set[Path] = set()
         for view in wiki.external_views:
@@ -75,6 +77,15 @@ class SyncService:
                 seen_targets.add(target)
                 doc_id = source.stem
                 vault_relative_path = str(source.relative_to(external_path))
+                retrieval_index.append_raw_card(
+                    wiki.wiki_id,
+                    type("PullViewRawCard", (), {
+                        "doc_id": doc_id,
+                        "topic": source.parent.name,
+                        "problem_cluster": source.parent.name,
+                        "content": document["content"],
+                    })(),
+                )
                 pending.append_pending_manifest({
                     "doc_id": doc_id,
                     "page_type": "raw",
@@ -83,6 +94,7 @@ class SyncService:
                     "vault_relative_path": vault_relative_path,
                     "adapter_metadata": {"vault_relative_path": vault_relative_path},
                 })
+        self._rebuild_retrieval_index(wiki)
         return SyncResult(mode="pull-view", changed_files=changed_files)
 
     def _push_view(self, wiki: WikiConfig, doc_ids: list[str] | None = None) -> SyncResult:
@@ -135,6 +147,36 @@ class SyncService:
             if relative_path:
                 return external_root / relative_path
         return external_root / source.name
+
+    def _rebuild_retrieval_index(self, wiki: WikiConfig) -> None:
+        wiki_root = Path(wiki.workspace_path)
+        pages_root = wiki_root / "pages"
+        retrieval_index = RetrievalIndexRepository(wiki_root)
+        retrieval_index.index_path.write_text("", encoding="utf-8")
+        manifest = ManifestRepository(wiki_root)
+        pending = PendingStateRepository(wiki_root)
+
+        pending_entries: dict[str, dict] = {}
+        pending_path = wiki_root / ".agent-wiki" / "pending_manifest.jsonl"
+        if pending_path.exists():
+            for line in pending_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                entry = __import__("json").loads(line)
+                pending_entries[entry.get("doc_id", "")] = entry
+
+        for page_path in sorted(pages_root.glob("*.md")):
+            doc_id = page_path.stem
+            manifest_entry = manifest.find(doc_id) or pending_entries.get(doc_id) or {}
+            retrieval_index.append_raw_card(
+                wiki.wiki_id,
+                type("RebuiltRawCard", (), {
+                    "doc_id": doc_id,
+                    "topic": manifest_entry.get("topic", ""),
+                    "problem_cluster": manifest_entry.get("problem_cluster", ""),
+                    "content": page_path.read_text(encoding="utf-8"),
+                })(),
+            )
 
     def _get_adapter(self, view: object) -> object:
         adapter_name = self._view_adapter(view)

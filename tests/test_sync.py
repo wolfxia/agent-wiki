@@ -2,6 +2,7 @@ from pathlib import Path
 
 from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
 from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
+from agent_wiki.application.query import QueryInput, QueryService
 from agent_wiki.application.sync import SyncInput, SyncService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
@@ -34,6 +35,34 @@ def test_sync_status_reports_workspace_files(temp_wiki_root: Path) -> None:
     assert result.mode == "status"
     assert any(path.endswith("pages/raw-sync-1.md") for path in result.changed_files)
 
+
+
+
+def test_sync_pull_view_updates_retrieval_index_for_query(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    external_dir = temp_wiki_root / "obsidian-query-vault"
+    external_dir.mkdir(exist_ok=True)
+    (external_dir / "retrieval-note.md").write_text(
+        "# Retrieval Note\n\nPull view content should become queryable.",
+        encoding="utf-8",
+    )
+
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {"adapter": "obsidian", "mode": "read_write", "path": str(external_dir)}
+            ]
+        }
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    SyncService().execute(wiki, actor, SyncInput(mode="pull-view"))
+    result = QueryService().execute(wiki=wiki, actor=actor, data=QueryInput(query="pull view content queryable"))
+
+    assert result.hit_count >= 1
+    assert result.hits[0].doc_id == "retrieval-note"
 
 def test_sync_pull_view_imports_external_markdown(temp_wiki_root: Path) -> None:
     wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(

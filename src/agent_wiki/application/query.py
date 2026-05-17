@@ -52,14 +52,17 @@ class QueryService:
         if entry is not None:
             return True
         pending_manifest_path = wiki_root / ".agent-wiki" / "pending_manifest.jsonl"
-        if not include_pending or not pending_manifest_path.exists():
+        if not pending_manifest_path.exists():
             return False
         for line in pending_manifest_path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             pending_entry = json.loads(line)
-            if pending_entry.get("doc_id") == hit.doc_id:
+            if pending_entry.get("doc_id") != hit.doc_id:
+                continue
+            if pending_entry.get("page_type") == PageType.RAW.value:
                 return True
+            return include_pending
         return False
 
     def _search_pending_truth_zone(self, wiki_root: Path, wiki_id: str, query: str) -> list[RetrievalHit]:
