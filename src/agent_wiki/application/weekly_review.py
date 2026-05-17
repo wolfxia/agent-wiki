@@ -22,10 +22,14 @@ class WeeklyReviewService:
         queue_items: list[dict] = []
         if queue_path.exists():
             queue_items = [json.loads(line) for line in queue_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        active_queue_items = [item for item in queue_items if item.get("status", "open") in {"open", "assigned", "in_progress"}]
 
         outcomes: list[dict] = []
         if outcomes_path.exists():
             outcomes = [json.loads(line) for line in outcomes_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        feedback_events = [entry for entry in outcomes if "approved" in entry or "missing_evidence" in entry or "rewrite_targets" in entry]
+        query_events = [entry for entry in outcomes if "query" in entry and "hit_count" in entry]
+        miss_signals = sum(1 for entry in query_events if entry.get("hit_count", 0) == 0)
 
         manifest = ManifestRepository(wiki_root)
         entries = manifest.read_all()
@@ -35,7 +39,9 @@ class WeeklyReviewService:
         purpose = purpose_reader.read()
 
         parts = []
-        parts.append(f"{len(queue_items)} review_queue items, {len(outcomes)} feedback events")
+        parts.append(f"{len(active_queue_items)} active review_queue items, {len(feedback_events)} feedback events")
+        if miss_signals:
+            parts.append(f"{miss_signals} miss signals")
         if raw_count:
             parts.append(f"{raw_count} raw pages in backlog")
         if purpose["topics"]:
@@ -43,12 +49,13 @@ class WeeklyReviewService:
 
         # Summarize queue item types
         type_counts: dict[str, int] = {}
-        for item in queue_items:
+        for item in active_queue_items:
             item_type = item.get("item_type", "unknown")
             type_counts[item_type] = type_counts.get(item_type, 0) + 1
         for item_type, count in sorted(type_counts.items()):
             parts.append(f"{count} {item_type}")
 
         summary = "; ".join(parts)
-        suggested_actions = [item.get("reason", "review queue follow-up") for item in queue_items if item.get("reason")]
+        suggested_actions = [item.get("reason", "review queue follow-up") for item in active_queue_items if item.get("reason")]
+        suggested_actions.extend(entry.get("notes") for entry in feedback_events if entry.get("notes"))
         return WeeklyReviewReport(summary=summary, suggested_actions=suggested_actions)

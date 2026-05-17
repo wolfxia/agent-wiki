@@ -1,7 +1,9 @@
 from pathlib import Path
+import json
 
 from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
 from agent_wiki.application.feedback import FeedbackInput, FeedbackService
+from agent_wiki.application.query import QueryInput, QueryService
 from agent_wiki.application.weekly_review import WeeklyReviewService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
@@ -70,8 +72,6 @@ def test_weekly_review_includes_purpose_alignment(temp_wiki_root: Path) -> None:
 
 
 def test_weekly_review_surfaces_quality_signals_and_suggestions(temp_wiki_root: Path) -> None:
-    import json
-
     wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
         update={"workspace_path": str(temp_wiki_root)}
     )
@@ -93,3 +93,48 @@ def test_weekly_review_surfaces_quality_signals_and_suggestions(temp_wiki_root: 
 
     assert "2 quality_signal" in report.summary
     assert "1 compile_suggestion" in report.summary
+
+
+def test_weekly_review_consumes_open_queue_query_misses_and_feedback_separately(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    for _ in range(3):
+        QueryService().execute(
+            wiki=wiki,
+            actor=actor,
+            data=QueryInput(query="weekly-miss-gap"),
+        )
+
+    FeedbackService().record(
+        wiki,
+        FeedbackInput(
+            query_id="weekly-feedback-1",
+            approved=False,
+            missing_evidence=True,
+            rewrite_targets=["atom-weekly-1"],
+            notes="needs evidence backfill",
+        ),
+    )
+
+    queue_items = [
+        {"item_id": "q-open-1", "item_type": "quality_signal", "query": "weekly-miss-gap", "status": "open"},
+        {"item_id": "q-progress-1", "item_type": "compile_suggestion", "topic": "ops", "problem_cluster": "rollout", "status": "in_progress"},
+        {"item_id": "q-resolved-1", "item_type": "feedback_issue", "reason": "ignore resolved", "status": "resolved"},
+    ]
+    queue_path = temp_wiki_root / "review_queue.jsonl"
+    with queue_path.open("w", encoding="utf-8") as handle:
+        for item in queue_items:
+            handle.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+    report = WeeklyReviewService().generate(wiki)
+
+    assert "2 active review_queue items" in report.summary
+    assert "1 feedback events" in report.summary
+    assert "3 miss signals" in report.summary
+    assert "1 quality_signal" in report.summary
+    assert "1 compile_suggestion" in report.summary
+    assert "ignore resolved" not in report.summary
+    assert "needs evidence backfill" in report.suggested_actions

@@ -85,6 +85,41 @@ def test_maintenance_runs_all_detectors_and_returns_summary(temp_wiki_root: Path
     assert "signal_candidate" in item_types
 
 
+def test_maintenance_summary_includes_action_items(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    query_service = QueryService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    for i in range(3):
+        capture_service.execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-maint-actions-{i}",
+                topic="deployment",
+                problem_cluster="cluster-maint-actions",
+                content=f"# Raw maint actions {i}",
+                source_refs=[],
+            ),
+        )
+
+    for _ in range(3):
+        query_service.execute(
+            wiki=wiki,
+            actor=actor,
+            data=QueryInput(query="maintenance-gap-query"),
+        )
+
+    summary = MaintenanceService().run(wiki)
+
+    assert "action_items" in summary
+    assert any("compile" in item.lower() for item in summary["action_items"])
+    assert any("maintenance-gap-query" in item for item in summary["action_items"])
+
+
 def test_maintenance_idempotent_with_no_signals(temp_wiki_root: Path) -> None:
     wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
         update={"workspace_path": str(temp_wiki_root)}
