@@ -8,16 +8,20 @@ from agent_wiki.infrastructure.repair.raw_metadata_repair import RawMetadataRepa
 class MaintenanceService:
     def run(self, wiki: WikiConfig) -> dict:
         repair_summary = RawMetadataRepairService().repair(wiki)
-        compile_suggestions = CompileSuggestService().detect_and_enqueue(wiki)
+        compile_candidates = CompileSuggestService().detect_and_enqueue(wiki)
         quality_signals = FastFeedbackService().detect_and_enqueue(wiki)
         relations = RelationsService()
         co_occurrences = relations.detect_and_enqueue_co_occurrences(wiki)
         cross_references = relations.detect_and_enqueue_cross_references(wiki)
 
+        metadata_repair_candidates = [c for c in compile_candidates if c["kind"] == "needs_metadata_repair"]
+        compile_suggestions = [c for c in compile_candidates if c["kind"] != "needs_metadata_repair"]
+
         action_items: list[str] = []
-        if repair_summary["metadata_repair_candidates"]:
+        total_repair_candidates = repair_summary["metadata_repair_candidates"] + len(metadata_repair_candidates)
+        if total_repair_candidates:
             action_items.append(
-                f"Repair raw metadata for {repair_summary['metadata_repair_candidates']} imported raw pages"
+                f"Repair raw metadata for {total_repair_candidates} imported raw pages"
             )
         for candidate in compile_suggestions:
             action_items.append(
@@ -37,7 +41,7 @@ class MaintenanceService:
             )
 
         return {
-            "metadata_repair_candidates": repair_summary["metadata_repair_candidates"],
+            "metadata_repair_candidates": total_repair_candidates,
             "compile_suggestions": len(compile_suggestions),
             "quality_signals": len(quality_signals),
             "co_occurrence_candidates": len(co_occurrences),

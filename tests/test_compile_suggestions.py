@@ -139,3 +139,50 @@ def test_compile_suggestions_prioritized_by_purpose(temp_wiki_root: Path) -> Non
     # Purpose-aligned cluster should sort first
     assert candidates[0]["topic"] == "deployment"
     assert candidates[1]["topic"] == "testing"
+
+
+def test_compile_suggest_detects_metadata_repair_and_undercompiled_clusters(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    for i in range(3):
+        capture_service.execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-undercompiled-{i}",
+                topic="platform",
+                problem_cluster="migration",
+                content=f"# Raw undercompiled {i}\n\nEvidence {i}.",
+                source_refs=[],
+            ),
+        )
+
+    (temp_wiki_root / "pages").mkdir(exist_ok=True)
+    pending_root = temp_wiki_root / ".agent-wiki"
+    pending_root.mkdir(exist_ok=True)
+    (temp_wiki_root / "pages" / "raw-needs-repair.md").write_text(
+        "# Needs repair\n\nImported body.", encoding="utf-8"
+    )
+    (pending_root / "pending_manifest.jsonl").write_text(
+        json.dumps(
+            {
+                "doc_id": "raw-needs-repair",
+                "page_type": "raw",
+                "vault_relative_path": "imports/raw-needs-repair.md",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    candidates = CompileSuggestService().detect(wiki)
+
+    assert any(candidate["kind"] == "needs_metadata_repair" for candidate in candidates)
+    assert any(candidate["kind"] == "undercompiled_cluster" for candidate in candidates)
