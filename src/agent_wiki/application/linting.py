@@ -21,6 +21,9 @@ class LintService:
         issues: list[str] = []
 
         for entry in manifest.read_all():
+            if entry.get("page_type") == PageType.RAW.value:
+                if not entry.get("topic") or not entry.get("problem_cluster") or not entry.get("summary"):
+                    issues.append(f"missing raw metadata for {entry.get('doc_id', 'unknown')}")
             canonical_uri = entry.get("canonical_uri")
             if not canonical_uri:
                 issues.append(f"missing canonical_uri for {entry.get('doc_id', 'unknown')}")

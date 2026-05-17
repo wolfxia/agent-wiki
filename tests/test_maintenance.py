@@ -206,3 +206,36 @@ def test_maintenance_does_not_duplicate_queue_items_on_repeat_run(temp_wiki_root
     second_entries = [json.loads(line) for line in (temp_wiki_root / "review_queue.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
 
     assert len(second_entries) == len(first_entries)
+
+
+def test_maintenance_reports_metadata_repair_and_undercompiled_clusters(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    (temp_wiki_root / "pages").mkdir(exist_ok=True)
+    pending_root = temp_wiki_root / ".agent-wiki"
+    pending_root.mkdir(exist_ok=True)
+    entries: list[str] = []
+    for index in range(3):
+        doc_id = f"repair-maint-{index}"
+        (temp_wiki_root / "pages" / f"{doc_id}.md").write_text(
+            f"# Repair Maint {index}\n\nBody.", encoding="utf-8"
+        )
+        entries.append(
+            json.dumps(
+                {
+                    "doc_id": doc_id,
+                    "page_type": "raw",
+                    "vault_relative_path": f"repair/{doc_id}.md",
+                },
+                ensure_ascii=False,
+            )
+        )
+    (pending_root / "pending_manifest.jsonl").write_text("\n".join(entries) + "\n", encoding="utf-8")
+
+    summary = MaintenanceService().run(wiki)
+
+    assert summary["metadata_repair_candidates"] >= 1
+    assert summary["compile_suggestions"] >= 1

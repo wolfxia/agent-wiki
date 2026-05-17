@@ -132,3 +132,33 @@ def test_lint_passes_after_pull_view_promotes_raw_pages_to_manifest(temp_wiki_ro
 
     assert result.ok is True
     assert result.issues == []
+
+
+def test_lint_ignores_repaired_raw_pending_state(temp_wiki_root: Path) -> None:
+    from agent_wiki.infrastructure.repair.raw_metadata_repair import RawMetadataRepairService
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    (temp_wiki_root / "pages").mkdir(exist_ok=True)
+    (temp_wiki_root / "pages" / "repaired-raw-1.md").write_text("# Repaired Raw\n\nBody.", encoding="utf-8")
+    pending_root = temp_wiki_root / ".agent-wiki"
+    pending_root.mkdir(exist_ok=True)
+    (pending_root / "pending_manifest.jsonl").write_text(
+        json.dumps(
+            {
+                "doc_id": "repaired-raw-1",
+                "page_type": "raw",
+                "vault_relative_path": "repaired-raw-1.md",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    RawMetadataRepairService().repair(wiki)
+    result = LintService().run(wiki)
+
+    assert result.ok is True
+    assert result.issues == []
