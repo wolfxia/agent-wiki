@@ -1,6 +1,6 @@
 # Agent Wiki
 
-> Version: v1.2  
+> Version: v0.1.0  
 > Date: 2026-05-16  
 > Status: Repository overview aligned against the current Phase 1 implementation
 >
@@ -39,7 +39,7 @@ capture_raw → compile_update → query → lint → sync → weekly-review
 
 ![Query retrieval flow](docs/architecture/query-retrieval.svg)
 
-> Note: the diagrams above are part of the repository architecture assets under `docs/architecture/`. They reflect the current Phase 1 implementation direction, with some future MCP/REST and richer propagation behaviors still documented as design targets.
+> Note: the diagrams above are part of the repository architecture assets under `docs/architecture/`. They reflect the current Phase 1 implementation direction. Some richer propagation, governance, and deployability behaviors remain design targets beyond the current baseline.
 
 ## What Agent Wiki does
 
@@ -61,32 +61,32 @@ These subsystems exist in the current `src/agent_wiki/` runtime implementation:
 - feedback recording and review queue insertion
 - weekly review summary generation
 - C-level proposal / approval smoke path
+- real FastMCP stdio MCP server process with five workflow tools
+- `aw serve` plus `aw-agent` alias entrypoints
+- workflow-complete CLI surface for query/capture/compile/lint/sync/feedback/weekly-review/approvals
+- transport-parity REST workflow surface for query/capture/compile/lint/sync/feedback/weekly-review/approvals
+- shared registry permissions for `hermes`, `openclaw`, and `claude-code`, with reserved low-trust `codex`
+- Obsidian `push-view` with frontmatter preservation and derived graph index export
 - shared wiki restrictions and cross-wiki query smoke coverage
-- 32 passing tests covering the current M1-M6 baseline as of 2026-05-16
+- 151 passing tests covering the current Phase 1 baseline as of 2026-05-17
 
 ### Implemented callable interfaces today
 
-The currently callable user/agent surface is intentionally small:
+The currently callable user/agent surface includes:
 
-- minimal CLI stub in `src/agent_wiki/transports/cli/app.py`
-- `aw --help`
-- `aw info`
-
-This is enough to inspect packaging and runtime wiring, but it is **not** yet a workflow-complete CLI or a deployable long-running `aw-agent` service.
+- FastMCP stdio MCP server in `src/agent_wiki/transports/mcp/server.py`
+- workflow-complete CLI in `src/agent_wiki/transports/cli/app.py`
+- workflow-complete REST surface in `src/agent_wiki/transports/rest/app.py`
+- `aw` and `aw-agent` package entrypoints
 
 ### Designed but not yet fully implemented
 
-- MCP transport surface
-- REST transport surface
-- full gate enforcement against `max_gate`
-- trusted identity precedence over caller-supplied actor fields
 - authority-promotion / commit orchestration for Git-first governance
 - rollback/stale-marker propagation recovery model
-- page-level sensitivity schema and query filtering
 - richer schema/frontmatter validation
 - richer review queue workflow fields
 - vector provider routing and load-budget enforcement
-- adapter-specific reverse sync semantics beyond copy-based Phase 1 behavior
+
 
 ## CLI surface today
 
@@ -94,14 +94,16 @@ This is enough to inspect packaging and runtime wiring, but it is **not** yet a 
 |---|---|---|
 | `aw --help` | Implemented | package/CLI help surface |
 | `aw info` | Implemented | minimal runtime info stub |
-| `aw capture-raw` | Planned | application service exists, command surface does not |
-| `aw compile-*` | Planned | application service exists, command surface does not |
-| `aw query` | Planned | application service exists, command surface does not |
-| `aw lint` | Planned | application service exists, command surface does not |
-| `aw sync` | Planned | application service exists, command surface does not |
-| `aw feedback` | Planned | application service exists, command surface does not |
-| `aw weekly-review` | Planned | application service exists, command surface does not |
-| `aw serve` | Not started | required before `aw-agent` becomes a real long-running service |
+| `aw capture-raw` | Implemented | raw capture workflow command |
+| `aw compile-update` | Implemented | compiled update workflow command |
+| `aw query` | Implemented | layered query workflow command |
+| `aw lint` | Implemented | lint workflow command |
+| `aw sync` | Implemented | `status` / `pull-view` / `push-view` subcommands |
+| `aw feedback` | Implemented | feedback intake command |
+| `aw weekly-review` | Implemented | weekly review report command |
+| `aw approvals` | Implemented | `propose` / `approve` plus explicit Phase 1 `reject` placeholder |
+| `aw serve` | Implemented | real FastMCP stdio service entrypoint |
+| `aw-agent` | Implemented | alias entrypoint for the same service identity |
 
 ## Core design principles
 
@@ -136,10 +138,10 @@ The canonical runtime gate model is:
 
 | Agent | Tier | Transport | Current Phase 1 capability | Constraints |
 |---|---|---|---|---|
-| Hermes | T1 Full | MCP / CLI design target | design target for full workflow | strongest integration target, not implemented in this repo yet |
-| Claude Code | T2 Standard | CLI today, MCP later | capture, compile, query, lint, sync-triggered workflows | no built-in scheduler or vector search |
-| Codex | T3 Minimal | CLI `aw` + identity profile | query, capture_raw | no MCP, no persistent state |
-| OpenClaw | T1 Full | MCP / CLI design target | design target for full workflow | prompt-based skill environment |
+| Hermes | T1 Full | MCP / CLI | query, capture_raw, compile_update, lint, sync | strongest integration target for shared workflow |
+| Claude Code | T2 Standard | MCP / CLI / REST | capture, compile, query, lint, sync, feedback, weekly review, approvals | no built-in scheduler or vector search |
+| Codex | T3 Minimal | CLI `aw` + identity profile | query, capture_raw | reserved low-trust profile, no truth-zone writes |
+| OpenClaw | T1 Full | MCP / CLI | query, capture_raw, compile_update, lint, sync | prompt-based skill environment |
 | OpenCode | T3 Minimal | CLI wrapper | query, capture_raw style flows | no persistent state |
 
 For deeper per-agent notes, see `docs/agent-differences.md`.
@@ -183,7 +185,9 @@ The current runtime implementation lives under `src/agent_wiki/` and is organize
 
 ### Transport
 
-- `src/agent_wiki/transports/cli/app.py` — current CLI stub surface
+- `src/agent_wiki/transports/cli/app.py` — workflow-complete CLI surface and `aw` / `aw-agent` entrypoints
+- `src/agent_wiki/transports/mcp/server.py` — real FastMCP stdio MCP server with five workflow tools
+- `src/agent_wiki/transports/rest/app.py` — workflow-complete REST surface
 
 ### Legacy / non-authoritative paths
 
@@ -233,6 +237,7 @@ python3 -m pytest
 ```bash
 python3 -m agent_wiki.transports.cli.app --help
 python3 -m agent_wiki.transports.cli.app info
+python3 -m agent_wiki.transports.cli.app sync status
 ```
 
 Or, after installing the package locally:
@@ -241,6 +246,7 @@ Or, after installing the package locally:
 pip install -e .
 aw --help
 aw info
+aw-agent --help
 ```
 
 ### 3. Review the design baseline
@@ -351,12 +357,11 @@ python3 -m pytest
 ### P3 — Must complete authority and operational maturity
 
 - add authority-promotion / commit orchestration
-- implement `aw serve` and a real long-running service path
 - deepen DFX readiness criteria and runbooks
 
 ## Honest status note
 
-This repository now has a working, tested **Phase 1 baseline implementation**, but it is not yet the full end-state architecture described in the design docs. In particular, MCP/REST, richer propagation guarantees, deeper schema enforcement, and a real long-running service surface remain design targets rather than fully implemented runtime features.
+This repository now has a working, tested **Phase 1 baseline implementation** with real MCP/CLI/REST transport surfaces, shared registry permissions, and explicit Obsidian push-view support. It is still not the full end-state architecture described in the design docs. In particular, richer propagation guarantees, authority-promotion/commit orchestration, deeper schema enforcement, and broader deployability/operations work remain design targets.
 
 That split is intentional: the project is being built from the Phase 2 target architecture, but landed incrementally in Phase 1.
 

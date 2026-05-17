@@ -1,4 +1,5 @@
 from pathlib import Path
+from shutil import copytree
 
 from fastapi.testclient import TestClient
 import yaml
@@ -173,3 +174,235 @@ def test_rest_query_returns_l1_l2_l3_and_wiki_ids(temp_wiki_root: Path) -> None:
     assert payload["l2_context"]
     assert payload["l3_proof"]
     assert payload["hits"][0]["wiki_id"] == "personal-1"
+
+
+def test_rest_compile_update_endpoint_delegates_to_service(temp_wiki_root: Path) -> None:
+    from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+    from agent_wiki.bootstrap.registry_loader import RegistryLoader
+    from agent_wiki.domain.contracts import ResolvedActor
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="rest")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-rest-compile-1",
+            topic="testing",
+            problem_cluster="cluster-rest-compile",
+            content="# Raw rest compile",
+            source_refs=[],
+        ),
+    )
+
+    app = create_app(
+        wiki_workspace=str(temp_wiki_root),
+        registry_path="tests/fixtures/registry.yaml",
+        token_identities={"token-claude": {"actor_type": "agent", "actor_id": "claude-code"}},
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/compile-update",
+        headers={"Authorization": "Bearer token-claude"},
+        json={
+            "doc_id": "atom-rest-compile-1",
+            "page_type": "atom",
+            "topic": "testing",
+            "problem_cluster": "cluster-rest-compile",
+            "content": "# Atom rest compile\n\nREST compile update endpoint.",
+            "source_refs": ["personal-1:raw-rest-compile-1"],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "committed"
+    assert payload["doc_id"] == "atom-rest-compile-1"
+    assert (temp_wiki_root / "pages" / "atom-rest-compile-1.md").exists()
+
+
+def test_rest_lint_endpoint_returns_structured_issues(temp_wiki_root: Path) -> None:
+    pages_dir = temp_wiki_root / "pages"
+    pages_dir.mkdir(exist_ok=True)
+    (pages_dir / "ghost-rest.md").unlink(missing_ok=True)
+    (temp_wiki_root / "MANIFEST.jsonl").write_text(
+        '{"doc_id":"ghost-rest","page_type":"raw","canonical_uri":"pages/ghost-rest.md"}\n',
+        encoding="utf-8",
+    )
+
+    app = create_app(
+        wiki_workspace=str(temp_wiki_root),
+        registry_path="tests/fixtures/registry.yaml",
+        token_identities={"token-claude": {"actor_type": "agent", "actor_id": "claude-code"}},
+    )
+    client = TestClient(app)
+
+    response = client.get("/lint", headers={"Authorization": "Bearer token-claude"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is False
+    assert any("missing page" in issue for issue in payload["issues"])
+
+
+def test_rest_sync_endpoint_supports_push_view(temp_wiki_root: Path) -> None:
+    pages_dir = temp_wiki_root / "pages"
+    pages_dir.mkdir(exist_ok=True)
+    (pages_dir / "sync-rest-1.md").write_text("# Sync REST", encoding="utf-8")
+    external_dir = temp_wiki_root / "rest-vault"
+    external_dir.mkdir(exist_ok=True)
+
+    registry_path = temp_wiki_root.parent / "registry-rest-sync.yaml"
+    registry_data = yaml.safe_load(Path("tests/fixtures/registry.yaml").read_text())
+    registry_data["wikis"][0]["external_views"] = [
+        {"adapter": "plain_markdown", "mode": "read_write", "path": str(external_dir)}
+    ]
+    registry_path.write_text(yaml.safe_dump(registry_data, sort_keys=False), encoding="utf-8")
+
+    app = create_app(
+        wiki_workspace=str(temp_wiki_root),
+        registry_path=str(registry_path),
+        token_identities={"token-claude": {"actor_type": "agent", "actor_id": "claude-code"}},
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/sync",
+        headers={"Authorization": "Bearer token-claude"},
+        json={"mode": "push-view", "doc_ids": ["sync-rest-1"]},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mode"] == "push-view"
+    assert (external_dir / "sync-rest-1.md").exists()
+
+
+def test_rest_feedback_endpoint_records_feedback_and_queue(temp_wiki_root: Path) -> None:
+    app = create_app(
+        wiki_workspace=str(temp_wiki_root),
+        registry_path="tests/fixtures/registry.yaml",
+        token_identities={"token-claude": {"actor_type": "agent", "actor_id": "claude-code"}},
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/feedback",
+        headers={"Authorization": "Bearer token-claude"},
+        json={
+            "query_id": "q-rest-1",
+            "approved": False,
+            "missing_evidence": True,
+            "rewrite_targets": ["atom-rest-feedback-1"],
+            "notes": "needs stronger proof",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["created_review_item"] is True
+    assert (temp_wiki_root / "query_outcomes.jsonl").exists()
+    assert (temp_wiki_root / "review_queue.jsonl").exists()
+
+
+def test_rest_weekly_review_endpoint_returns_summary(temp_wiki_root: Path) -> None:
+    from agent_wiki.application.feedback import FeedbackInput, FeedbackService
+    from agent_wiki.bootstrap.registry_loader import RegistryLoader
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    FeedbackService().record(
+        wiki,
+        FeedbackInput(
+            query_id="q-rest-weekly-1",
+            approved=False,
+            missing_evidence=True,
+            rewrite_targets=["atom-rest-weekly-1"],
+            notes="backfill evidence",
+        ),
+    )
+
+    app = create_app(
+        wiki_workspace=str(temp_wiki_root),
+        registry_path="tests/fixtures/registry.yaml",
+        token_identities={"token-claude": {"actor_type": "agent", "actor_id": "claude-code"}},
+    )
+    client = TestClient(app)
+
+    response = client.get("/weekly-review", headers={"Authorization": "Bearer token-claude"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "feedback_issue" in payload["summary"]
+    assert "backfill evidence" in payload["suggested_actions"][0]
+
+
+def test_rest_approvals_endpoints_support_propose_and_approve(tmp_path: Path) -> None:
+    personal_root = tmp_path / "rest-approval-personal"
+    shared_root = tmp_path / "rest-approval-shared"
+    copytree(Path("tests/fixtures/sample_wiki"), personal_root)
+    copytree(Path("tests/fixtures/shared_wiki"), shared_root)
+
+    registry_path = tmp_path / "registry-rest-approvals.yaml"
+    registry_data = yaml.safe_load(Path("tests/fixtures/registry_multi.yaml").read_text())
+    registry_data["wikis"][0]["workspace_path"] = str(personal_root)
+    registry_data["wikis"][1]["workspace_path"] = str(shared_root)
+    registry_path.write_text(yaml.safe_dump(registry_data, sort_keys=False), encoding="utf-8")
+
+    from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+    from agent_wiki.bootstrap.registry_loader import RegistryLoader
+    from agent_wiki.domain.contracts import ResolvedActor
+
+    personal_wiki = RegistryLoader().load(registry_path).wikis[0]
+    CaptureRawService().execute(
+        wiki=personal_wiki,
+        actor=ResolvedActor(actor_type="agent", actor_id="claude-code", transport="rest"),
+        data=CaptureRawInput(
+            doc_id="raw-rest-approval-1",
+            topic="testing",
+            problem_cluster="cluster-rest-approval",
+            content="# Raw rest approval",
+            source_refs=[],
+        ),
+    )
+
+    app = create_app(
+        wiki_workspace=None,
+        registry_path=str(registry_path),
+        token_identities={"token-claude": {"actor_type": "agent", "actor_id": "claude-code"}},
+    )
+    client = TestClient(app)
+
+    propose = client.post(
+        "/approvals/propose",
+        headers={"Authorization": "Bearer token-claude"},
+        json={
+            "wiki_id": "shared-1",
+            "proposal_id": "proposal-rest-1",
+            "doc_id": "principle-rest-1",
+            "page_type": "principle",
+            "topic": "testing",
+            "problem_cluster": "cluster-rest-approval",
+            "content": "# Principle rest\n\nApproved through REST.",
+            "source_refs": ["personal-1:raw-rest-approval-1"],
+        },
+    )
+
+    assert propose.status_code == 200
+    assert propose.json()["status"] == "proposed"
+
+    approve = client.post(
+        "/approvals/approve",
+        headers={"Authorization": "Bearer token-claude"},
+        json={"wiki_id": "shared-1", "proposal_id": "proposal-rest-1"},
+    )
+
+    assert approve.status_code == 200
+    payload = approve.json()
+    assert payload["status"] == "approved"
+    assert payload["doc_id"] == "principle-rest-1"
+    assert (shared_root / "pages" / "principle-rest-1.md").exists()

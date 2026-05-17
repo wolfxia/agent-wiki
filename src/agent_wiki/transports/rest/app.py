@@ -4,11 +4,17 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
+from agent_wiki.application.approvals import ApprovalService
 from agent_wiki.application.capture_raw import CaptureRawService
+from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
+from agent_wiki.application.feedback import FeedbackInput, FeedbackService
+from agent_wiki.application.linting import LintService
+from agent_wiki.application.sync import SyncInput, SyncService
+from agent_wiki.application.weekly_review import WeeklyReviewService
 from agent_wiki.application.query import QueryService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
-from agent_wiki.domain.models import CaptureRawInput, IdentityContext, QueryInput
+from agent_wiki.domain.models import CaptureRawInput, IdentityContext, QueryInput, ProposalInput
 from agent_wiki.infrastructure.identity.resolver import IdentityResolver
 from agent_wiki.settings import DEFAULT_REGISTRY_PATH
 
@@ -27,6 +33,44 @@ class CaptureRequest(BaseModel):
     source_refs: list[str] = []
 
 
+class CompileUpdateRequest(BaseModel):
+    doc_id: str
+    page_type: str
+    topic: str
+    problem_cluster: str
+    content: str
+    source_refs: list[str] = []
+
+
+class SyncRequest(BaseModel):
+    mode: str
+    doc_ids: list[str] | None = None
+
+
+class FeedbackRequest(BaseModel):
+    query_id: str
+    approved: bool
+    missing_evidence: bool
+    rewrite_targets: list[str] = []
+    notes: str = ""
+
+
+class ProposalRequest(BaseModel):
+    wiki_id: str
+    proposal_id: str
+    doc_id: str
+    page_type: str
+    topic: str
+    problem_cluster: str
+    content: str
+    source_refs: list[str] = []
+
+
+class ApproveRequest(BaseModel):
+    wiki_id: str
+    proposal_id: str
+
+
 def create_app(
     wiki_workspace: str | None = None,
     registry_path: str | None = None,
@@ -42,6 +86,15 @@ def create_app(
     def _resolve_wiki():
         registry = RegistryLoader().load(state["registry_path"])
         wiki = registry.wikis[0]
+        if state["wiki_workspace"]:
+            wiki = wiki.model_copy(update={"workspace_path": state["wiki_workspace"]})
+        return wiki
+
+    def _resolve_wiki_by_id(wiki_id: str):
+        registry = RegistryLoader().load(state["registry_path"])
+        wiki = next((candidate for candidate in registry.wikis if candidate.wiki_id == wiki_id), None)
+        if wiki is None:
+            raise HTTPException(status_code=404, detail=f"unknown wiki_id: {wiki_id}")
         if state["wiki_workspace"]:
             wiki = wiki.model_copy(update={"workspace_path": state["wiki_workspace"]})
         return wiki
@@ -106,5 +159,90 @@ def create_app(
             ),
         )
         return {"status": result.status, "doc_id": result.doc_id, "page_path": result.page_path}
+
+    @app.post("/compile-update")
+    def compile_update(request: CompileUpdateRequest, authorization: str | None = Header(default=None)) -> dict:
+        wiki = _resolve_wiki()
+        actor = _resolve_actor(authorization)
+        result = CompileUpdateService().apply(
+            wiki=wiki,
+            actor=actor,
+            data=CompileUpdateInput(
+                doc_id=request.doc_id,
+                page_type=request.page_type,
+                topic=request.topic,
+                problem_cluster=request.problem_cluster,
+                content=request.content,
+                source_refs=request.source_refs,
+            ),
+        )
+        return {"status": result.status, "doc_id": result.doc_id, "page_path": result.page_path}
+
+    @app.get("/lint")
+    def lint(authorization: str | None = Header(default=None)) -> dict:
+        wiki = _resolve_wiki()
+        _resolve_actor(authorization)
+        result = LintService().run(wiki)
+        return {"ok": result.ok, "issues": result.issues}
+
+    @app.post("/sync")
+    def sync(request: SyncRequest, authorization: str | None = Header(default=None)) -> dict:
+        wiki = _resolve_wiki()
+        actor = _resolve_actor(authorization)
+        result = SyncService().execute(wiki, actor, SyncInput(mode=request.mode, doc_ids=request.doc_ids))
+        return {"mode": result.mode, "changed_files": result.changed_files}
+
+    @app.post("/feedback")
+    def feedback(request: FeedbackRequest, authorization: str | None = Header(default=None)) -> dict:
+        wiki = _resolve_wiki()
+        _resolve_actor(authorization)
+        result = FeedbackService().record(
+            wiki,
+            FeedbackInput(
+                query_id=request.query_id,
+                approved=request.approved,
+                missing_evidence=request.missing_evidence,
+                rewrite_targets=request.rewrite_targets,
+                notes=request.notes,
+            ),
+        )
+        return {"created_review_item": result.created_review_item}
+
+    @app.get("/weekly-review")
+    def weekly_review(authorization: str | None = Header(default=None)) -> dict:
+        wiki = _resolve_wiki()
+        _resolve_actor(authorization)
+        result = WeeklyReviewService().generate(wiki)
+        return {"summary": result.summary, "suggested_actions": result.suggested_actions}
+
+    @app.post("/approvals/propose")
+    def approvals_propose(request: ProposalRequest, authorization: str | None = Header(default=None)) -> dict:
+        wiki = _resolve_wiki_by_id(request.wiki_id)
+        actor = _resolve_actor(authorization)
+        result = ApprovalService(registry_path=state["registry_path"]).propose(
+            wiki=wiki,
+            actor=actor,
+            data=ProposalInput(
+                proposal_id=request.proposal_id,
+                doc_id=request.doc_id,
+                page_type=request.page_type,
+                topic=request.topic,
+                problem_cluster=request.problem_cluster,
+                content=request.content,
+                source_refs=request.source_refs,
+            ),
+        )
+        return {"status": result.status, "proposal_id": result.proposal_id}
+
+    @app.post("/approvals/approve")
+    def approvals_approve(request: ApproveRequest, authorization: str | None = Header(default=None)) -> dict:
+        wiki = _resolve_wiki_by_id(request.wiki_id)
+        actor = _resolve_actor(authorization)
+        result = ApprovalService(registry_path=state["registry_path"]).approve(
+            wiki=wiki,
+            actor=actor,
+            proposal_id=request.proposal_id,
+        )
+        return {"status": result.status, "doc_id": result.doc_id}
 
     return app

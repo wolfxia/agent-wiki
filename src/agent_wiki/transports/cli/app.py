@@ -3,21 +3,29 @@ import os
 
 import typer
 
+from agent_wiki.application.approvals import ApprovalService
 from agent_wiki.application.capture_raw import CaptureRawService
 from agent_wiki.application.compile_update import CompileUpdateService
+from agent_wiki.application.feedback import FeedbackInput, FeedbackService
 from agent_wiki.application.linting import LintService
 from agent_wiki.application.maintenance import MaintenanceService
 from agent_wiki.application.quality_report import QualityReportService
 from agent_wiki.application.query import QueryService
+from agent_wiki.application.sync import SyncInput, SyncService
+from agent_wiki.application.weekly_review import WeeklyReviewService
 from agent_wiki.bootstrap.container import Container
 from agent_wiki.bootstrap.registry_loader import RegistryLoader, WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
-from agent_wiki.domain.models import CaptureRawInput, CompileUpdateInput, IdentityContext, QueryInput
+from agent_wiki.domain.models import CaptureRawInput, CompileUpdateInput, IdentityContext, ProposalInput, QueryInput
 from agent_wiki.infrastructure.identity.resolver import IdentityResolver
 from agent_wiki.settings import DEFAULT_REGISTRY_PATH
 from agent_wiki.transports.mcp.server import run_stdio_server
 
 app = typer.Typer(help="Agent Wiki CLI")
+sync_app = typer.Typer(help="Sync workspace and external views")
+approvals_app = typer.Typer(help="Manage approval proposals")
+app.add_typer(sync_app, name="sync")
+app.add_typer(approvals_app, name="approvals")
 
 
 def _resolve_registry_path(registry: str | None) -> Path:
@@ -143,6 +151,145 @@ def lint(
         for issue in result.issues:
             typer.echo(f"issue: {issue}")
         raise typer.Exit(code=1)
+
+
+@sync_app.command("status")
+def sync_status(
+    workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
+) -> None:
+    wiki = _load_wiki(registry, workspace, wiki_id)
+    result = SyncService().execute(wiki, _actor(), SyncInput(mode="status"))
+    typer.echo(f"mode={result.mode}")
+    for changed_file in result.changed_files:
+        typer.echo(changed_file)
+
+
+@sync_app.command("pull-view")
+def sync_pull_view(
+    workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
+) -> None:
+    wiki = _load_wiki(registry, workspace, wiki_id)
+    result = SyncService().execute(wiki, _actor(), SyncInput(mode="pull-view"))
+    typer.echo(f"mode={result.mode}")
+    for changed_file in result.changed_files:
+        typer.echo(changed_file)
+
+
+@sync_app.command("push-view")
+def sync_push_view(
+    doc_ids: list[str] = typer.Option(None, "--doc-id"),
+    workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
+) -> None:
+    wiki = _load_wiki(registry, workspace, wiki_id)
+    result = SyncService().execute(wiki, _actor(), SyncInput(mode="push-view", doc_ids=doc_ids or None))
+    typer.echo(f"mode={result.mode}")
+    for changed_file in result.changed_files:
+        typer.echo(changed_file)
+
+
+@app.command("feedback")
+def feedback(
+    query_id: str = typer.Option(..., "--query-id"),
+    approved: bool = typer.Option(False, "--approved/--not-approved"),
+    missing_evidence: bool = typer.Option(False, "--missing-evidence"),
+    rewrite_targets: list[str] = typer.Option(None, "--rewrite-target"),
+    notes: str = typer.Option("", "--notes"),
+    workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
+) -> None:
+    wiki = _load_wiki(registry, workspace, wiki_id)
+    result = FeedbackService().record(
+        wiki,
+        FeedbackInput(
+            query_id=query_id,
+            approved=approved,
+            missing_evidence=missing_evidence,
+            rewrite_targets=rewrite_targets or [],
+            notes=notes,
+        ),
+    )
+    typer.echo(f"created_review_item={result.created_review_item}")
+
+
+@app.command("weekly-review")
+def weekly_review(
+    workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
+) -> None:
+    wiki = _load_wiki(registry, workspace, wiki_id)
+    report = WeeklyReviewService().generate(wiki)
+    typer.echo(report.summary)
+    for action in report.suggested_actions:
+        typer.echo(action)
+
+
+@approvals_app.command("propose")
+def approvals_propose(
+    proposal_id: str = typer.Option(..., "--proposal-id"),
+    doc_id: str = typer.Option(..., "--doc-id"),
+    page_type: str = typer.Option(..., "--page-type"),
+    topic: str = typer.Option(..., "--topic"),
+    problem_cluster: str = typer.Option(..., "--problem-cluster"),
+    content: str = typer.Option(..., "--content"),
+    source_refs: list[str] = typer.Option(None, "--source-ref"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
+    workspace: str | None = typer.Option(None, "--workspace"),
+) -> None:
+    wiki = _load_wiki(registry, workspace, wiki_id)
+    result = ApprovalService(registry_path=_resolve_registry_path(registry)).propose(
+        wiki=wiki,
+        actor=_actor(),
+        data=ProposalInput(
+            proposal_id=proposal_id,
+            doc_id=doc_id,
+            page_type=page_type,
+            topic=topic,
+            problem_cluster=problem_cluster,
+            content=content,
+            source_refs=source_refs or [],
+        ),
+    )
+    typer.echo(f"status={result.status} proposal_id={result.proposal_id}")
+
+
+@approvals_app.command("approve")
+def approvals_approve(
+    proposal_id: str = typer.Option(..., "--proposal-id"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
+    workspace: str | None = typer.Option(None, "--workspace"),
+) -> None:
+    wiki = _load_wiki(registry, workspace, wiki_id)
+    result = ApprovalService(registry_path=_resolve_registry_path(registry)).approve(
+        wiki=wiki,
+        actor=_actor(),
+        proposal_id=proposal_id,
+    )
+    typer.echo(f"status={result.status} doc_id={result.doc_id}")
+
+
+@approvals_app.command("reject")
+def approvals_reject(
+    proposal_id: str = typer.Option(..., "--proposal-id"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
+) -> None:
+    _resolve_registry_path(registry)
+    if not wiki_id:
+        raise typer.BadParameter("--wiki-id is required")
+    if not proposal_id:
+        raise typer.BadParameter("--proposal-id is required")
+    typer.echo("approval reject is not implemented in Phase 1")
+    raise typer.Exit(code=1)
 
 
 @app.command("maintain")
