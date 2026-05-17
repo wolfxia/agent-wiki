@@ -6,6 +6,7 @@ from agent_wiki.domain.models import CaptureRawInput, CaptureResult
 from agent_wiki.application.propagation import PropagationService
 from agent_wiki.infrastructure.identity.permissions import PermissionService
 from agent_wiki.domain.validators import validate_doc_id
+from agent_wiki.infrastructure.intake.raw_intake import normalize_raw_intake
 
 
 class CaptureRawService:
@@ -19,8 +20,9 @@ class CaptureRawService:
             raise PermissionError(decision.reason)
 
         propagation_service = PropagationService(Path(wiki.workspace_path))
+        normalized = CaptureRawInput.model_validate(normalize_raw_intake(data.model_dump()))
         try:
-            validate_doc_id(data.doc_id)
+            validate_doc_id(normalized.doc_id)
         except ValueError:
-            return propagation_service.record_pending_capture_raw(wiki=wiki, actor=actor, data=data)
-        return propagation_service.propagate_capture_raw(wiki=wiki, actor=actor, data=data)
+            return propagation_service.record_pending_capture_raw(wiki=wiki, actor=actor, data=normalized)
+        return propagation_service.propagate_capture_raw(wiki=wiki, actor=actor, data=normalized)

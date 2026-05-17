@@ -92,3 +92,41 @@ def test_capture_raw_denied_when_no_permission(temp_wiki_root: Path) -> None:
         assert "permission" in str(error).lower() or "no matching" in str(error).lower()
     else:
         raise AssertionError("expected permission denial")
+
+
+def test_capture_raw_input_allows_missing_topic_and_problem_cluster() -> None:
+    payload = CaptureRawInput(
+        doc_id="raw-intake-1",
+        topic=None,
+        problem_cluster=None,
+        summary=None,
+        content="# Raw intake\n\nCapture body.",
+        source_refs=[],
+    )
+
+    assert payload.topic is None
+    assert payload.problem_cluster is None
+    assert payload.summary is None
+
+
+def test_capture_raw_persists_normalized_metadata(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        data=CaptureRawInput(
+            doc_id="raw-intake-1",
+            topic=None,
+            problem_cluster=None,
+            summary=None,
+            content="# Raw intake\n\nCapture body.",
+            source_refs=[],
+        ),
+    )
+
+    manifest = (temp_wiki_root / "MANIFEST.jsonl").read_text(encoding="utf-8")
+    assert "raw-intake-1" in manifest
+    assert "classification_confidence" in manifest

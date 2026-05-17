@@ -16,8 +16,9 @@ class IdentityContext(BaseModel):
 
 class CaptureRawInput(BaseModel):
     doc_id: str
-    topic: str
-    problem_cluster: str
+    topic: str | None = None
+    problem_cluster: str | None = None
+    summary: str | None = None
     content: str
     source_refs: list[str]
 

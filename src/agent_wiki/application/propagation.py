@@ -33,6 +33,13 @@ class PropagationService:
                 "canonical_uri": f"pages/{data.doc_id}.md",
                 "last_writer": actor.actor_id,
                 "problem_cluster": data.problem_cluster,
+                "summary": getattr(data, "summary", None),
+                "classification_method": getattr(data, "classification_method", None),
+                "classification_confidence": getattr(data, "classification_confidence", None),
+                "metadata_state": getattr(data, "metadata_state", None),
+                "source_type": getattr(data, "source_type", None),
+                "source_uri": getattr(data, "source_uri", None),
+                "title": getattr(data, "title", None),
             }
         )
         self.retrieval_index_repository.append_raw_card(wiki.wiki_id, data)
