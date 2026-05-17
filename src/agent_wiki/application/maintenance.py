@@ -6,6 +6,7 @@ from agent_wiki.application.relations import RelationsService
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.infrastructure.repair.raw_metadata_repair import RawMetadataRepairService
 from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRepository
+from agent_wiki.infrastructure.retrieval.sqlite_fts import SQLiteFTSIndexProvider
 from agent_wiki.infrastructure.retrieval.topic_index import TopicIndexRepository
 from agent_wiki.infrastructure.runtime.operation_log import OperationLogRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
@@ -62,6 +63,7 @@ class MaintenanceService:
         manifest = ManifestRepository(wiki_root)
         topic_index = TopicIndexRepository(wiki_root)
         retrieval_index = RetrievalIndexRepository(wiki_root)
+        fts_index = SQLiteFTSIndexProvider(wiki_root, wiki_id=wiki.wiki_id)
         operation_log = OperationLogRepository(wiki_root)
 
         orphan_doc_ids: list[str] = []
@@ -79,6 +81,7 @@ class MaintenanceService:
                 continue
             manifest.delete(doc_id)
             topic_index.delete(doc_id)
+            fts_index.delete(doc_id)
             operation_log.append({
                 "operation": "orphan_cleanup",
                 "wiki_id": wiki.wiki_id,
@@ -86,6 +89,8 @@ class MaintenanceService:
             })
 
         if orphan_doc_ids:
-            retrieval_index.rebuild_from_manifest(manifest.read_all())
+            remaining_entries = manifest.read_all()
+            retrieval_index.rebuild_from_manifest(remaining_entries)
+            fts_index.rebuild_from_manifest(remaining_entries)
 
         return len([doc_id for doc_id in orphan_doc_ids if doc_id])

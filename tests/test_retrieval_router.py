@@ -50,3 +50,27 @@ def test_retrieval_router_falls_back_to_lexical_hits(temp_wiki_root: Path) -> No
 
     assert hits
     assert hits[0].doc_id == "atom-fallback-1"
+
+
+def test_retrieval_router_uses_sqlite_fts_runtime_index(temp_wiki_root: Path) -> None:
+    from agent_wiki.infrastructure.retrieval.sqlite_fts import SQLiteFTSIndexProvider
+
+    provider = SQLiteFTSIndexProvider(temp_wiki_root, wiki_id="personal-1")
+    provider.upsert(
+        "raw-runtime-fts",
+        {
+            "wiki_id": "personal-1",
+            "doc_id": "raw-runtime-fts",
+            "page_type": "raw",
+            "topic": "runtime",
+            "problem_cluster": "fts",
+            "summary": "Runtime FTS hit",
+            "content": "runtime sqlite full text search content",
+        },
+    )
+
+    hits = RetrievalRouter(temp_wiki_root, wiki_id="personal-1").search("runtime sqlite")
+
+    assert hits
+    assert hits[0].doc_id == "raw-runtime-fts"
+    assert hits[0].section == "fts5"

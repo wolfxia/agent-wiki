@@ -10,6 +10,7 @@ from agent_wiki.infrastructure.adapters.plain_markdown import PlainMarkdownAdapt
 from agent_wiki.infrastructure.identity.permissions import PermissionService
 from agent_wiki.infrastructure.intake.raw_intake import normalize_raw_intake
 from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRepository
+from agent_wiki.infrastructure.retrieval.sqlite_fts import SQLiteFTSIndexProvider
 from agent_wiki.infrastructure.retrieval.topic_index import TopicIndexRepository
 from agent_wiki.infrastructure.runtime.pending_state import PendingStateRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
@@ -58,6 +59,7 @@ class SyncService:
         pages_root.mkdir(exist_ok=True)
         pending = PendingStateRepository(wiki_root)
         retrieval_index = RetrievalIndexRepository(wiki_root)
+        fts_index = SQLiteFTSIndexProvider(wiki_root, wiki_id=wiki.wiki_id)
         topic_index = TopicIndexRepository(wiki_root)
         changed_files: list[str] = []
         seen_targets: set[Path] = set()
@@ -108,6 +110,15 @@ class SyncService:
                         "content": document["content"],
                     })(),
                 )
+                fts_index.upsert(doc_id, {
+                    "wiki_id": wiki.wiki_id,
+                    "doc_id": doc_id,
+                    "page_type": "raw",
+                    "topic": intake["topic"],
+                    "problem_cluster": intake["problem_cluster"],
+                    "summary": intake["summary"],
+                    "content": document["content"],
+                })
                 ManifestRepository(wiki_root).upsert({
                     "wiki_id": wiki.wiki_id,
                     "doc_id": doc_id,
@@ -201,6 +212,7 @@ class SyncService:
         pages_root = wiki_root / "pages"
         retrieval_index = RetrievalIndexRepository(wiki_root)
         retrieval_index.index_path.write_text("", encoding="utf-8")
+        fts_index = SQLiteFTSIndexProvider(wiki_root, wiki_id=wiki.wiki_id)
         manifest = ManifestRepository(wiki_root)
         pending = PendingStateRepository(wiki_root)
 
@@ -216,15 +228,26 @@ class SyncService:
         for page_path in sorted(pages_root.glob("*.md")):
             doc_id = page_path.stem
             manifest_entry = manifest.find(doc_id) or pending_entries.get(doc_id) or {}
+            content = page_path.read_text(encoding="utf-8")
             retrieval_index.append_raw_card(
                 wiki.wiki_id,
                 type("RebuiltRawCard", (), {
                     "doc_id": doc_id,
                     "topic": manifest_entry.get("topic", ""),
                     "problem_cluster": manifest_entry.get("problem_cluster", ""),
-                    "content": page_path.read_text(encoding="utf-8"),
+                    "content": content,
                 })(),
             )
+            fts_index.upsert(doc_id, {
+                "wiki_id": wiki.wiki_id,
+                "doc_id": doc_id,
+                "page_type": manifest_entry.get("page_type", "raw"),
+                "topic": manifest_entry.get("topic", ""),
+                "problem_cluster": manifest_entry.get("problem_cluster", ""),
+                "summary": manifest_entry.get("summary", ""),
+                "content": content,
+                "sensitivity": manifest_entry.get("sensitivity", ""),
+            })
 
 
     def _doc_id_for_pull_view_source(self, source: Path, external_root: Path) -> str:
