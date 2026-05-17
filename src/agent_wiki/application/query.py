@@ -6,10 +6,11 @@ from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor, RetrievalHit
 from agent_wiki.domain.enums import PageType, Sensitivity
 from agent_wiki.domain.models import QueryInput, QueryResult
+from agent_wiki.application.retrieval_router import RetrievalRouter
 from agent_wiki.infrastructure.query.classifier import RuleBasedQueryClassifier
-from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 from agent_wiki.infrastructure.storage.purpose_reader import PurposeReader
+from agent_wiki.infrastructure.retrieval.topic_index import TopicIndexRepository
 
 
 class QueryService:
@@ -20,9 +21,9 @@ class QueryService:
         query_type = self._classifier.classify(data.query)
         wiki_root = Path(wiki.workspace_path)
         manifest = ManifestRepository(wiki_root)
-        retrieval_index = RetrievalIndexRepository(wiki_root)
+        router = RetrievalRouter(wiki_root, wiki_id=wiki.wiki_id)
 
-        hits = retrieval_index.lexical_search(data.query)
+        hits = router.search(data.query)
         if data.include_pending:
             hits.extend(self._search_pending_truth_zone(wiki_root, wiki.wiki_id, data.query))
 
@@ -33,7 +34,7 @@ class QueryService:
         filtered_hits.sort(key=lambda hit: (hit.score + self._purpose_boost(manifest, purpose_reader, hit.doc_id), self._manifest_priority(manifest, hit.doc_id)), reverse=True)
         l2_context = self._build_l2_context(manifest, filtered_hits)
         l3_proof = self._build_l3_proof(manifest, filtered_hits)
-        l1_answer = self._build_l1_answer(filtered_hits, wiki_root)
+        l1_answer = self._build_l1_answer(filtered_hits, wiki_root, manifest)
         if write_outcome:
             self._append_query_outcome(wiki_root, actor, data, filtered_hits)
 
@@ -134,16 +135,23 @@ class QueryService:
             proof.append({"doc_id": hit.doc_id, "source_refs": entry.get("source_refs", [])})
         return proof
 
-    def _build_l1_answer(self, hits: list[RetrievalHit], wiki_root: Path) -> str:
+    def _build_l1_answer(self, hits: list[RetrievalHit], wiki_root: Path, manifest: ManifestRepository) -> str:
         if not hits:
             return "No matching knowledge found."
-        page_path = wiki_root / "pages" / f"{hits[0].doc_id}.md"
+        top_hit = hits[0]
+        topic_index_entry = TopicIndexRepository(wiki_root).find(top_hit.doc_id)
+        if topic_index_entry and topic_index_entry.get("summary"):
+            return topic_index_entry["summary"]
+        manifest_entry = manifest.find(top_hit.doc_id) or {}
+        if manifest_entry.get("summary"):
+            return str(manifest_entry["summary"])
+        page_path = wiki_root / "pages" / f"{top_hit.doc_id}.md"
         if not page_path.exists():
-            return f"Top match: {hits[0].doc_id}"
+            return f"Top match: {top_hit.doc_id}"
         lines = [line.strip() for line in page_path.read_text(encoding="utf-8").splitlines() if line.strip()]
         if len(lines) >= 2:
             return lines[1]
-        return lines[0] if lines else f"Top match: {hits[0].doc_id}"
+        return lines[0] if lines else f"Top match: {top_hit.doc_id}"
 
     def _append_query_outcome(
         self,

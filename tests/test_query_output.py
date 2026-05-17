@@ -355,3 +355,56 @@ def test_query_logging_writes_stable_query_id_to_outcomes_and_hits(temp_wiki_roo
     assert hits
     assert all(hit.get("query_id") == outcomes[0]["query_id"] for hit in hits)
     assert all("query_idx" not in hit for hit in hits)
+
+
+
+def test_query_l1_prefers_summary_from_topic_index(temp_wiki_root: Path) -> None:
+    from agent_wiki.infrastructure.retrieval.topic_index import TopicIndexRepository
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    query_service = QueryService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    capture_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-summary-1",
+            topic="deployment",
+            problem_cluster="cluster-summary",
+            content="# Raw summary one",
+            source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-summary-1",
+            page_type="atom",
+            topic="deployment",
+            problem_cluster="cluster-summary",
+            summary="Preferred summary answer.",
+            content="# Atom summary one\n\nBody text that should not be used as L1.",
+            source_refs=["personal-1:raw-summary-1"],
+        ),
+    )
+    TopicIndexRepository(temp_wiki_root).upsert({
+        "doc_id": "atom-summary-1",
+        "page_type": "atom",
+        "topic": "deployment",
+        "problem_cluster": "cluster-summary",
+        "summary": "Preferred summary answer.",
+    })
+
+    result = query_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=QueryInput(query="preferred summary answer deployment"),
+    )
+
+    assert result.l1_answer == "Preferred summary answer."
