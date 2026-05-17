@@ -108,6 +108,12 @@ def build_fastmcp_server(registry_path: str | None = None) -> FastMCP:
                     "problem_cluster": problem_cluster,
                     "content": content,
                     "source_refs": source_refs or [],
+                    "summary": summary,
+                    "aliases": aliases or [],
+                    "confidence": confidence,
+                    "contested": contested,
+                    "wikilinks": wikilinks or [],
+                    "sensitivity": sensitivity,
                 },
                 session_metadata=_metadata_from_context(ctx),
             )
@@ -122,6 +128,12 @@ def build_fastmcp_server(registry_path: str | None = None) -> FastMCP:
         problem_cluster: str,
         content: str,
         source_refs: list[str] | None = None,
+        summary: str | None = None,
+        aliases: list[str] | None = None,
+        confidence: str | None = None,
+        contested: bool = False,
+        wikilinks: list[str] | None = None,
+        sensitivity: str | None = None,
         ctx: Context | None = None,
     ) -> MutationToolResult:
         return MutationToolResult.model_validate(

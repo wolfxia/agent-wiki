@@ -40,6 +40,12 @@ class CompileUpdateRequest(BaseModel):
     page_type: str
     topic: str
     problem_cluster: str
+    summary: str | None = None
+    aliases: list[str] = []
+    confidence: str | None = None
+    contested: bool = False
+    wikilinks: list[str] = []
+    sensitivity: str | None = None
     content: str
     source_refs: list[str] = []
 
@@ -206,6 +212,12 @@ def create_app(
                 page_type=request.page_type,
                 topic=request.topic,
                 problem_cluster=request.problem_cluster,
+                summary=request.summary,
+                aliases=request.aliases,
+                confidence=request.confidence,
+                contested=request.contested,
+                wikilinks=request.wikilinks,
+                sensitivity=request.sensitivity,
                 content=request.content,
                 source_refs=request.source_refs,
             ),

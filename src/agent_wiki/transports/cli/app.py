@@ -167,6 +167,12 @@ def compile_update(
     problem_cluster: str = typer.Option(...),
     content: str = typer.Option(...),
     source_refs: str = typer.Option("", help="Comma-separated source_refs"),
+    summary: str | None = typer.Option(None, "--summary"),
+    aliases: str = typer.Option("", "--aliases", help="Comma-separated aliases"),
+    confidence: str | None = typer.Option(None, "--confidence"),
+    contested: bool = typer.Option(False, "--contested"),
+    wikilinks: str = typer.Option("", "--wikilinks", help="Comma-separated wikilinks"),
+    sensitivity: str | None = typer.Option(None, "--sensitivity"),
     workspace: str | None = typer.Option(None, "--workspace"),
     registry: str | None = typer.Option(None, "--registry"),
     wiki_id: str | None = typer.Option(None, "--wiki-id"),
@@ -174,11 +180,15 @@ def compile_update(
     def _command() -> None:
         wiki = _load_wiki(registry, workspace, wiki_id)
         refs = [r.strip() for r in source_refs.split(",") if r.strip()]
+        alias_list = [item.strip() for item in aliases.split(",") if item.strip()]
+        wikilink_list = [item.strip() for item in wikilinks.split(",") if item.strip()]
         result = CompileUpdateService().apply(
             wiki=wiki, actor=_actor(),
             data=CompileUpdateInput(
                 doc_id=doc_id, page_type=page_type, topic=topic,
-                problem_cluster=problem_cluster, content=content, source_refs=refs,
+                problem_cluster=problem_cluster, summary=summary, aliases=alias_list,
+                confidence=confidence, contested=contested, wikilinks=wikilink_list,
+                sensitivity=sensitivity, content=content, source_refs=refs,
             ),
         )
         typer.echo(f"status={result.status} doc_id={result.doc_id}")
