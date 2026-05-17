@@ -34,6 +34,11 @@ class CompileUpdateInput(BaseModel):
     page_type: PageType | str
     topic: str
     problem_cluster: str
+    summary: str | None = None
+    aliases: list[str] = []
+    confidence: str | None = None
+    contested: bool = False
+    wikilinks: list[str] = []
     content: str
     source_refs: list[str]
     evidence_note: str | None = None

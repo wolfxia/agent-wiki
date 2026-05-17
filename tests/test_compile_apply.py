@@ -159,3 +159,47 @@ def test_compile_apply_rejects_path_traversal_doc_id(temp_wiki_root: Path) -> No
         assert "doc_id" in str(error)
     else:
         raise AssertionError("expected doc_id validation failure")
+
+
+def test_compile_apply_persists_retrieval_ready_metadata(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    capture_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-schema-1",
+            topic="testing",
+            problem_cluster="cluster-schema",
+            content="# Raw schema",
+            source_refs=[],
+        ),
+    )
+
+    compile_service.apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-schema-1",
+            page_type="atom",
+            topic="testing",
+            problem_cluster="cluster-schema",
+            summary="Schema summary.",
+            aliases=["schema alias"],
+            confidence="high",
+            contested=True,
+            wikilinks=["raw-schema-1"],
+            content="# Atom schema\n\nCompiled schema body.",
+            source_refs=["personal-1:raw-schema-1"],
+        ),
+    )
+
+    manifest = (temp_wiki_root / "MANIFEST.jsonl").read_text(encoding="utf-8")
+    assert "confidence" in manifest
+    assert "aliases" in manifest
+    assert "wikilinks" in manifest
