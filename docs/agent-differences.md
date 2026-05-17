@@ -31,12 +31,15 @@
 
 All agents call the same `aw-agent` core. Agent-specific code must be a thin client: MCP connection config, CLI profile, cron trigger, or message-channel wrapper. No agent adapter owns retrieval, ingest, lint, sync, propagation, or gate logic.
 
+v0.2 team expansion model: the same registry shape supports N personal workspaces plus M team workspaces, with permission tiers per actor, wiki, operation, page type, and gate level.
+
 ### Hermes (Most Capable — Full Feature)
 
 **Leverage**: Built-in cron, memory_search, rich toolset, Feishu integration
 
 **Adapter approach**: 
-- Hermes skills call `aw-agent` MCP tools such as `wiki.query`, `wiki.capture_raw`, `wiki.compile_analyze`, and `wiki.sync`
+- Hermes skills call `aw-agent` MCP tools such as `wiki.query`, `wiki.capture_raw`, `wiki.compile_update`, and `wiki.sync`
+- Hermes MCP deployment must set `AGENT_WIKI_ACTOR_TYPE` and `AGENT_WIKI_ACTOR_ID` so the Knowledge Agent resolves the correct actor identity
 - PropagationEngine runs inside `aw-agent`, not inside Hermes skills
 - cronjob triggers `aw-agent` sync, lint, and weekly-review jobs
 - Obsidian sync as built-in cron
@@ -44,7 +47,7 @@ All agents call the same `aw-agent` core. Agent-specific code must be a thin cli
 
 **Unique optimization**:
 - `memory_search` can supplement vector search for semantic recall
-- `memory_search` can be an optional signal, but `aw-agent` Phase 1 query must still work through lexical retrieval baseline
+- `memory_search` can be an optional signal, but `aw-agent` Phase 1 query must still work through the FTS5/structured router with lexical fallback
 - `cronjob` enables automated DFX maintenance (not a runtime gate level)
 - `send_message` for human-in-the-loop on principle promotion
 
@@ -130,7 +133,7 @@ adapters/openclaw/
 **Adapter approach**:
 - Codex calls the same `aw` CLI as other minimal agents
 - Identity comes from a Codex-specific profile that resolves `actor_type=agent` and `actor_id=codex`
-- No MCP capability in Phase 1
+- Codex profile is not configured in the production registry; recommended path is CLI only
 - No persistent state or scheduler; all state lives in Git/workspace only
 
 **Unique optimization**:
@@ -139,7 +142,7 @@ adapters/openclaw/
 - Reuses the same low-risk CLI contract as OpenCode, but with a separate identity profile
 
 **Limitation**:
-- No MCP tool access
+- Codex profile is not configured in the production registry; recommended path is CLI only
 - No background memory
 - No built-in scheduling
 - Must use the shared `aw-agent` core through CLI transport only
@@ -194,7 +197,7 @@ adapters/opencode/
 
 ## Shared vs Agent-Specific
 
-| Component | Shared (core/) | Agent-Specific (adapters/) |
+| Component | src/agent_wiki shared runtime / core schema docs | Agent-Specific (adapters/) |
 |-----------|----------------|---------------------------|
 | Page taxonomy | ✅ | — |
 | Frontmatter schema | ✅ | — |
