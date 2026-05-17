@@ -134,12 +134,27 @@ Current implementation note:
 
 The following remain the active requirements baseline:
 
-1. Git is the authority source.
-2. Workspace holds runtime, pending, proposals, indexes, and conflict state.
-3. Git stores pages, `purpose.md`, config, `MANIFEST.jsonl`, `retrieval_index.jsonl`, and audit/log artifacts.
+1. **Workspace is the single source of truth (SSOT).** All authoritative knowledge lives in the workspace; external views (including Obsidian) are human-facing read-write presentation layers, not peer data sources.
+2. Git stores the persistent authority of the workspace: pages, `purpose.md`, config, `MANIFEST.jsonl`, `retrieval_index.jsonl`, and audit/log artifacts.
+3. Workspace holds runtime, pending, proposals, indexes, and conflict state.
 4. `.agent-wiki/` holds local runtime state and is not committed.
-5. `retrieval_index.jsonl` is the Phase 1 coarse retrieval baseline.
+5. `retrieval_index.jsonl` is the Phase 1 coarse retrieval baseline; FTS5 `retrieval.db` is the v0.2 accelerated index (not in Git, rebuildable).
 6. Vector retrieval remains optional.
+
+**Data flow:**
+
+```text
+Agent writes → workspace (SSOT)
+Human edits in Obsidian → pull-view → workspace
+workspace → push-view → Obsidian (full browsable/editable view)
+```
+
+**Scaling architecture (end-state design, not Phase 1):**
+
+- N personal workspaces (private, invisible by default)
+- M team workspaces (tiered permissions: shared / read-only / read-write)
+- Cross-workspace queries preserve source wiki traceability
+- Design principle: design from end-state, implement personal closure first
 
 Current implementation note:
 - `MANIFEST.jsonl` remains the authority ledger for committed raw and compiled pages.

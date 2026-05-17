@@ -133,12 +133,27 @@ Git authority → Local workspace compile/index/staging → External view/edit l
 
 以下仍是当前有效的需求基线：
 
-1. Git 是权威源。
-2. Workspace 保存 runtime、pending、proposal、index 和 conflict 状态。
-3. Git 保存页面、`purpose.md`、配置、`MANIFEST.jsonl`、`retrieval_index.jsonl` 以及审计/日志工件。
+1. **Workspace 是唯一真源（SSOT）。** 所有知识的权威版本存放在 workspace 中，外部视图（包括 Obsidian）是面向人的读写展示层，不是平级数据源。
+2. Git 保存 workspace 的持久化权威：页面、`purpose.md`、配置、`MANIFEST.jsonl`、`retrieval_index.jsonl` 以及审计/日志工件。
+3. Workspace 保存 runtime、pending、proposal、index 和 conflict 状态。
 4. `.agent-wiki/` 保存本地运行时状态，不提交到 Git。
-5. `retrieval_index.jsonl` 是 Phase 1 的粗检索基线。
+5. `retrieval_index.jsonl` 是 Phase 1 的粗检索基线；FTS5 retrieval.db 是 v0.2 的加速索引（不进 Git，可 rebuild）。
 6. 向量检索仍是可选能力。
+
+**数据流向：**
+
+```text
+Agent 写入 → workspace（唯一真源）
+人在 Obsidian 编辑 → pull-view 回流 workspace
+workspace → push-view → Obsidian（全量可浏览/可编辑视图）
+```
+
+**扩展架构（终态设计，Phase 1 不实现）：**
+
+- N 个个人 workspace（私有，默认不可见）
+- M 个团队 workspace（权限分级：共享/分权限只读/分权限读写）
+- 跨 workspace 查询保留 source wiki 可追踪性
+- 设计原则：以终为始，先做个人闭环
 
 ### 3.2 多 wiki 与身份
 
