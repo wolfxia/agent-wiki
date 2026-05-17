@@ -4,6 +4,7 @@ from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import CaptureRawInput, CaptureResult, CompileResult, CompileUpdateInput
 from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRepository
+from agent_wiki.infrastructure.retrieval.topic_index import TopicIndexRepository
 from agent_wiki.infrastructure.runtime.operation_log import OperationLogRepository
 from agent_wiki.infrastructure.runtime.pending_state import PendingStateRepository
 from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
@@ -15,6 +16,7 @@ class PropagationService:
         self.wiki_root = wiki_root
         self.manifest_repository = ManifestRepository(wiki_root)
         self.retrieval_index_repository = RetrievalIndexRepository(wiki_root)
+        self.topic_index_repository = TopicIndexRepository(wiki_root)
         self.pending_state_repository = PendingStateRepository(wiki_root)
         self.operation_log_repository = OperationLogRepository(wiki_root)
         self.review_queue_repository = ReviewQueueRepository(wiki_root)
@@ -43,6 +45,13 @@ class PropagationService:
             }
         )
         self.retrieval_index_repository.append_raw_card(wiki.wiki_id, data)
+        self.topic_index_repository.upsert({
+            "doc_id": data.doc_id,
+            "page_type": "raw",
+            "topic": data.topic,
+            "problem_cluster": data.problem_cluster,
+            "summary": getattr(data, "summary", None) or "",
+        })
 
         log_path = self.wiki_root / "log.md"
         with log_path.open("a", encoding="utf-8") as handle:
@@ -89,6 +98,13 @@ class PropagationService:
             }
         )
         self.retrieval_index_repository.append_compiled_card(wiki.wiki_id, data)
+        self.topic_index_repository.upsert({
+            "doc_id": data.doc_id,
+            "page_type": data.page_type,
+            "topic": data.topic,
+            "problem_cluster": data.problem_cluster,
+            "summary": data.summary or "",
+        })
         self.operation_log_repository.append(
             {
                 "operation": "compile_update",

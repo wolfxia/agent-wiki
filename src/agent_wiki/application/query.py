@@ -31,7 +31,7 @@ class QueryService:
         max_sensitivity = data.max_sensitivity or Sensitivity.INTERNAL
         filtered_hits = [hit for hit in filtered_hits if self._sensitivity_allowed(manifest, hit.doc_id, max_sensitivity)]
         purpose_reader = PurposeReader(wiki_root)
-        filtered_hits.sort(key=lambda hit: (hit.score + self._purpose_boost(manifest, purpose_reader, hit.doc_id), self._manifest_priority(manifest, hit.doc_id)), reverse=True)
+        filtered_hits.sort(key=lambda hit: (self._manifest_priority(manifest, hit.doc_id), hit.score + self._purpose_boost(manifest, purpose_reader, hit.doc_id)), reverse=True)
         l2_context = self._build_l2_context(manifest, filtered_hits)
         l3_proof = self._build_l3_proof(manifest, filtered_hits)
         l1_answer = self._build_l1_answer(filtered_hits, wiki_root, manifest)

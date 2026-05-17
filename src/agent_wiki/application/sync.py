@@ -9,6 +9,7 @@ from agent_wiki.infrastructure.adapters.plain_markdown import PlainMarkdownAdapt
 from agent_wiki.infrastructure.identity.permissions import PermissionService
 from agent_wiki.infrastructure.intake.raw_intake import normalize_raw_intake
 from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRepository
+from agent_wiki.infrastructure.retrieval.topic_index import TopicIndexRepository
 from agent_wiki.infrastructure.runtime.pending_state import PendingStateRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 
@@ -56,6 +57,7 @@ class SyncService:
         pages_root.mkdir(exist_ok=True)
         pending = PendingStateRepository(wiki_root)
         retrieval_index = RetrievalIndexRepository(wiki_root)
+        topic_index = TopicIndexRepository(wiki_root)
         changed_files: list[str] = []
         seen_targets: set[Path] = set()
         for view in wiki.external_views:
@@ -123,6 +125,13 @@ class SyncService:
                     "source": "external_sync",
                     "vault_relative_path": vault_relative_path,
                     "adapter_metadata": intake["adapter_metadata"],
+                })
+                topic_index.upsert({
+                    "doc_id": doc_id,
+                    "page_type": "raw",
+                    "topic": intake["topic"],
+                    "problem_cluster": intake["problem_cluster"],
+                    "summary": intake["summary"],
                 })
                 pending.append_pending_manifest({
                     "doc_id": doc_id,

@@ -14,7 +14,17 @@ class RetrievalRouter:
         self.wiki_root = wiki_root
 
     def search(self, query: str, top_k: int = 10) -> list[RetrievalHit]:
-        structured_hits = self.structured.search(query, top_k=top_k)
-        if structured_hits:
-            return structured_hits
-        return self.lexical.search(self.wiki_root, query)[:top_k]
+        merged: dict[str, RetrievalHit] = {}
+
+        for hit in self.lexical.search(self.wiki_root, query):
+            merged[hit.doc_id] = hit
+
+        for hit in self.structured.search(query, top_k=top_k):
+            boosted = hit.model_copy(update={"score": hit.score + 0.25})
+            existing = merged.get(hit.doc_id)
+            if existing is None or boosted.score > existing.score:
+                merged[hit.doc_id] = boosted
+
+        hits = list(merged.values())
+        hits.sort(key=lambda hit: hit.score, reverse=True)
+        return hits[:top_k]
