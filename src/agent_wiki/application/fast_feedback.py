@@ -20,6 +20,8 @@ class FastFeedbackService:
             if not line.strip():
                 continue
             entry = json.loads(line)
+            if "query" not in entry or "hit_count" not in entry:
+                continue
             if entry.get("hit_count", 0) == 0:
                 zero_hit_counts[entry["query"]] += 1
 
