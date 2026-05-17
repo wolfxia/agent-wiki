@@ -801,3 +801,84 @@ def test_sync_pull_view_slugifies_relative_path_for_same_name_files(temp_wiki_ro
     assert '"vault_relative_path": "research/2026-04-15_MCP协议.md"' in manifest
     assert "pages/agent-os_2026-04-15_MCP协议.md" in result.changed_files
     assert "pages/research_2026-04-15_MCP协议.md" in result.changed_files
+
+
+def test_sync_push_view_recurses_workspace_pages_and_routes_to_obsidian_categories(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    external_dir = temp_wiki_root / "obsidian-category-vault"
+    external_dir.mkdir(exist_ok=True)
+    pages_dir = temp_wiki_root / "pages"
+    (pages_dir / "nested" / "learning").mkdir(parents=True, exist_ok=True)
+    (pages_dir / "raw-agent.md").write_text("# Raw Agent\n\nInbox content.", encoding="utf-8")
+    (pages_dir / "nested" / "learning" / "atom-agent.md").write_text("# Atom Agent\n\nLearning content.", encoding="utf-8")
+    (pages_dir / "synthesis-industry.md").write_text("# Synthesis Industry\n\nInsight content.", encoding="utf-8")
+    (temp_wiki_root / "MANIFEST.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"wiki_id": "personal-1", "doc_id": "raw-agent", "page_type": "raw", "topic": "inbox", "problem_cluster": "capture", "summary": "raw", "canonical_uri": "pages/raw-agent.md"}, ensure_ascii=False),
+                json.dumps({"wiki_id": "personal-1", "doc_id": "atom-agent", "page_type": "atom", "topic": "学习笔记", "problem_cluster": "端侧AI", "summary": "atom", "canonical_uri": "pages/nested/learning/atom-agent.md"}, ensure_ascii=False),
+                json.dumps({"wiki_id": "personal-1", "doc_id": "synthesis-industry", "page_type": "synthesis", "topic": "行业洞察", "problem_cluster": "AI基础设施", "summary": "synthesis", "canonical_uri": "pages/synthesis-industry.md"}, ensure_ascii=False),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    wiki = wiki.model_copy(update={"external_views": [{"adapter": "obsidian", "mode": "read_write", "path": str(external_dir)}]})
+
+    result = SyncService().execute(
+        wiki,
+        ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        SyncInput(mode="push-view"),
+    )
+
+    assert (external_dir / "00-收件箱" / "raw-agent.md").exists()
+    assert (external_dir / "01-学习笔记" / "端侧AI" / "atom-agent.md").exists()
+    assert (external_dir / "02-行业洞察" / "AI基础设施" / "synthesis-industry.md").exists()
+    assert (external_dir / "04-知识图谱" / "知识图谱索引.md").exists()
+    assert any(path.endswith("01-学习笔记/端侧AI/atom-agent.md") for path in result.changed_files)
+
+
+def test_sync_push_view_exports_all_manifest_pages_even_when_pages_are_nested(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    external_dir = temp_wiki_root / "obsidian-all-pages-vault"
+    external_dir.mkdir(exist_ok=True)
+    pages_dir = temp_wiki_root / "pages"
+    for index in range(5):
+        target_dir = pages_dir / "imported" / str(index % 2)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        (target_dir / f"doc-{index}.md").write_text(f"# Doc {index}", encoding="utf-8")
+    manifest_lines = [
+        json.dumps(
+            {
+                "wiki_id": "personal-1",
+                "doc_id": f"doc-{index}",
+                "page_type": "raw" if index == 0 else "atom",
+                "topic": "学习笔记",
+                "problem_cluster": "批量导出",
+                "summary": f"doc {index}",
+                "canonical_uri": f"pages/imported/{index % 2}/doc-{index}.md",
+            },
+            ensure_ascii=False,
+        )
+        for index in range(5)
+    ]
+    (temp_wiki_root / "MANIFEST.jsonl").write_text("\n".join(manifest_lines) + "\n", encoding="utf-8")
+    wiki = wiki.model_copy(update={"external_views": [{"adapter": "obsidian", "mode": "read_write", "path": str(external_dir)}]})
+
+    result = SyncService().execute(
+        wiki,
+        ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        SyncInput(mode="push-view"),
+    )
+
+    exported_pages = [path for path in external_dir.rglob("*.md") if path.name != "知识图谱索引.md"]
+    assert len(exported_pages) == 5
+    assert len([path for path in result.changed_files if not path.endswith("知识图谱索引.md")]) == 5

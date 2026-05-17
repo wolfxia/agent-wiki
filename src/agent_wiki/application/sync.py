@@ -169,8 +169,9 @@ class SyncService:
             adapter = self._get_adapter(view)
             external_path = Path(view_path)
             external_path.mkdir(exist_ok=True)
+            is_obsidian = self._view_adapter(view) == "obsidian"
             for source in self._iter_export_sources(wiki_root, doc_ids):
-                target = self._resolve_export_target(external_path, source, manifest)
+                target = self._resolve_export_target(external_path, source, manifest, is_obsidian=is_obsidian)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 document: dict = {"content": source.read_text(encoding="utf-8")}
                 if target.exists():
@@ -195,17 +196,59 @@ class SyncService:
 
     def _iter_export_sources(self, wiki_root: Path, doc_ids: list[str] | None) -> list[Path]:
         pages_root = wiki_root / "pages"
-        if not doc_ids:
-            return sorted(pages_root.glob("*.md"))
-        return [pages_root / f"{doc_id}.md" for doc_id in doc_ids if (pages_root / f"{doc_id}.md").exists()]
+        manifest = ManifestRepository(wiki_root)
+        if doc_ids:
+            sources: list[Path] = []
+            for doc_id in doc_ids:
+                entry = manifest.find(doc_id)
+                if entry and entry.get("canonical_uri"):
+                    source = wiki_root / str(entry["canonical_uri"])
+                else:
+                    source = pages_root / f"{doc_id}.md"
+                if source.exists():
+                    sources.append(source)
+            return sources
 
-    def _resolve_export_target(self, external_root: Path, source: Path, manifest: ManifestRepository) -> Path:
-        entry = manifest.find(source.stem)
+        manifest_sources = []
+        for entry in manifest.read_all():
+            canonical_uri = entry.get("canonical_uri")
+            if not canonical_uri:
+                continue
+            source = wiki_root / str(canonical_uri)
+            if source.exists() and source.is_file():
+                manifest_sources.append(source)
+        if manifest_sources:
+            return sorted(manifest_sources)
+        return sorted(pages_root.rglob("*.md"))
+
+    def _resolve_export_target(self, external_root: Path, source: Path, manifest: ManifestRepository, *, is_obsidian: bool = False) -> Path:
+        entry = self._manifest_entry_for_source(source, manifest)
         if entry is not None:
             relative_path = entry.get("vault_relative_path")
             if relative_path:
                 return external_root / relative_path
+            if is_obsidian:
+                return external_root / self._default_obsidian_relative_path(entry, source.name)
         return external_root / source.name
+
+    def _manifest_entry_for_source(self, source: Path, manifest: ManifestRepository) -> dict | None:
+        entry = manifest.find(source.stem)
+        if entry is not None:
+            return entry
+        for candidate in manifest.read_all():
+            if candidate.get("canonical_uri") and Path(str(candidate["canonical_uri"])).name == source.name:
+                return candidate
+        return None
+
+    def _default_obsidian_relative_path(self, entry: dict, filename: str) -> Path:
+        page_type = entry.get("page_type")
+        topic = str(entry.get("topic") or "").strip()
+        cluster = str(entry.get("problem_cluster") or "").strip()
+        if page_type == "raw":
+            return Path("00-收件箱") / filename
+        if topic == "行业洞察" or page_type == "synthesis":
+            return Path("02-行业洞察") / (cluster or "未分类") / filename
+        return Path("01-学习笔记") / (cluster or topic or "未分类") / filename
 
     def _rebuild_retrieval_index(self, wiki: WikiConfig) -> None:
         wiki_root = Path(wiki.workspace_path)
