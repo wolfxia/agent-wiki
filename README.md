@@ -8,7 +8,7 @@
 
 Agent Wiki is an agent-agnostic knowledge system for long-lived AI memory. It treats the workspace as the single source of truth, exposes a real FastMCP stdio server for agents, and keeps human-facing tools such as Obsidian as read-write views over the same authority model.
 
-Current data baseline: **1034+ pages**, **382 topics**, and **235 passing tests**.
+Current data baseline: **1472 workspace pages**, **1488 manifest entries**, **383 indexed topics**, and **235 passing tests**.
 
 ## Quick Integration Guide
 
@@ -48,7 +48,7 @@ pip install -e ".[dev]"
 export AGENT_WIKI_ACTOR_TYPE=agent
 export AGENT_WIKI_ACTOR_ID=hermes
 
-aw health --registry /Users/chao/agent-wiki-data/registry.yaml --wiki-id main
+aw health --registry /Users/chao/agent-wiki-data/registry.yaml
 aw query "MCP integration" --registry /Users/chao/agent-wiki-data/registry.yaml --wiki-id main
 ```
 
@@ -133,7 +133,7 @@ Core decisions in v0.2.0:
 | `aw sync push-view` | Export workspace pages to external views |
 | `aw feedback` | Record query or content feedback |
 | `aw weekly-review` | Produce maintenance review summary |
-| `aw approvals propose/approve/reject` | C-level proposal workflow |
+| `aw approvals propose/approve/reject` | C-level proposal workflow; `reject` is currently a placeholder and exits with code 1 |
 | `aw migrate --slugify-doc-ids` | Preserve vault relative path in doc ids |
 | `aw migrate --normalize-doc-ids` | Normalize doc ids to lowercase hyphen form |
 | `aw maintain` | Run maintenance checks and queue generation |
@@ -168,6 +168,8 @@ capture_raw / pull-view
 ```
 
 Retrieval currently combines structured metadata, lexical matching, FTS5 index health, purpose-aware ranking, page type boosts, and freshness. Vector search remains a plugin-level enhancement rather than the baseline.
+
+Note: `registry.yaml` `coarse_provider` is design/configuration metadata today; it is not yet the runtime switch that selects the active retrieval provider.
 
 ## Obsidian Workflow
 
@@ -216,6 +218,8 @@ agent-wiki/
     └── test_*.py
 ```
 
+Run `./serve_graph.sh` to start a local HTTP server for the graph visualizer on `:8765`.
+
 ## Development
 
 Install and verify:
@@ -232,7 +236,7 @@ Current verified suite: **235 passed**.
 Useful operational checks:
 
 ```bash
-aw health --registry /Users/chao/agent-wiki-data/registry.yaml --wiki-id main
+aw health --registry /Users/chao/agent-wiki-data/registry.yaml
 aw lint --registry /Users/chao/agent-wiki-data/registry.yaml --wiki-id main
 aw sync status --registry /Users/chao/agent-wiki-data/registry.yaml --wiki-id main
 ```
