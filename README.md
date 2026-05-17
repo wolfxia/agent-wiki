@@ -68,7 +68,7 @@ These subsystems exist in the current `src/agent_wiki/` runtime implementation:
 - shared registry permissions for `hermes`, `openclaw`, and `claude-code`, with reserved low-trust `codex`
 - Obsidian `push-view` with frontmatter preservation and derived graph index export
 - shared wiki restrictions and cross-wiki query smoke coverage
-- 151 passing tests covering the current Phase 1 baseline as of 2026-05-17
+- regression-tested Phase 1 baseline with the current suite enforced in CI and local pytest runs
 
 ### Implemented callable interfaces today
 
@@ -110,7 +110,7 @@ The currently callable user/agent surface includes:
 - **Git is the authority** — committed knowledge lives in Git-visible artifacts.
 - **Workspace is runtime state** — local pending state, proposals, and maintenance metadata live under `.agent-wiki/`.
 - **Write = propagate** — writes are not just page edits; they update manifest, retrieval, logs, and queue state.
-- **Compile before retrieve** — raw sources feed compiled artifacts, then retrieval operates over those artifacts.
+- **Compile and retrieve are one closed loop** — intake feeds compilation, compilation defines retrieval units, and misses feed maintenance.
 - **Agent adapters stay thin** — core behavior belongs to the shared engine, not individual agent integrations.
 
 ## Phase 1 global priorities
@@ -308,6 +308,7 @@ query
 
 ## Documentation guide
 
+- `docs/specs/knowledge-system-architecture.md` — authoritative end-state architecture spec for intake, compilation, retrieval, and maintenance
 - `docs/design.md` — architecture design and implementation alignment
 - `docs/requirements-and-architecture.md` — requirements baseline and phase-boundary decisions
 - `core/schema.md` — operation contract and schema expectations
@@ -335,8 +336,10 @@ python3 -m pytest
 
 ### P0 — Must be usable
 
+- make source intake produce compile-ready raw authority entries instead of metadata-empty imports
+- enforce metadata continuity: low-confidence raw metadata is acceptable, null critical metadata is not
 - strengthen lexical retrieval quality for real use
-- add Chinese-aware tokenization and fuzzy matching
+- replace the current CJK-bigram lexical baseline with stronger structured and indexed retrieval in later phases
 - add hit/miss tracking in the query path
 - ship Obsidian-connected workflow as a real adoption path
 

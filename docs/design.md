@@ -2,7 +2,9 @@
 
 > Universal Knowledge System for Multi-Agent Environments  
 > v0.1.0 — 2026-05-17  
-> Status: Design baseline aligned against the current Phase 1 implementation, including real FastMCP transport, shared access policy, and explicit Obsidian push-view
+> Status: Design baseline aligned against the current Phase 1 implementation, including real FastMCP transport, shared access policy, explicit Obsidian push-view, and the unified knowledge-system architecture spec
+
+> Authority note: `docs/specs/knowledge-system-architecture.md` is the authoritative end-state architecture spec. This document must distinguish current baseline from target design explicitly.
 
 ---
 
@@ -100,6 +102,20 @@ The current implementation in `src/agent_wiki/application/propagation.py` suppor
 - `operation_log.jsonl` append for compile updates
 - `review_queue.jsonl` append for evidence-related cases
 - pending raw fallback to `.agent-wiki/pending_manifest.jsonl`
+
+### 2.2A Current baseline vs target design
+
+Current baseline:
+
+- raw capture can fall back to pending on invalid `doc_id`
+- imported raw content can still arrive with weak metadata continuity
+- propagation updates authority and runtime artifacts, but does not yet guarantee compile-ready raw metadata on every intake path
+
+Target design:
+
+- pending is failure or blocked-promotion state only
+- accepted raw evidence belongs in `MANIFEST.jsonl` even when metadata confidence is low
+- compile-ready metadata continuity is part of the propagation contract, not a later cleanup step
 
 ### 2.3 Current write flows
 
@@ -319,7 +335,7 @@ The combined architectural position is therefore:
 
 Phase 1 retrieval should no longer be described merely as a lexical baseline. It should be described as a **usable lexical baseline** with concrete quality expectations:
 
-- Chinese tokenization support rather than whitespace-only assumptions
+- stronger Chinese lexical handling than the current CJK-bigram baseline
 - fuzzy keyword matching for near-miss query terms
 - weighted ranking for title/topic/problem-cluster/keyword overlap
 - hit/miss instrumentation on every query path
@@ -330,6 +346,9 @@ Phase 1 retrieval should no longer be described merely as a lexical baseline. It
 Implemented today:
 
 - lexical retrieval over `retrieval_index.jsonl`
+- CJK bigram tokenization in `src/agent_wiki/infrastructure/retrieval/tokenizer.py`
+- simple fuzzy matching in `src/agent_wiki/infrastructure/retrieval/fuzzy.py`
+- weighted lexical scoring across topic, problem cluster, and content
 - heuristic query classification
 - layered L1/L2/L3 response assembly
 - dispute caveats in query output
@@ -337,9 +356,8 @@ Implemented today:
 
 Not yet implemented, but still promoted in architectural priority:
 
-- Chinese-aware tokenization
-- fuzzy lexical matching
-- weighted ranking beyond the current simple baseline
+- structured retrieval routing over `topic_index.md`
+- stronger indexed lexical retrieval beyond the current file-backed baseline
 - first-class hit/miss tracking in the query path itself
 - drift detection when hit quality degrades over time
 
@@ -641,6 +659,10 @@ The three review perspectives imply a more nuanced Phase 1 priority stack than e
 
 These determine whether the system is actually used:
 
+- compilation foundation repair
+  - source intake must produce authority raw entries with non-null critical metadata
+  - low-confidence metadata is acceptable; null metadata is not
+  - pending should represent failure state, not uncategorized accepted state
 - query quality improvements to the lexical baseline
   - Chinese tokenization
   - fuzzy matching
@@ -1160,7 +1182,7 @@ Agent Wiki should remain easy to evolve without losing architectural clarity. Ma
 Implemented today:
 
 - layered code organization under `src/agent_wiki/`
-- milestone-backed test baseline with 151 passing tests across the current Phase 1 workflow set, as documented in `README.md`
+- milestone-backed regression suite across the current Phase 1 workflow set
 - core documentation set across README, schema, design, requirements, and agent-difference docs
 - minimal lint checks for manifest/page and manifest/index consistency
 

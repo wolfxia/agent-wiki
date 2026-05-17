@@ -3,7 +3,7 @@
 > Status: Requirements baseline aligned against the current Phase 1 implementation  
 > Date: 2026-05-16  
 > Recommended architecture: protocol-centered Knowledge Agent  
-> Note: this document remains a requirements and architecture summary, not an implementation plan.
+> Note: this document remains a requirements and architecture summary, not an implementation plan. The authoritative end-state spec is `docs/specs/knowledge-system-architecture.md`.
 
 ---
 
@@ -108,9 +108,10 @@ The target architecture remains a global `aw-agent` that exposes one shared core
 
 Current implementation note:
 - the shared core services are implemented under `src/agent_wiki/`
-- the only implemented transport today is a minimal CLI stub in `src/agent_wiki/transports/cli/app.py`
-- MCP and REST remain design targets, not implemented runtime surfaces yet
-- `aw-agent` is not yet a real long-running service process because `aw serve` does not exist yet
+- workflow-complete CLI exists in `src/agent_wiki/transports/cli/app.py`
+- a real FastMCP stdio MCP server exists in `src/agent_wiki/transports/mcp/server.py`
+- a workflow-complete REST surface exists in `src/agent_wiki/transports/rest/app.py`
+- `aw serve` and `aw-agent` now expose the MCP stdio service identity
 
 ### 2.5 Risk gates scale with truth-zone risk
 
@@ -139,6 +140,11 @@ The following remain the active requirements baseline:
 4. `.agent-wiki/` holds local runtime state and is not committed.
 5. `retrieval_index.jsonl` is the Phase 1 coarse retrieval baseline.
 6. Vector retrieval remains optional.
+
+Current implementation note:
+- `MANIFEST.jsonl` remains the authority ledger for committed raw and compiled pages.
+- `.agent-wiki/pending_manifest.jsonl` exists today, but the target architecture now constrains `pending` to failure or blocked-promotion states only.
+- accepted raw entries should ultimately live in `MANIFEST.jsonl` with non-null critical metadata, even when confidence is low.
 
 ### 3.2 Multi-wiki and identity
 
@@ -184,7 +190,7 @@ This remains the active tier model:
 
 Current implementation note:
 - the implemented service boundaries align with this model
-- there is still no transport-level policy-complete enforcement across all agents, because MCP/REST are not implemented yet
+- there is still no transport-level policy-complete enforcement across all agents, even though MCP/CLI/REST now exist
 - the tier model should therefore be read as the intended policy shape, not a fully enforced runtime perimeter yet
 
 ### 3.5 Ingest and compile
@@ -201,6 +207,7 @@ Current implementation note:
 - `compile_update` analyze/apply is implemented in a simplified form
 - principle writes currently use a local proposal/approval smoke path
 - analyze is currently heuristic, not a full evidence-planning engine
+- the current intake path still needs stronger metadata continuity so imported raw pages reliably feed compilation
 
 ### 3.6 External views and sync
 
@@ -214,16 +221,18 @@ Current implementation note:
 - current Phase 1 sync is a copy-based markdown sync with `status`, `pull-view`, and `push-view`
 - adapter-driven reverse sync and gate-to-Git promotion remain future work
 
-### 3.7 Pending query policy
+### 3.7 Pending and query policy
 
 Still required:
 
-- raw pending can be queryable
+- pending represents failure or blocked-promotion state rather than uncategorized accepted state
+- raw pending can be queryable only as an explicit failure-path convenience
 - truth-zone pending is excluded by default unless `include_pending=true`
 
 Current implementation note:
 - truth-zone pending opt-in query behavior is implemented in `src/agent_wiki/application/query.py`
 - raw pending indexing remains simplified relative to the fuller design
+- the unified architecture direction is to reduce pending-heavy raw intake by promoting accepted low-confidence raw entries into `MANIFEST.jsonl`
 
 ### 3.8 Source-of-truth evidence rules
 
@@ -251,6 +260,7 @@ Still required:
 
 Current implementation note:
 - the lexical baseline and layered output are implemented
+- the current baseline uses file-backed lexical retrieval with CJK bigram tokenization, simple fuzzy matching, and weighted topic/problem-cluster/content scoring
 - vector routing, load budgets, and richer provider orchestration are not yet implemented
 
 ### 3.10 Feedback and weekly review loop
@@ -294,8 +304,8 @@ The design still requires identity to be resolved by the knowledge agent rather 
 
 Current implementation note:
 - identity, permission, and gate helper modules exist
-- explicit actor fields are still accepted and preferred in the current identity resolver
-- full `max_gate` enforcement is still missing
+- remote/shared transports now resolve trusted identity from transport context; CLI still prefers explicit local actor/config
+- per-rule `max_gate` enforcement exists, but the full workflow gate engine is still incomplete
 - these are implementation gaps to be fixed, not design changes
 
 ### 3.14 Transports and naming
@@ -310,8 +320,8 @@ The naming baseline remains:
 Current implementation note:
 - package name is implemented
 - CLI entry point is configured in `pyproject.toml`
-- full CLI command surface, MCP, and REST remain incomplete
-- `aw-agent` should currently be read as a target service identity, not as a fully deployable long-running process
+- workflow-complete CLI, MCP, and REST surfaces are implemented
+- `aw-agent` is a real alias entrypoint for the same stdio service identity as `aw serve`
 
 ---
 
@@ -331,6 +341,7 @@ The current implementation baseline covers the following subsystems under `src/a
 - weekly review
 - approvals
 - manifest/retrieval/pending/review/runtime repositories
+- MCP stdio server, REST surface, and shared transport-aligned policy helpers
 
 This means the project now has a **working Phase 1 baseline**, but not yet the full protocol-complete architecture described in the end-state design.
 
@@ -342,7 +353,7 @@ The following items should be treated as blockers before any stronger claim of p
 - central `max_gate` enforcement
 - authority-promotion / commit orchestration for Git-first governance
 - page-level sensitivity schema plus retrieval/response filtering
-- deployable `aw serve` process and long-running `aw-agent` runtime path
+- stronger compilation foundation: authority raw intake, metadata continuity, and repair of pending-heavy imports
 
 ---
 
@@ -350,15 +361,16 @@ The following items should be treated as blockers before any stronger claim of p
 
 | Area | Design target | Current implementation | Status |
 |---|---|---|---|
-| Transport surface | MCP + CLI + REST | minimal CLI stub only | Not Yet Implemented |
-| Gate enforcement | policy-complete A/B/C checks and `max_gate` enforcement | gate classification only, partial service separation | Partial |
-| Identity safety | caller cannot override resolved identity | explicit actor fields still override metadata | Divergence |
+| Transport surface | MCP + CLI + REST | real FastMCP stdio MCP server + workflow-complete CLI + workflow-complete REST | Implemented |
+| Gate enforcement | policy-complete A/B/C checks and `max_gate` enforcement | per-rule `max_gate` enforcement exists; full workflow gate engine is still incomplete | Partial |
+| Identity safety | caller cannot override resolved identity | trusted transport context is enforced for MCP/REST; CLI still prefers explicit local actor/config | Partial |
 | Propagation recovery | rollback + stale markers + mirror handling | direct write/append model only | Phase 1 Simplification |
 | Authority promotion | gate-checked commit orchestration to Git authority | Git-visible file writes only, no full orchestrator yet | Divergence |
-| Retrieval runtime | provider-pluggable, load-policy aware, budgeted | lexical baseline + layered output | Phase 1 Simplification |
-| Sync | adapter-driven reverse sync and gate-to-authority path | markdown file copy modes | Phase 1 Simplification |
+| Retrieval runtime | provider-pluggable, load-policy aware, budgeted | lexical baseline + layered output; stronger routed retrieval remains future work | Phase 1 Simplification |
+| Compilation foundation | compile-ready raw authority intake with metadata continuity | imported raw intake can still produce weak or pending-heavy metadata state | Divergence |
+| Sync | adapter-driven reverse sync and gate-to-authority path | adapter-driven markdown sync plus explicit Obsidian graph export | Phase 1 Simplification |
 | Review queue | rich workflow schema | minimal queue entries | Phase 1 Simplification |
-| Query outcomes | query path logs outcomes directly | feedback path records outcomes | Simplified |
+| Query outcomes | query path logs outcomes directly | query path logs outcomes directly; feedback appends human-evaluation records | Simplified |
 | Page sensitivity | schema-backed page access policy with query filtering | no page-level sensitivity enforcement yet | Not Yet Implemented |
 
 ---
@@ -388,4 +400,4 @@ This order gives you:
 
 This document should be read as the **requirements and architecture baseline**, not as a claim that every target capability is already implemented. Where the current implementation is smaller than the design, the design remains authoritative and the current runtime is treated as a Phase 1 baseline or simplification.
 
-In particular, identity precedence, `max_gate`, authority-promotion/commit orchestration, page-level sensitivity filtering, and deployable service surfaces remain the most important unresolved blockers for stronger governance claims.
+In particular, compilation-foundation repair, identity precedence, the full workflow gate engine, authority-promotion/commit orchestration, and page-level sensitivity filtering remain the most important unresolved blockers for stronger governance claims.
