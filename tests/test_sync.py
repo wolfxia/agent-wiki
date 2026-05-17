@@ -888,7 +888,7 @@ def test_sync_push_view_recurses_workspace_pages_and_routes_to_obsidian_categori
         "\n".join(
             [
                 json.dumps({"wiki_id": "personal-1", "doc_id": "raw-agent", "page_type": "raw", "topic": "inbox", "problem_cluster": "capture", "summary": "raw", "canonical_uri": "pages/raw-agent.md"}, ensure_ascii=False),
-                json.dumps({"wiki_id": "personal-1", "doc_id": "atom-agent", "page_type": "atom", "topic": "学习笔记", "problem_cluster": "端侧AI", "summary": "atom", "canonical_uri": "pages/nested/learning/atom-agent.md"}, ensure_ascii=False),
+                json.dumps({"wiki_id": "personal-1", "doc_id": "atom-agent", "page_type": "atom", "topic": "edge-ai-imaging", "problem_cluster": "edge-ai-imaging", "summary": "atom", "canonical_uri": "pages/nested/learning/atom-agent.md"}, ensure_ascii=False),
                 json.dumps({"wiki_id": "personal-1", "doc_id": "synthesis-industry", "page_type": "synthesis", "topic": "行业洞察", "problem_cluster": "AI基础设施", "summary": "synthesis", "canonical_uri": "pages/synthesis-industry.md"}, ensure_ascii=False),
             ]
         )
@@ -904,10 +904,10 @@ def test_sync_push_view_recurses_workspace_pages_and_routes_to_obsidian_categori
     )
 
     assert (external_dir / "00-收件箱" / "raw-agent.md").exists()
-    assert (external_dir / "01-学习笔记" / "端侧AI" / "atom-agent.md").exists()
+    assert (external_dir / "edge-ai-imaging" / "atom-agent.md").exists()
     assert (external_dir / "02-行业洞察" / "AI基础设施" / "synthesis-industry.md").exists()
     assert (external_dir / "04-知识图谱" / "知识图谱索引.md").exists()
-    assert any(path.endswith("01-学习笔记/端侧AI/atom-agent.md") for path in result.changed_files)
+    assert any(path.endswith("edge-ai-imaging/atom-agent.md") for path in result.changed_files)
 
 
 def test_sync_push_view_exports_all_manifest_pages_even_when_pages_are_nested(temp_wiki_root: Path) -> None:

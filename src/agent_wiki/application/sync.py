@@ -275,15 +275,39 @@ class SyncService:
                 return candidate
         return None
 
+    # Direction-to-folder mapping for Obsidian vault organization
+    _DIRECTION_FOLDERS: dict[str, str] = {
+        "imaging-os": "imaging-os",
+        "edge-ai-imaging": "edge-ai-imaging",
+        "agent-os": "agent-os",
+        "ai-harness": "ai-harness",
+        "os-industry": "os-industry",
+        "methodology": "methodology",
+        "ppt-craft": "ppt-craft",
+        "diagram-arch": "diagram-arch",
+        "wearable-iot": "wearable-iot",
+        "sensor-ai": "sensor-ai",
+        "3dgs-mobile": "3dgs-mobile",
+        "openclaw": "openclaw",
+        "knowledge-system": "knowledge-system",
+        "learning": "learning",
+        "infrastructure": "infrastructure",
+        "weekly": "weekly",
+        "project": "project",
+    }
+
     def _default_obsidian_relative_path(self, entry: dict, filename: str) -> Path:
         page_type = entry.get("page_type")
         topic = str(entry.get("topic") or "").strip()
         cluster = str(entry.get("problem_cluster") or "").strip()
-        if page_type == "raw":
-            return Path("00-收件箱") / filename
+        # Route by direction: topic or cluster → dedicated folder
+        direction = self._DIRECTION_FOLDERS.get(topic) or self._DIRECTION_FOLDERS.get(cluster)
+        if direction:
+            return Path(direction) / filename
+        # Fallback: synthesis → 02-行业洞察, raw → 00-收件箱
         if topic == "行业洞察" or page_type == "synthesis":
             return Path("02-行业洞察") / (cluster or "未分类") / filename
-        return Path("01-学习笔记") / (cluster or topic or "未分类") / filename
+        return Path("00-收件箱") / filename
 
     def _rebuild_retrieval_index(self, wiki: WikiConfig) -> None:
         wiki_root = Path(wiki.workspace_path)
