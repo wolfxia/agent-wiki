@@ -106,6 +106,18 @@ All pages should eventually carry:
 - `sensitivity`
 - `access_policy`
 
+### 4.1A Current model fields in `src/agent_wiki/domain/models.py`
+
+The current v0.2 Pydantic models implement a smaller runtime schema than the full target contract.
+
+| Model | Current fields |
+|---|---|
+| `CaptureRawInput` | `doc_id`, `topic`, `problem_cluster`, `summary`, `content`, `source_refs` |
+| `CompileUpdateInput` | `doc_id`, `page_type`, `topic`, `problem_cluster`, `summary`, `aliases`, `confidence`, `contested`, `wikilinks`, `content`, `source_refs`, `evidence_note`, `review_status`, `dispute_reason`, `sensitivity`, `allow_shared_write_without_sources` |
+| `QueryInput` | `query`, `include_pending`, `max_sensitivity` |
+
+Target fields such as `query_types`, `route_priority`, `load_policy`, `updated`, and `access_policy` do **not** exist in the current Pydantic input models. They remain target schema fields for later contract expansion.
+
 ### 4.2 Type-specific target fields
 
 #### raw
@@ -287,9 +299,37 @@ Six fixed types:
 
 ### 8.2.1 Retrieval provider baseline
 - Retrieval is provider-based, not vector-mandatory.
-- Phase 1 default provider is lexical search over `retrieval_index.jsonl`.
+- Phase 1/v0.2 runtime uses FTS5+jieba as the primary path when `.agent-wiki/retrieval.db` exists, merges structured `topic_index.md` hits, and falls back to JSONL lexical search over `retrieval_index.jsonl`.
 - Vector retrieval is an optional enhancement provider and must not be required for minimum query capability.
 - Provider outputs must use the same normalized retrieval hit shape and must reference `wiki_id:doc_id`.
+
+### 8.2.2 Current structured and FTS index schemas
+
+`topic_index.md` is a Markdown table maintained by `TopicIndexRepository`:
+
+```text
+| doc_id | page_type | topic | problem_cluster | summary |
+| --- | --- | --- | --- | --- |
+```
+
+`.agent-wiki/retrieval.db` contains an FTS5 virtual table named `retrieval_fts` maintained by `SQLiteFTSIndexProvider`:
+
+```sql
+CREATE VIRTUAL TABLE retrieval_fts USING fts5(
+  doc_id UNINDEXED,
+  wiki_id UNINDEXED,
+  page_type UNINDEXED,
+  topic,
+  problem_cluster,
+  summary,
+  content,
+  tokens,
+  sensitivity UNINDEXED,
+  updated_at UNINDEXED
+);
+```
+
+The SQLite database is runtime state and must remain rebuildable from committed workspace artifacts; it is not Git authority.
 
 ### 8.3 Layered presentation
 - **L1** Answer layer: directly usable answer entries
@@ -311,17 +351,19 @@ When hitting disputed page:
 
 Implemented today in `src/agent_wiki/application/query.py`:
 - heuristic query-type classification
-- lexical retrieval over `retrieval_index.jsonl`
+- retrieval through `RetrievalRouter`: FTS5 primary if `.agent-wiki/retrieval.db` exists and returns hits, structured `topic_index.md` merge, and JSONL lexical fallback
 - optional pending truth-zone inclusion through `include_pending=True`
-- simple hit sorting by lexical score and manifest-derived priority
+- basic sensitivity filtering through `QueryInput.max_sensitivity` and manifest `sensitivity`
+- hit sorting with lexical score, structured score, page type boost, purpose boost, freshness, and manifest-derived priority
 - L1/L2/L3 result assembly
+- L1 uses `topic_index.md` summary first, then manifest summary, then page content
 - cross-wiki aggregation through `CrossWikiQueryService`
+- default query outcome logging to `query_outcomes.jsonl` and `query_hits.jsonl`
 
 Not yet implemented:
 - explicit `load_policy` execution
 - retrieval budgets
 - vector-provider dispatch
-- automatic query outcome logging during query execution
 
 ---
 
@@ -413,7 +455,7 @@ Must eventually check:
 5. `load_policy` legality
 6. `review_status` consistency with review_queue
 7. dependency no broken chain
-8. retrieval_index entries correspond to compiled pages
+8. retrieval_index entries correspond to all indexed pages (raw and compiled)
 9. disputed has `dispute_reason`
 10. `compiled_into / superseded_by` chain consistency
 
@@ -423,7 +465,7 @@ Must eventually check:
 |-------|---------|-----------|
 | manifest doc_id ↔ actual files 1:1 | Page changed but index doesn't know | Alert + repair |
 | vectors all have `doc_id` + unified `model` | Page changed but search can't find | Alert + mark `index_stale` |
-| retrieval_index has cards for all compiled pages | Coarse search has no data source | Alert + trigger rebuild |
+| retrieval_index has cards for all indexed pages | Coarse search has no data source | Alert + trigger rebuild |
 | No `index_stale` markers >24h | Index out of sync with pages | Alert + trigger rebuild |
 | No `mirror_pending` markers >24h | External store out of sync | Alert + trigger sync |
 | query_outcomes consumed within 7 days | Knowledge used but no feedback | Alert |
@@ -431,10 +473,14 @@ Must eventually check:
 
 ### Current implementation profile
 
-The current `LintService` in `src/agent_wiki/application/linting.py` checks only:
+The current `LintService` in `src/agent_wiki/application/linting.py` checks:
+- raw manifest entries include `topic`, `problem_cluster`, and `summary`
 - every manifest entry has a `canonical_uri`
 - every manifest `canonical_uri` points to an existing page
-- every retrieval index entry has a matching manifest entry
+- compiled `atom` / `synthesis` / `principle` entries include `source_refs`
+- `IndexConsistencyChecker` consistency across manifest, pages, retrieval index, FTS, and topic index
+- pending manifest exceptions for retrieval-index entries that are intentionally pending
+- stale markers from `.agent-wiki/` pending state
 
 This is a deliberately small Phase 1 baseline. The larger lint contract remains the target.
 
@@ -453,7 +499,8 @@ Current runtime artifacts:
 - `log.md` from propagation writes
 - `operation_log.jsonl` from compile updates
 - `approval_log.jsonl` from approvals
-- `query_outcomes.jsonl` from feedback submission
+- `query_outcomes.jsonl` from query execution and feedback submission
+- `query_hits.jsonl` from query execution
 
 The append-only principle still applies to these artifacts even though the runtime shape is currently minimal.
 
@@ -489,13 +536,17 @@ The current implementation baseline in `src/agent_wiki/` enforces the following 
 - registry-driven multi-wiki loading
 - raw capture with committed and pending paths
 - compile update for `atom` and `synthesis`
-- lexical retrieval with L1/L2/L3 output
+- FTS5 primary retrieval, structured topic-index merge, JSONL lexical fallback, and L1/L2/L3 output
 - dispute caveats during query
 - pending truth-zone opt-in querying
 - minimal manifest persistence
-- minimal lint checks
-- minimal sync file-copy modes
+- raw metadata, compiled source-ref, index-consistency, pending-exception, and stale-marker lint checks
+- FTS health and manifest/retrieval/FTS/topic-index consistency checks through `IndexConsistencyChecker`
+- MCP/REST transport parity over shared services
+- per-rule `max_gate` enforcement in `PermissionService`
+- adapter-aware sync with pull-view, push-view, Obsidian date sanitization, category routing, and index updates
 - feedback → review queue creation
+- default query outcome and hit logging
 - weekly review summary generation
 - proposal/approval smoke path for principle writes
 - shared wiki page-type restrictions
@@ -504,11 +555,10 @@ The current implementation baseline in `src/agent_wiki/` enforces the following 
 ### Not yet implemented from the full contract
 - full frontmatter coverage
 - full queue item schema
-- MCP/REST transport parity
-- gate engine with `max_gate` enforcement
+- full content-quality gate engine and route-test execution
 - vector-provider routing
-- adapter-driven reverse sync and gate-to-Git flow
-- stale marker and mirror marker recovery
+- gate-to-Git authority promotion flow
+- full stale marker and mirror marker recovery automation
 - rich contradiction workflow
 
 ---
