@@ -54,36 +54,53 @@ class SyncService:
         pages_root.mkdir(exist_ok=True)
         pending = PendingStateRepository(wiki_root)
         changed_files: list[str] = []
+        seen_targets: set[Path] = set()
         for view in wiki.external_views:
             if not self._view_allows_pull(view):
                 continue
+            view_path = self._view_path(view)
+            if view_path is None:
+                continue
             adapter = self._get_adapter(view)
-            external_path = Path(self._view_path(view))
-            for source in external_path.glob("*.md"):
-                document = adapter.read(str(source))
+            external_path = Path(view_path)
+            for source in external_path.rglob("*.md"):
+                if self._is_ignored_external_file(source, external_path):
+                    continue
                 target = pages_root / source.name
+                if target in seen_targets:
+                    continue
+                document = adapter.read(str(source))
                 target.write_text(document["content"], encoding="utf-8")
                 changed_files.append(str(target.relative_to(wiki_root)))
+                seen_targets.add(target)
                 doc_id = source.stem
+                vault_relative_path = str(source.relative_to(external_path))
                 pending.append_pending_manifest({
                     "doc_id": doc_id,
                     "page_type": "raw",
                     "source": "external_sync",
                     "last_writer": actor.actor_id,
+                    "vault_relative_path": vault_relative_path,
+                    "adapter_metadata": {"vault_relative_path": vault_relative_path},
                 })
         return SyncResult(mode="pull-view", changed_files=changed_files)
 
     def _push_view(self, wiki: WikiConfig, doc_ids: list[str] | None = None) -> SyncResult:
         wiki_root = Path(wiki.workspace_path)
         changed_files: list[str] = []
+        manifest = ManifestRepository(wiki_root)
         for view in wiki.external_views:
             if not self._view_allows_push(view):
                 continue
+            view_path = self._view_path(view)
+            if view_path is None:
+                continue
             adapter = self._get_adapter(view)
-            external_path = Path(self._view_path(view))
+            external_path = Path(view_path)
             external_path.mkdir(exist_ok=True)
             for source in self._iter_export_sources(wiki_root, doc_ids):
-                target = external_path / source.name
+                target = self._resolve_export_target(external_path, source, manifest)
+                target.parent.mkdir(parents=True, exist_ok=True)
                 document: dict = {"content": source.read_text(encoding="utf-8")}
                 if target.exists():
                     existing = adapter.read(str(target))
@@ -111,15 +128,31 @@ class SyncService:
             return sorted(pages_root.glob("*.md"))
         return [pages_root / f"{doc_id}.md" for doc_id in doc_ids if (pages_root / f"{doc_id}.md").exists()]
 
+    def _resolve_export_target(self, external_root: Path, source: Path, manifest: ManifestRepository) -> Path:
+        entry = manifest.find(source.stem)
+        if entry is not None:
+            relative_path = entry.get("vault_relative_path")
+            if relative_path:
+                return external_root / relative_path
+        return external_root / source.name
+
     def _get_adapter(self, view: object) -> object:
         adapter_name = self._view_adapter(view)
         cls = _ADAPTERS.get(adapter_name, PlainMarkdownAdapter)
         return cls()
 
-    def _view_path(self, view: object) -> str:
+    def _view_path(self, view: object) -> str | None:
         if isinstance(view, dict):
-            return str(view["path"])
-        return str(view.path)
+            value = view.get("path")
+        else:
+            value = getattr(view, "path", None)
+        if value is None:
+            return None
+        return str(value)
+
+    def _is_ignored_external_file(self, source: Path, external_root: Path) -> bool:
+        relative_parts = source.relative_to(external_root).parts[:-1]
+        return any(part in {".obsidian", ".trash"} for part in relative_parts)
 
     def _view_adapter(self, view: object) -> str:
         if isinstance(view, dict):

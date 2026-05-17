@@ -506,3 +506,186 @@ def test_obsidian_push_view_preserves_frontmatter_and_reports_index_file(temp_wi
 
     assert any(path.endswith("04-知识图谱/知识图谱索引.md") for path in result.changed_files)
     assert "tags:" in (external_dir / "existing.md").read_text(encoding="utf-8")
+
+
+
+def test_sync_pull_view_recurses_subdirectories_and_skips_obsidian_system_dirs(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    external_dir = temp_wiki_root / "obsidian-recursive-vault"
+    (external_dir / "01-学习笔记" / "端侧AI").mkdir(parents=True, exist_ok=True)
+    (external_dir / ".obsidian").mkdir(exist_ok=True)
+    (external_dir / ".trash").mkdir(exist_ok=True)
+
+    (external_dir / "01-学习笔记" / "端侧AI" / "deep-note.md").write_text("# Deep Note\n\nRecursive pull should find me.", encoding="utf-8")
+    (external_dir / ".obsidian" / "ignore-me.md").write_text("# Ignore", encoding="utf-8")
+    (external_dir / ".trash" / "trash-me.md").write_text("# Trash", encoding="utf-8")
+
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {"adapter": "obsidian", "mode": "read_write", "path": str(external_dir)}
+            ]
+        }
+    )
+
+    result = SyncService().execute(
+        wiki,
+        ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        SyncInput(mode="pull-view"),
+    )
+
+    pending_path = temp_wiki_root / ".agent-wiki" / "pending_manifest.jsonl"
+    entries = [json.loads(line) for line in pending_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    assert result.mode == "pull-view"
+    assert (temp_wiki_root / "pages" / "deep-note.md").exists()
+    assert not (temp_wiki_root / "pages" / "ignore-me.md").exists()
+    assert not (temp_wiki_root / "pages" / "trash-me.md").exists()
+    assert any(entry["doc_id"] == "deep-note" for entry in entries)
+
+
+
+def test_sync_pull_view_preserves_vault_relative_path_in_pending_manifest(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    external_dir = temp_wiki_root / "obsidian-structured-vault"
+    nested_dir = external_dir / "02-行业洞察" / "AI基础设施"
+    nested_dir.mkdir(parents=True, exist_ok=True)
+    (nested_dir / "infra-note.md").write_text("# Infra Note\n\nKeep my vault-relative path.", encoding="utf-8")
+
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {"adapter": "obsidian", "mode": "read_write", "path": str(external_dir)}
+            ]
+        }
+    )
+
+    SyncService().execute(
+        wiki,
+        ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        SyncInput(mode="pull-view"),
+    )
+
+    pending_path = temp_wiki_root / ".agent-wiki" / "pending_manifest.jsonl"
+    entries = [json.loads(line) for line in pending_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    entry = next(item for item in entries if item["doc_id"] == "infra-note")
+
+    assert entry["vault_relative_path"] == "02-行业洞察/AI基础设施/infra-note.md"
+
+
+
+def test_sync_push_view_routes_obsidian_export_to_saved_vault_relative_path(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    external_dir = temp_wiki_root / "obsidian-push-vault"
+    external_dir.mkdir(exist_ok=True)
+    pages_dir = temp_wiki_root / "pages"
+    pages_dir.mkdir(exist_ok=True)
+    (pages_dir / "routed-note.md").write_text("# Routed Note\n\nPush me back to my saved subdir.", encoding="utf-8")
+
+    manifest_path = temp_wiki_root / "MANIFEST.jsonl"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "doc_id": "routed-note",
+                "page_type": "atom",
+                "canonical_uri": "pages/routed-note.md",
+                "vault_relative_path": "02-行业洞察/AI基础设施/routed-note.md",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {"adapter": "obsidian", "mode": "read_write", "path": str(external_dir)}
+            ]
+        }
+    )
+
+    result = SyncService().execute(
+        wiki,
+        ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        SyncInput(mode="push-view", doc_ids=["routed-note"]),
+    )
+
+    expected = external_dir / "02-行业洞察" / "AI基础设施" / "routed-note.md"
+    assert expected.exists()
+    assert any(path.endswith("02-行业洞察/AI基础设施/routed-note.md") for path in result.changed_files)
+
+
+
+def test_sync_push_view_skips_plain_markdown_view_without_path(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    pages_dir = temp_wiki_root / "pages"
+    pages_dir.mkdir(exist_ok=True)
+    (pages_dir / "skip-none-path.md").write_text("# Skip None Path", encoding="utf-8")
+    external_dir = temp_wiki_root / "obsidian-with-path"
+    external_dir.mkdir(exist_ok=True)
+
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {"adapter": "plain_markdown", "mode": "read_write", "path": None},
+                {"adapter": "obsidian", "mode": "read_write", "path": str(external_dir)},
+            ]
+        }
+    )
+
+    result = SyncService().execute(
+        wiki,
+        ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        SyncInput(mode="push-view", doc_ids=["skip-none-path"]),
+    )
+
+    assert result.mode == "push-view"
+    assert (external_dir / "skip-none-path.md").exists()
+    assert not (temp_wiki_root / "None").exists()
+
+
+
+def test_sync_pull_view_deduplicates_by_target_path(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    obsidian_dir = temp_wiki_root / "obsidian-dup"
+    markdown_dir = temp_wiki_root / "plain-dup"
+    obsidian_dir.mkdir(exist_ok=True)
+    markdown_dir.mkdir(exist_ok=True)
+    (obsidian_dir / "dup-note.md").write_text("# Duplicate\n\nFrom obsidian.", encoding="utf-8")
+    (markdown_dir / "dup-note.md").write_text("# Duplicate\n\nFrom plain markdown.", encoding="utf-8")
+
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {"adapter": "obsidian", "mode": "read_write", "path": str(obsidian_dir)},
+                {"adapter": "plain_markdown", "mode": "read_write", "path": str(markdown_dir)},
+            ]
+        }
+    )
+
+    result = SyncService().execute(
+        wiki,
+        ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        SyncInput(mode="pull-view"),
+    )
+
+    pages = list((temp_wiki_root / "pages").glob("dup-note.md"))
+    assert len(pages) == 1
+    assert result.changed_files.count("pages/dup-note.md") == 1
