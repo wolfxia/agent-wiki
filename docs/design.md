@@ -1,7 +1,7 @@
 # Agent-Wiki Architecture Design
 
 > Universal Knowledge System for Multi-Agent Environments  
-> v0.1.0 — 2026-05-17  
+> v0.2.0 — 2026-05-17  
 > Status: Design baseline aligned against the current Phase 1 implementation, including real FastMCP transport, shared access policy, explicit Obsidian push-view, and the unified knowledge-system architecture spec
 
 > Authority note: `docs/specs/knowledge-system-architecture.md` is the authoritative end-state architecture spec. This document must distinguish current baseline from target design explicitly.
@@ -20,7 +20,7 @@ In cybernetic terms: knowledge base is the controlled object, agent behavior is 
 
 1. **Compile before retrieve** — Correct. But compiled products must be maintainable, traceable, reusable knowledge artifacts, not fancy summaries.
 2. **Skillify is a design principle, not a post-hoc feature** — Knowledge must carry routing semantics from entry into the system.
-3. **Hybrid retrieval is the calling skeleton, not an optimization** — A configured coarse retrieval provider finds candidate pages, full-page/section loading provides understanding, and layered presentation controls context cost. Phase 1 defaults to lexical retrieval; vector retrieval is an optional provider.
+3. **Hybrid retrieval is the calling skeleton, not an optimization** — A configured coarse retrieval provider finds candidate pages, full-page/section loading provides understanding, and layered presentation controls context cost. Phase 1/v0.2 defaults to FTS5+jieba when `.agent-wiki/retrieval.db` exists, merges structured `topic_index.md` hits, and falls back to JSONL lexical retrieval; vector retrieval is an optional provider.
 4. **Schema must be an operation contract, not a directional manifesto** — It must explicitly tell LLM/Agent: which pages to update on new source, what contradictions to mark, when to create vs revise.
 
 ---
@@ -59,9 +59,18 @@ The current implementation in `src/agent_wiki/` delivers a filesystem- and JSONL
 - `src/agent_wiki/application/weekly_review.py`
 - `src/agent_wiki/application/approvals.py`
 - `src/agent_wiki/application/propagation.py`
+- `src/agent_wiki/application/retrieval_router.py`
+- `src/agent_wiki/application/migration.py`
+- `src/agent_wiki/application/maintenance.py`
+- `src/agent_wiki/application/relations.py`
 - `src/agent_wiki/infrastructure/storage/manifest_repo.py`
 - `src/agent_wiki/infrastructure/retrieval/retrieval_index.py`
+- `src/agent_wiki/infrastructure/retrieval/sqlite_fts.py`
+- `src/agent_wiki/infrastructure/retrieval/topic_index.py`
+- `src/agent_wiki/infrastructure/retrieval/index_consistency.py`
 - `src/agent_wiki/infrastructure/runtime/*`
+
+v0.2 also adds `aw migrate --normalize-doc-ids` for lowercase/hyphen `doc_id` normalization and the `knowledge-graph.html` visualizer backed by sigma.js and ForceAtlas2.
 
 ### Phase 1 transport baseline
 
@@ -328,14 +337,14 @@ A knowledge system that cannot reliably return useful answers is not saved by ha
 The combined architectural position is therefore:
 
 1. **Usability-first for Phase 1** — retrieval quality and Obsidian-connected workflow are P0 because they determine whether the system is used at all.
-2. **Governance-hardening for Phase 1.5 / stronger claims** — identity precedence, `max_gate`, sensitivity filtering, and authority promotion remain blockers before stronger multi-agent governance claims.
+2. **Governance-hardening for Phase 1.5 / stronger claims** — content-quality gates, complete `access_policy` handling, transport-aware filtering, and authority promotion remain blockers before stronger multi-agent governance claims.
 3. **Do not collapse these into one priority bucket** — “must be usable” and “must be governable” are both real, but they matter at different points in the adoption curve.
 
 ### Target retrieval quality requirements
 
-Phase 1 retrieval should no longer be described merely as a lexical baseline. It should be described as a **usable lexical baseline** with concrete quality expectations:
+Phase 1 retrieval should no longer be described merely as a lexical baseline. It should be described as a **usable local retrieval baseline** with concrete quality expectations:
 
-- stronger Chinese lexical handling than the current CJK-bigram baseline
+- stronger Chinese lexical handling through FTS5+jieba where available, with JSONL lexical fallback
 - fuzzy keyword matching for near-miss query terms
 - weighted ranking for title/topic/problem-cluster/keyword overlap
 - hit/miss instrumentation on every query path
@@ -345,10 +354,11 @@ Phase 1 retrieval should no longer be described merely as a lexical baseline. It
 
 Implemented today:
 
-- lexical retrieval over `retrieval_index.jsonl`
-- CJK bigram tokenization in `src/agent_wiki/infrastructure/retrieval/tokenizer.py`
+- FTS5+jieba primary retrieval when `.agent-wiki/retrieval.db` exists; JSONL lexical fallback remains
+- CJK tokenization in `src/agent_wiki/infrastructure/retrieval/tokenizer.py`
 - simple fuzzy matching in `src/agent_wiki/infrastructure/retrieval/fuzzy.py`
 - weighted lexical scoring across topic, problem cluster, and content
+- implemented routing through `StructuredIndexProvider`, `TopicIndexRepository`, `SQLiteFTSIndexProvider`, and `RetrievalRouter`
 - heuristic query classification
 - layered L1/L2/L3 response assembly
 - dispute caveats in query output
@@ -356,9 +366,8 @@ Implemented today:
 
 Not yet implemented, but still promoted in architectural priority:
 
-- structured retrieval routing over `topic_index.md`
-- stronger indexed lexical retrieval beyond the current file-backed baseline
-- first-class hit/miss tracking in the query path itself
+- load-policy-aware context assembly and budget enforcement
+- vector retrieval plugin integration
 - drift detection when hit quality degrades over time
 
 ### Design implication
@@ -502,11 +511,11 @@ The target runtime remains:
 The current query baseline in `src/agent_wiki/application/query.py` implements:
 
 - heuristic query-type classification
-- lexical retrieval over `retrieval_index.jsonl`
+- retrieval through `RetrievalRouter`: FTS5+jieba primary when `.agent-wiki/retrieval.db` exists, JSONL lexical fallback when FTS returns no hits, and structured `topic_index.md` merge
 - optional pending truth-zone scan when `include_pending=True`
-- filtering via manifest/pending manifest
-- simple score-based ordering with manifest priority
-- L1 answer from top page content
+- filtering via manifest/pending manifest and `QueryInput.max_sensitivity`
+- score-based ordering with `lexical_score`, `structured_score`, `page_type_boost`, `purpose_boost`, `freshness`, and `manifest_priority`
+- L1 answer from `topic_index.md` summary first, then manifest summary, then top page content
 - L2 context with dispute caveat when `review_status=disputed`
 - L3 proof using manifest `source_refs`
 - cross-wiki fan-out via `CrossWikiQueryService`
@@ -515,7 +524,6 @@ The current query baseline in `src/agent_wiki/application/query.py` implements:
 
 Not yet implemented in the current runtime:
 
-- provider routing beyond lexical baseline
 - vector retrieval plugin integration
 - explicit load-policy execution
 - query budget enforcement
@@ -540,10 +548,12 @@ The target Phase 1 architecture still assumes:
 The current implementation in `src/agent_wiki/application/sync.py` supports:
 
 - `status` listing markdown pages in the workspace
-- `pull-view` import through adapter-aware external view handling
+- `pull-view` import through adapter-aware external view handling, recursive `rglob`, `.obsidian` / trash-folder ignores, vault-relative-path-based `doc_id` generation, and frontmatter date sanitization
 - `push-view` export through adapter-aware external view handling
 - optional `doc_ids` for incremental export
 - Obsidian frontmatter preservation on push-view
+- retrieval index, FTS, and `topic_index.md` updates on imported pages
+- category-routed Obsidian export (`raw -> 00-收件箱`, `atom + learning -> 01-学习笔记`, `synthesis -> 02-行业洞察`, `graph -> 04-知识图谱`)
 - derived graph index export at `04-知识图谱/知识图谱索引.md`
 
 ### Current boundary guarantee
@@ -585,7 +595,7 @@ The current queue items are much smaller than the target review queue contract. 
 
 ---
 
-## 9. Shared Wiki and Cross-Wiki Behavior
+## 11. Shared Wiki and Cross-Wiki Behavior
 
 ### Implemented smoke coverage
 
@@ -618,24 +628,24 @@ The shared-wiki approval bypass for raw-backed provenance should be treated as a
 
 ---
 
-## 10. Known Divergences from Design v1.0
+## 12A. Known Divergences from Design v1.0
 
 | Area | Design target | Current implementation | Status |
 |---|---|---|---|
 | Transport surface | MCP + CLI + REST | real FastMCP stdio MCP server + workflow-complete CLI + workflow-complete REST | Implemented |
-| Identity resolution | caller cannot override resolved identity | explicit actor fields still override metadata | Divergence to fix |
+| Identity resolution | caller cannot override resolved identity | MCP/REST metadata precedence fixed; CLI uses env/local config | Implemented for remote/shared transports |
 | Gate enforcement | operation risk + `max_gate` policy | per-rule `max_gate` enforcement exists; full workflow gate engine still incomplete | Partial |
 | Authority promotion | gate-checked commit orchestration to Git authority | Git-visible file writes only, no full orchestrator yet | Divergence to fix |
 | Propagation failure handling | rollback + stale markers + mirror state | direct append/write only | Phase 1 Simplification |
-| Retrieval runtime | provider-pluggable, load-policy aware | lexical baseline with layered output | Phase 1 Simplification |
+| Retrieval runtime | provider-pluggable, load-policy aware | FTS5+jieba primary, structured `topic_index.md` merge, JSONL lexical fallback, layered output | Partial |
 | Sync | explicit adapter-driven sync boundary with view-specific artifacts | adapter-driven sync with explicit Obsidian graph index export; no authority-promotion orchestrator yet | Partial |
 | Review queue | rich workflow schema | minimal append-only queue items | Phase 1 Simplification |
-| Query outcome loop | query service logs outcomes directly | feedback service records outcomes | Simplified |
-| Page sensitivity | schema-backed page access policy with query filtering | no page-level sensitivity enforcement yet | Not Yet Implemented |
+| Query outcome loop | query service logs outcomes directly | query service appends `query_outcomes.jsonl` and `query_hits.jsonl`; feedback adds human-evaluation records | Implemented baseline |
+| Page sensitivity | schema-backed page access policy with query filtering | basic sensitivity filtering via `QueryInput.max_sensitivity` and manifest filter; `access_policy` incomplete | Partial |
 
 ---
 
-## 11. Recommendation for Readers
+## 12B. Recommendation for Readers
 
 When using this document:
 
@@ -647,7 +657,7 @@ This keeps the design stable without pretending the current implementation is al
 
 ---
 
-*Design v0.1.0 aligned against the current implementation baseline. Use with `core/schema.md`, `docs/requirements-and-architecture.md`, and the tests for current-state review.*
+*Design v0.1 baseline archived and updated for v0.2.0 implementation status. Use with `core/schema.md`, `docs/requirements-and-architecture.md`, and the tests for current-state review.*
 
 ---
 
@@ -953,6 +963,9 @@ Agent Wiki should protect sensitive knowledge, constrain agent behavior by ident
 Implemented or partially represented today:
 
 - Identity and permission helpers exist in `src/agent_wiki/infrastructure/identity/resolver.py`, `permissions.py`, and `gates.py`.
+- MCP/REST metadata precedence is fixed; CLI uses environment/local config for actor resolution.
+- `PermissionService.check()` enforces per-rule `max_gate`.
+- Basic query sensitivity filtering exists via `QueryInput.max_sensitivity` and manifest sensitivity values.
 - A/B/C separation is reflected by service boundaries across raw capture, compile update, and approvals.
 - Approval audit exists through `approval_log.jsonl` and compile operations are logged to `operation_log.jsonl`.
 - Input validation already exists in limited form for `doc_id`, `allowed_page_types`, and `source_refs`.
@@ -960,9 +973,9 @@ Implemented or partially represented today:
 
 Important gaps relative to the design target:
 
-- resolved identity can still be overridden by explicit actor fields in the current implementation path described in `docs/design.md`
-- no full `max_gate` enforcement engine yet
-- no implemented page-level `sensitivity` schema and query filtering yet
+- identity override risk is fixed for MCP/REST; CLI fallback/dev behavior still needs operational hardening and clear warnings
+- no full content-quality gate engine or route-test gate execution yet
+- `access_policy` and transport-aware sensitivity filtering are incomplete
 - no git-crypt workflow or encrypted content handling in the current baseline
 - no transport-level TLS / mTLS because network service is not yet implemented
 - no adapter sandbox runtime yet
@@ -1031,13 +1044,14 @@ Implemented today:
 - human-readable `log.md` writes through propagation
 - structured `operation_log.jsonl` for compile operations
 - structured `approval_log.jsonl` for approvals
-- structured `query_outcomes.jsonl` through feedback submission
+- structured `query_outcomes.jsonl` and `query_hits.jsonl` through `QueryService`, with feedback submission appending additional outcome records
 - weekly review summary generation in `src/agent_wiki/application/weekly_review.py`
 - minimal lint and consistency checks in `src/agent_wiki/application/linting.py`
+- basic `aw health` covering registry load, actor resolution, and tool-list self-check
 
 Not yet implemented relative to the target design:
 
-- dedicated `aw health` surface with a formal seven-check report
+- formal seven-check health report spanning propagation, manifest, retrieval, FTS, topic index, pending state, and external sync drift
 - latency, hit-rate, propagation-success, and stale-count metrics export
 - threshold-based alerting for repeated propagation failures or stale buildup
 - richer observability dashboards over queue pressure, external sync drift, and retrieval provider health
@@ -1070,9 +1084,9 @@ Agent Wiki should remain fast enough for local agent workflows while preserving 
 
 #### Key decisions
 
-##### Decision: lexical retrieval is the required baseline and should be optimized first
+##### Decision: local retrieval is the required baseline and should be optimized first
 
-**Rationale:** lexical retrieval is the guaranteed Phase 1 path and the fallback mode when richer retrieval fails. It must be fast enough for routine local use.
+**Rationale:** v0.2 uses FTS5+jieba plus structured `topic_index.md` routing as the normal fast path, while JSONL lexical retrieval remains the guaranteed fallback when richer retrieval fails. The combined local path must be fast enough for routine local use.
 
 **Alternative considered:** optimize only vector retrieval because it may provide better recall.
 
@@ -1098,10 +1112,10 @@ Agent Wiki should remain fast enough for local agent workflows while preserving 
 
 Current baseline characteristics:
 
-- Query path is file-backed lexical retrieval over `retrieval_index.jsonl`.
+- Query path routes through FTS5+jieba when `.agent-wiki/retrieval.db` exists, merges structured `topic_index.md` hits, and falls back to file-backed lexical retrieval over `retrieval_index.jsonl`.
 - Writes are bounded filesystem and JSONL append/update flows.
 - Cross-wiki query exists but remains a simple fan-out baseline.
-- No heavyweight retrieval provider is required for minimum functionality.
+- No vector or heavyweight remote retrieval provider is required for minimum functionality.
 
 Target numbers from this design task:
 
