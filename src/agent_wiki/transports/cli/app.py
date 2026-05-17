@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import signal
 
 import json
 
@@ -32,6 +33,22 @@ sync_app = typer.Typer(help="Sync workspace and external views")
 approvals_app = typer.Typer(help="Manage approval proposals")
 app.add_typer(sync_app, name="sync")
 app.add_typer(approvals_app, name="approvals")
+
+_DEFAULT_CLI_TIMEOUT_SECONDS = 300
+
+
+def _raise_cli_timeout(signum: int, frame: object) -> None:
+    raise TimeoutError(f"CLI command timed out after {_cli_timeout_seconds()} seconds")
+
+
+def _cli_timeout_seconds() -> int:
+    value = os.environ.get("AGENT_WIKI_CLI_TIMEOUT_SECONDS")
+    if value is None:
+        return _DEFAULT_CLI_TIMEOUT_SECONDS
+    try:
+        return int(value)
+    except ValueError:
+        return _DEFAULT_CLI_TIMEOUT_SECONDS
 
 
 def _resolve_registry_path(registry: str | None) -> Path:
@@ -432,4 +449,15 @@ def maintain(
 
 
 def main() -> None:
-    app()
+    timeout_seconds = _cli_timeout_seconds()
+    if timeout_seconds > 0:
+        signal.signal(signal.SIGALRM, _raise_cli_timeout)
+        signal.alarm(timeout_seconds)
+    try:
+        app()
+    except TimeoutError as exc:
+        typer.echo(json.dumps(error_payload(exc), ensure_ascii=False, separators=(",", ":")))
+        raise typer.Exit(code=1) from exc
+    finally:
+        if timeout_seconds > 0:
+            signal.alarm(0)

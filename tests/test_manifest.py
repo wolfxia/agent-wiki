@@ -52,3 +52,39 @@ def test_manifest_repository_deletes_entry_by_doc_id(temp_wiki_root: Path) -> No
     assert repository.find("raw-1") is None
     assert repository.find("raw-2") is not None
     assert repository.delete("raw-missing") is False
+
+
+def test_manifest_repository_batch_upserts_entries(temp_wiki_root: Path) -> None:
+    repository = ManifestRepository(temp_wiki_root)
+    repository.append(
+        {
+            "wiki_id": "personal-1",
+            "doc_id": "raw-1",
+            "page_type": "raw",
+            "topic": "old",
+            "canonical_uri": "pages/raw-1.md",
+        }
+    )
+
+    repository.batch_upsert(
+        [
+            {
+                "wiki_id": "personal-1",
+                "doc_id": "raw-1",
+                "page_type": "raw",
+                "topic": "new",
+                "canonical_uri": "pages/raw-1.md",
+            },
+            {
+                "wiki_id": "personal-1",
+                "doc_id": "raw-2",
+                "page_type": "raw",
+                "topic": "second",
+                "canonical_uri": "pages/raw-2.md",
+            },
+        ]
+    )
+
+    assert repository.find("raw-1")["topic"] == "new"
+    assert repository.find("raw-2")["topic"] == "second"
+    assert len(repository.read_all()) == 2

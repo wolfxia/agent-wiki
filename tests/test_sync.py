@@ -1,4 +1,6 @@
 from pathlib import Path
+import os
+import time
 
 from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
 from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
@@ -85,6 +87,72 @@ def test_sync_pull_view_imports_external_markdown(temp_wiki_root: Path) -> None:
 
     assert result.mode == "pull-view"
     assert (temp_wiki_root / "pages" / "external_imported.md").exists()
+
+
+def test_sync_pull_view_skips_unchanged_files_after_successful_pull(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    external_dir = temp_wiki_root / "incremental-vault"
+    external_dir.mkdir(exist_ok=True)
+    note = external_dir / "incremental-note.md"
+    note.write_text("# Incremental\n\nFirst version.", encoding="utf-8")
+
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {"adapter": "plain_markdown", "mode": "read_write", "path": str(external_dir)}
+            ]
+        }
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    sync_service = SyncService()
+
+    first = sync_service.execute(wiki, actor, SyncInput(mode="pull-view"))
+    second = sync_service.execute(wiki, actor, SyncInput(mode="pull-view"))
+
+    assert "pages/incremental-vault_incremental-note.md" in first.changed_files
+    assert second.changed_files == []
+
+    state_path = temp_wiki_root / ".agent-wiki" / "pull_view_state.json"
+    last_sync_time = state_path.stat().st_mtime
+    time.sleep(0.01)
+    note.write_text("# Incremental\n\nSecond version.", encoding="utf-8")
+    os.utime(note, (last_sync_time + 1, last_sync_time + 1))
+
+    third = sync_service.execute(wiki, actor, SyncInput(mode="pull-view"))
+
+    assert third.changed_files == ["pages/incremental-vault_incremental-note.md"]
+    assert (temp_wiki_root / "pages" / "incremental-vault_incremental-note.md").read_text(encoding="utf-8") == "# Incremental\n\nSecond version."
+
+
+def test_sync_pull_view_does_not_rebuild_retrieval_index(temp_wiki_root: Path, monkeypatch) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    external_dir = temp_wiki_root / "no-rebuild-vault"
+    external_dir.mkdir(exist_ok=True)
+    (external_dir / "note.md").write_text("# No Rebuild", encoding="utf-8")
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {"adapter": "plain_markdown", "mode": "read_write", "path": str(external_dir)}
+            ]
+        }
+    )
+
+    def fail_rebuild(self, wiki):
+        raise AssertionError("pull-view should not rebuild retrieval index")
+
+    monkeypatch.setattr(SyncService, "_rebuild_retrieval_index", fail_rebuild)
+
+    result = SyncService().execute(
+        wiki,
+        ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        SyncInput(mode="pull-view"),
+    )
+
+    assert result.changed_files == ["pages/no-rebuild-vault_note.md"]
 
 
 def test_sync_push_view_exports_only_requested_doc_ids(temp_wiki_root: Path) -> None:

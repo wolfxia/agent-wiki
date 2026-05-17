@@ -6,6 +6,23 @@ import yaml
 from agent_wiki.transports.cli.app import app
 
 
+def test_cli_entrypoint_sets_default_timeout(monkeypatch) -> None:
+    import agent_wiki.transports.cli.app as cli_app
+
+    alarms: list[int] = []
+
+    def fake_alarm(seconds: int) -> int:
+        alarms.append(seconds)
+        return 0
+
+    monkeypatch.setattr(cli_app.signal, "alarm", fake_alarm)
+    monkeypatch.setattr(cli_app, "app", lambda: None)
+
+    cli_app.main()
+
+    assert alarms == [300, 0]
+
+
 def test_cli_help_renders() -> None:
     runner = CliRunner()
 

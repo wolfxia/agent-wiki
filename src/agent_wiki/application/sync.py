@@ -1,4 +1,6 @@
+import json
 from pathlib import Path
+from time import time
 
 from pydantic import BaseModel
 
@@ -57,11 +59,15 @@ class SyncService:
         wiki_root = Path(wiki.workspace_path)
         pages_root = wiki_root / "pages"
         pages_root.mkdir(exist_ok=True)
+        run_started_at = time()
+        last_sync_time = self._read_pull_view_last_sync_time(wiki_root)
         pending = PendingStateRepository(wiki_root)
+        manifest = ManifestRepository(wiki_root)
         retrieval_index = RetrievalIndexRepository(wiki_root)
         fts_index = SQLiteFTSIndexProvider(wiki_root, wiki_id=wiki.wiki_id)
         topic_index = TopicIndexRepository(wiki_root)
         changed_files: list[str] = []
+        manifest_changes: list[dict] = []
         seen_targets: set[Path] = set()
         for view in wiki.external_views:
             if not self._view_allows_pull(view):
@@ -73,6 +79,8 @@ class SyncService:
             external_path = Path(view_path)
             for source in external_path.rglob("*.md"):
                 if self._is_ignored_external_file(source, external_path):
+                    continue
+                if last_sync_time is not None and source.stat().st_mtime <= last_sync_time:
                     continue
                 vault_relative_path = str(source.relative_to(external_path))
                 doc_id = self._doc_id_for_pull_view_source(source, external_path)
@@ -119,25 +127,27 @@ class SyncService:
                     "summary": intake["summary"],
                     "content": document["content"],
                 })
-                ManifestRepository(wiki_root).upsert({
-                    "wiki_id": wiki.wiki_id,
-                    "doc_id": doc_id,
-                    "page_type": "raw",
-                    "topic": intake["topic"],
-                    "problem_cluster": intake["problem_cluster"],
-                    "summary": intake["summary"],
-                    "classification_method": intake["classification_method"],
-                    "classification_confidence": intake["classification_confidence"],
-                    "metadata_state": intake["metadata_state"],
-                    "source_type": intake["source_type"],
-                    "source_uri": intake["source_uri"],
-                    "title": intake["title"],
-                    "canonical_uri": f"pages/{doc_id}.md",
-                    "last_writer": actor.actor_id,
-                    "source": "external_sync",
-                    "vault_relative_path": vault_relative_path,
-                    "adapter_metadata": intake["adapter_metadata"],
-                })
+                manifest_changes.append(
+                    {
+                        "wiki_id": wiki.wiki_id,
+                        "doc_id": doc_id,
+                        "page_type": "raw",
+                        "topic": intake["topic"],
+                        "problem_cluster": intake["problem_cluster"],
+                        "summary": intake["summary"],
+                        "classification_method": intake["classification_method"],
+                        "classification_confidence": intake["classification_confidence"],
+                        "metadata_state": intake["metadata_state"],
+                        "source_type": intake["source_type"],
+                        "source_uri": intake["source_uri"],
+                        "title": intake["title"],
+                        "canonical_uri": f"pages/{doc_id}.md",
+                        "last_writer": actor.actor_id,
+                        "source": "external_sync",
+                        "vault_relative_path": vault_relative_path,
+                        "adapter_metadata": intake["adapter_metadata"],
+                    }
+                )
                 topic_index.upsert({
                     "doc_id": doc_id,
                     "page_type": "raw",
@@ -153,8 +163,33 @@ class SyncService:
                     "vault_relative_path": vault_relative_path,
                     "adapter_metadata": intake["adapter_metadata"],
                 })
-        self._rebuild_retrieval_index(wiki)
+        manifest.batch_upsert(manifest_changes)
+        self._write_pull_view_last_sync_time(wiki_root, run_started_at)
         return SyncResult(mode="pull-view", changed_files=changed_files)
+
+    def _read_pull_view_last_sync_time(self, wiki_root: Path) -> float | None:
+        state_path = self._pull_view_state_path(wiki_root)
+        if not state_path.exists():
+            return None
+        try:
+            data = json.loads(state_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
+        value = data.get("last_sync_time")
+        if isinstance(value, int | float):
+            return float(value)
+        return None
+
+    def _write_pull_view_last_sync_time(self, wiki_root: Path, last_sync_time: float) -> None:
+        state_path = self._pull_view_state_path(wiki_root)
+        state_path.parent.mkdir(exist_ok=True)
+        state_path.write_text(
+            json.dumps({"last_sync_time": last_sync_time}, ensure_ascii=False, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+
+    def _pull_view_state_path(self, wiki_root: Path) -> Path:
+        return wiki_root / ".agent-wiki" / "pull_view_state.json"
 
     def _push_view(self, wiki: WikiConfig, doc_ids: list[str] | None = None) -> SyncResult:
         wiki_root = Path(wiki.workspace_path)
