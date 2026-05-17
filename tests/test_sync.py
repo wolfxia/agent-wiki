@@ -718,3 +718,49 @@ def test_sync_pull_view_deduplicates_by_target_path(temp_wiki_root: Path) -> Non
     pages = list((temp_wiki_root / "pages").glob("dup-note.md"))
     assert len(pages) == 1
     assert result.changed_files.count("pages/dup-note.md") == 1
+
+
+def test_obsidian_adapter_reads_frontmatter_for_intake(temp_wiki_root: Path) -> None:
+    note = temp_wiki_root / "frontmatter-note.md"
+    note.write_text(
+        "---\ntopic: deployment\nsummary: note summary\nclassification_confidence: high\n---\n# Frontmatter Note\n\nBody.",
+        encoding="utf-8",
+    )
+
+    document = ObsidianAdapter().read(str(note))
+
+    assert document["adapter_metadata"]["frontmatter"]["topic"] == "deployment"
+    assert document["adapter_metadata"]["frontmatter"]["summary"] == "note summary"
+
+
+
+def test_sync_pull_view_consumes_obsidian_frontmatter(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    external_dir = temp_wiki_root / "obsidian-frontmatter-vault"
+    external_dir.mkdir(exist_ok=True)
+    (external_dir / "frontmatter-topic.md").write_text(
+        "---\ntopic: frontmatter-topic\nproblem_cluster: frontmatter-cluster\nsummary: note summary\nclassification_confidence: high\n---\n# Frontmatter Topic\n\nImported content.",
+        encoding="utf-8",
+    )
+
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {"adapter": "obsidian", "mode": "read_write", "path": str(external_dir)}
+            ]
+        }
+    )
+
+    SyncService().execute(
+        wiki,
+        ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        SyncInput(mode="pull-view"),
+    )
+
+    manifest = (temp_wiki_root / "MANIFEST.jsonl").read_text(encoding="utf-8")
+    assert "frontmatter-topic" in manifest
+    assert "frontmatter-cluster" in manifest
+    assert "classification_confidence" in manifest
+    assert "note summary" in manifest

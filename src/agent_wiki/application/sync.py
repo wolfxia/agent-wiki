@@ -7,6 +7,7 @@ from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.infrastructure.adapters.obsidian import ObsidianAdapter
 from agent_wiki.infrastructure.adapters.plain_markdown import PlainMarkdownAdapter
 from agent_wiki.infrastructure.identity.permissions import PermissionService
+from agent_wiki.infrastructure.intake.raw_intake import normalize_raw_intake
 from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRepository
 from agent_wiki.infrastructure.runtime.pending_state import PendingStateRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
@@ -77,13 +78,30 @@ class SyncService:
                 seen_targets.add(target)
                 doc_id = source.stem
                 vault_relative_path = str(source.relative_to(external_path))
-                topic = source.parent.name
+                frontmatter = document.get("adapter_metadata", {}).get("frontmatter", {})
+                intake = normalize_raw_intake(
+                    {
+                        "doc_id": doc_id,
+                        "topic": frontmatter.get("topic") or source.parent.name,
+                        "problem_cluster": frontmatter.get("problem_cluster") or source.parent.name,
+                        "summary": frontmatter.get("summary"),
+                        "classification_confidence": frontmatter.get("classification_confidence"),
+                        "content": document["content"],
+                        "source_type": "external_sync",
+                        "source_uri": vault_relative_path,
+                        "adapter_metadata": {
+                            **document.get("adapter_metadata", {}),
+                            "vault_relative_path": vault_relative_path,
+                        },
+                        "frontmatter": frontmatter,
+                    }
+                )
                 retrieval_index.append_raw_card(
                     wiki.wiki_id,
                     type("PullViewRawCard", (), {
                         "doc_id": doc_id,
-                        "topic": topic,
-                        "problem_cluster": topic,
+                        "topic": intake["topic"],
+                        "problem_cluster": intake["problem_cluster"],
                         "content": document["content"],
                     })(),
                 )
@@ -91,13 +109,20 @@ class SyncService:
                     "wiki_id": wiki.wiki_id,
                     "doc_id": doc_id,
                     "page_type": "raw",
-                    "topic": topic,
-                    "problem_cluster": topic,
+                    "topic": intake["topic"],
+                    "problem_cluster": intake["problem_cluster"],
+                    "summary": intake["summary"],
+                    "classification_method": intake["classification_method"],
+                    "classification_confidence": intake["classification_confidence"],
+                    "metadata_state": intake["metadata_state"],
+                    "source_type": intake["source_type"],
+                    "source_uri": intake["source_uri"],
+                    "title": intake["title"],
                     "canonical_uri": f"pages/{doc_id}.md",
                     "last_writer": actor.actor_id,
                     "source": "external_sync",
                     "vault_relative_path": vault_relative_path,
-                    "adapter_metadata": {"vault_relative_path": vault_relative_path},
+                    "adapter_metadata": intake["adapter_metadata"],
                 })
                 pending.append_pending_manifest({
                     "doc_id": doc_id,
@@ -105,7 +130,7 @@ class SyncService:
                     "source": "external_sync",
                     "last_writer": actor.actor_id,
                     "vault_relative_path": vault_relative_path,
-                    "adapter_metadata": {"vault_relative_path": vault_relative_path},
+                    "adapter_metadata": intake["adapter_metadata"],
                 })
         self._rebuild_retrieval_index(wiki)
         return SyncResult(mode="pull-view", changed_files=changed_files)
