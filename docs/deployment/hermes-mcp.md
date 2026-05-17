@@ -47,7 +47,9 @@ Use `aw-agent serve` as the command Hermes launches.
         "/abs/path/to/registry.yaml"
       ],
       "env": {
-        "AGENT_WIKI_WORKSPACE": "/abs/path/to/wiki-workspace"
+        "AGENT_WIKI_WORKSPACE": "/abs/path/to/wiki-workspace",
+        "AGENT_WIKI_ACTOR_TYPE": "agent",
+        "AGENT_WIKI_ACTOR_ID": "hermes"
       }
     }
   }

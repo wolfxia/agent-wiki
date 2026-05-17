@@ -1,4 +1,5 @@
 from pathlib import Path
+import logging
 import os
 
 from agent_wiki.application.capture_raw import CaptureRawService
@@ -16,6 +17,9 @@ from agent_wiki.domain.models import (
 from agent_wiki.infrastructure.identity.resolver import IdentityResolver
 from agent_wiki.settings import DEFAULT_REGISTRY_PATH
 from agent_wiki.transports.errors import map_exception
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class MCPDispatcher:
@@ -52,26 +56,10 @@ class MCPDispatcher:
             return payload
 
     def resolve_identity(self, request_metadata: dict, session_metadata: dict):
-        # Extract default actor from registry permissions as last-resort fallback
-        default_type = os.environ.get("AGENT_WIKI_ACTOR_TYPE")
-        default_id = os.environ.get("AGENT_WIKI_ACTOR_ID")
-        if not default_type or not default_id:
-            try:
-                registry = RegistryLoader().load(self._registry_path)
-                for wiki in registry.wikis:
-                    for perm in getattr(wiki, "permissions", []) or []:
-                        perm_type = getattr(perm, "actor_type", None)
-                        perm_id = getattr(perm, "actor_id", None)
-                        if perm_type and perm_id:
-                            if not default_type:
-                                default_type = perm_type
-                            if not default_id:
-                                default_id = perm_id
-                            break
-                    if default_type and default_id:
-                        break
-            except Exception:
-                pass
+        default_type = None
+        default_id = None
+        if not self._has_identity(request_metadata, session_metadata):
+            default_type, default_id = self._registry_identity_fallback()
         return IdentityResolver(
             default_actor_type=default_type,
             default_actor_id=default_id,
@@ -81,6 +69,29 @@ class MCPDispatcher:
                 metadata={**request_metadata, **session_metadata},
             )
         )
+
+
+    def _has_identity(self, request_metadata: dict, session_metadata: dict) -> bool:
+        metadata = {**request_metadata, **session_metadata}
+        return bool(metadata.get("actor_type") and metadata.get("actor_id")) or bool(
+            os.environ.get("AGENT_WIKI_ACTOR_TYPE") and os.environ.get("AGENT_WIKI_ACTOR_ID")
+        )
+
+    def _registry_identity_fallback(self) -> tuple[str | None, str | None]:
+        try:
+            registry = RegistryLoader().load(self._registry_path)
+            for wiki in registry.wikis:
+                for perm in getattr(wiki, "permissions", []) or []:
+                    perm_type = getattr(perm, "actor_type", None)
+                    perm_id = getattr(perm, "actor_id", None)
+                    if perm_type and perm_id:
+                        LOGGER.warning(
+                            "using registry fallback identity for MCP actor; configure AGENT_WIKI_ACTOR_TYPE and AGENT_WIKI_ACTOR_ID in production"
+                        )
+                        return perm_type, perm_id
+        except Exception:
+            return None, None
+        return None, None
 
     def _resolve_wiki(self, wiki_id: str, workspace_overrides: dict[str, str]):
         registry = RegistryLoader().load(self._registry_path)

@@ -91,3 +91,42 @@ def test_identity_resolver_raises_when_identity_missing() -> None:
         assert error.__class__.__name__ == "IdentityResolutionError"
     else:
         raise AssertionError("expected IdentityResolutionError")
+
+
+def test_identity_resolver_prefers_explicit_identity_over_env(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_WIKI_ACTOR_TYPE", "agent")
+    monkeypatch.setenv("AGENT_WIKI_ACTOR_ID", "hermes")
+    resolver = IdentityResolver(default_actor_type="agent", default_actor_id="openclaw")
+
+    actor = resolver.resolve(
+        IdentityContext(
+            transport="cli",
+            actor_type="agent",
+            actor_id="claude-code",
+        )
+    )
+
+    assert actor.actor_type == "agent"
+    assert actor.actor_id == "claude-code"
+
+
+def test_identity_resolver_uses_env_before_constructor_default(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_WIKI_ACTOR_TYPE", "agent")
+    monkeypatch.setenv("AGENT_WIKI_ACTOR_ID", "hermes")
+    resolver = IdentityResolver(default_actor_type="agent", default_actor_id="openclaw")
+
+    actor = resolver.resolve(IdentityContext(transport="mcp"))
+
+    assert actor.actor_type == "agent"
+    assert actor.actor_id == "hermes"
+
+
+def test_identity_resolver_uses_constructor_default_when_env_missing(monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_WIKI_ACTOR_TYPE", raising=False)
+    monkeypatch.delenv("AGENT_WIKI_ACTOR_ID", raising=False)
+    resolver = IdentityResolver(default_actor_type="agent", default_actor_id="hermes")
+
+    actor = resolver.resolve(IdentityContext(transport="mcp"))
+
+    assert actor.actor_type == "agent"
+    assert actor.actor_id == "hermes"

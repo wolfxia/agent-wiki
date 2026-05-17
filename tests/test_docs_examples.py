@@ -10,3 +10,6 @@ def test_hermes_deployment_doc_includes_mcp_server_example() -> None:
     assert '"aw-agent"' in doc
     assert '"serve"' in doc
     assert "wiki.query" in doc
+    assert "AGENT_WIKI_ACTOR_TYPE" in doc
+    assert "AGENT_WIKI_ACTOR_ID" in doc
+    assert "hermes" in doc

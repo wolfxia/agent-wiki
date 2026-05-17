@@ -330,3 +330,46 @@ def test_run_stdio_server_uses_stdio_transport(monkeypatch) -> None:
     run_stdio_server(registry_path="tests/fixtures/registry.yaml")
 
     assert captured["transport"] == "stdio"
+
+
+
+def test_mcp_metadata_from_context_does_not_read_env(monkeypatch) -> None:
+    from agent_wiki.transports.mcp.server import _metadata_from_context
+
+    monkeypatch.setenv("AGENT_WIKI_ACTOR_TYPE", "agent")
+    monkeypatch.setenv("AGENT_WIKI_ACTOR_ID", "hermes")
+
+    assert _metadata_from_context(None) == {}
+
+
+def test_mcp_registry_fallback_logs_warning_when_env_missing(monkeypatch, caplog) -> None:
+    import logging
+
+    monkeypatch.delenv("AGENT_WIKI_ACTOR_TYPE", raising=False)
+    monkeypatch.delenv("AGENT_WIKI_ACTOR_ID", raising=False)
+    server = MCPServer(registry_path="tests/fixtures/registry.yaml")
+
+    with caplog.at_level(logging.WARNING):
+        resolved = server.resolve_identity(request_metadata={}, session_metadata={})
+
+    assert resolved.actor_type == "agent"
+    assert resolved.actor_id == "hermes"
+    assert "registry fallback" in caplog.text
+
+
+def test_mcp_identity_errors_when_no_env_no_metadata_no_registry_defaults(monkeypatch, temp_wiki_root: Path) -> None:
+    monkeypatch.delenv("AGENT_WIKI_ACTOR_TYPE", raising=False)
+    monkeypatch.delenv("AGENT_WIKI_ACTOR_ID", raising=False)
+    registry_path = temp_wiki_root.parent / "registry-no-permissions.yaml"
+    registry_data = yaml.safe_load(Path("tests/fixtures/registry.yaml").read_text(encoding="utf-8"))
+    registry_data["wikis"][0]["permissions"] = []
+    registry_path.write_text(yaml.safe_dump(registry_data, sort_keys=False), encoding="utf-8")
+
+    server = MCPServer(registry_path=str(registry_path))
+
+    try:
+        server.resolve_identity(request_metadata={}, session_metadata={})
+    except Exception as error:
+        assert error.__class__.__name__ == "IdentityResolutionError"
+    else:
+        raise AssertionError("expected IdentityResolutionError")

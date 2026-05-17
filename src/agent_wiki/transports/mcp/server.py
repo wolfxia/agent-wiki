@@ -43,7 +43,7 @@ class SyncToolResult(BaseModel):
 
 def _metadata_from_context(ctx: Context | None) -> dict[str, str]:
     if ctx is None:
-        return _env_fallback()
+        return {}
 
     metadata: dict[str, str] = {}
     client_id = getattr(ctx, "client_id", None)
@@ -60,27 +60,7 @@ def _metadata_from_context(ctx: Context | None) -> dict[str, str]:
         if actor_id:
             metadata["actor_id"] = actor_id
 
-    # Merge env defaults for any missing identity fields
-    env_meta = _env_fallback()
-    for key in ("actor_type", "actor_id"):
-        if key not in metadata and key in env_meta:
-            metadata[key] = env_meta[key]
-
     return metadata
-
-
-def _env_fallback() -> dict[str, str]:
-    """Read default actor identity from environment variables."""
-    import os
-
-    result: dict[str, str] = {}
-    actor_type = os.environ.get("AGENT_WIKI_ACTOR_TYPE")
-    actor_id = os.environ.get("AGENT_WIKI_ACTOR_ID")
-    if actor_type:
-        result["actor_type"] = actor_type
-    if actor_id:
-        result["actor_id"] = actor_id
-    return result
 
 
 def build_fastmcp_server(registry_path: str | None = None) -> FastMCP:

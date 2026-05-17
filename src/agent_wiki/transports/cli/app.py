@@ -93,11 +93,14 @@ def health(
         if workspace:
             _load_wiki(registry, workspace, None)
 
+        actor = _actor()
         tools = MCPServer(registry_path=str(registry_path)).list_tools()
         typer.echo("status=ok")
         typer.echo(f"registry_path={registry_path}")
         typer.echo(f"wiki_count={wiki_count}")
         typer.echo(f"tool_count={len(tools)}")
+        typer.echo(f"actor_type={actor.actor_type}")
+        typer.echo(f"actor_id={actor.actor_id}")
 
     _run_cli(_command)
 
