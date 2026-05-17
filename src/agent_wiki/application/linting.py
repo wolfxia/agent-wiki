@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.enums import PageType
+from agent_wiki.infrastructure.retrieval.index_consistency import IndexConsistencyChecker
 from agent_wiki.infrastructure.runtime.pending_state import PendingStateRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 
@@ -45,14 +46,13 @@ class LintService:
             ]
         pending_doc_ids = {entry.get("doc_id") for entry in pending_entries if entry.get("doc_id")}
 
-        retrieval_index_path = wiki_root / "retrieval_index.jsonl"
-        if retrieval_index_path.exists():
-            for line in retrieval_index_path.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
+        index_issues = IndexConsistencyChecker().check(wiki_root)
+        for issue in index_issues:
+            if issue.startswith("retrieval index entry without manifest entry:"):
+                doc_id = issue.rsplit(":", 1)[1].strip()
+                if doc_id in pending_doc_ids:
                     continue
-                card = json.loads(line)
-                if manifest.find(card["doc_id"]) is None and card["doc_id"] not in pending_doc_ids:
-                    issues.append(f"retrieval index entry without manifest entry: {card['doc_id']}")
+            issues.append(issue)
 
         for marker in pending_state.read_stale_markers():
             issues.append(f"stale marker for {marker.get('doc_id', 'unknown')}: {marker.get('reason', '')}")

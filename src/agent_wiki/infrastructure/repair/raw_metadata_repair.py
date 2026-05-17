@@ -5,6 +5,8 @@ from pathlib import Path
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.infrastructure.intake.raw_intake import normalize_raw_intake
+from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRepository
+from agent_wiki.infrastructure.retrieval.sqlite_fts import SQLiteFTSIndexProvider
 from agent_wiki.infrastructure.runtime.pending_state import PendingStateRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 
@@ -13,6 +15,8 @@ class RawMetadataRepairService:
     def repair(self, wiki: WikiConfig) -> dict:
         wiki_root = Path(wiki.workspace_path)
         manifest = ManifestRepository(wiki_root)
+        retrieval_index = RetrievalIndexRepository(wiki_root)
+        fts_index = SQLiteFTSIndexProvider(wiki_root, wiki_id=wiki.wiki_id)
         pending = PendingStateRepository(wiki_root)
         pages_root = wiki_root / "pages"
         repaired_count = 0
@@ -48,8 +52,7 @@ class RawMetadataRepairService:
                 }
             )
 
-            manifest.upsert(
-                {
+            manifest_entry = {
                     "wiki_id": wiki.wiki_id,
                     "doc_id": doc_id,
                     "page_type": "raw",
@@ -67,7 +70,18 @@ class RawMetadataRepairService:
                     "vault_relative_path": entry.get("vault_relative_path"),
                     "adapter_metadata": intake["adapter_metadata"],
                 }
+            manifest.upsert(manifest_entry)
+            content = page_path.read_text(encoding="utf-8")
+            retrieval_index.append_raw_card(
+                wiki.wiki_id,
+                type("RepairedRawCard", (), {
+                    "doc_id": doc_id,
+                    "topic": intake["topic"],
+                    "problem_cluster": intake["problem_cluster"],
+                    "content": content,
+                })(),
             )
+            fts_index.upsert(doc_id, {**manifest_entry, "content": content})
             repaired_count += 1
 
         self._write_pending_entries(pending.pending_manifest_path, kept_entries)

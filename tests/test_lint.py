@@ -162,3 +162,93 @@ def test_lint_ignores_repaired_raw_pending_state(temp_wiki_root: Path) -> None:
 
     assert result.ok is True
     assert result.issues == []
+
+
+def test_lint_detects_retrieval_index_missing_manifest_doc_and_recommends_rebuild(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    (temp_wiki_root / "pages").mkdir(exist_ok=True)
+    (temp_wiki_root / "pages" / "raw-index-missing.md").write_text("# Raw index missing", encoding="utf-8")
+    (temp_wiki_root / "MANIFEST.jsonl").write_text(
+        json.dumps(
+            {
+                "wiki_id": "personal-1",
+                "doc_id": "raw-index-missing",
+                "page_type": "raw",
+                "topic": "ops",
+                "problem_cluster": "index",
+                "summary": "index missing",
+                "canonical_uri": "pages/raw-index-missing.md",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (temp_wiki_root / "retrieval_index.jsonl").write_text("", encoding="utf-8")
+
+    result = LintService().run(wiki)
+
+    assert result.ok is False
+    assert any("retrieval index missing manifest entry: raw-index-missing" in issue for issue in result.issues)
+    assert any("rebuild retrieval indexes" in issue.lower() for issue in result.issues)
+
+
+def test_lint_detects_fts_index_missing_manifest_doc_and_recommends_rebuild(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    (temp_wiki_root / "pages").mkdir(exist_ok=True)
+    (temp_wiki_root / "pages" / "raw-fts-missing.md").write_text("# Raw FTS missing", encoding="utf-8")
+    (temp_wiki_root / "MANIFEST.jsonl").write_text(
+        json.dumps(
+            {
+                "wiki_id": "personal-1",
+                "doc_id": "raw-fts-missing",
+                "page_type": "raw",
+                "topic": "ops",
+                "problem_cluster": "fts",
+                "summary": "fts missing",
+                "canonical_uri": "pages/raw-fts-missing.md",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (temp_wiki_root / "retrieval_index.jsonl").write_text(
+        json.dumps({"wiki_id": "personal-1", "doc_id": "raw-fts-missing", "page_type": "raw", "content": "present"}) + "\n",
+        encoding="utf-8",
+    )
+
+    result = LintService().run(wiki)
+
+    assert result.ok is False
+    assert any("fts index missing manifest entry: raw-fts-missing" in issue for issue in result.issues)
+    assert any("rebuild retrieval indexes" in issue.lower() for issue in result.issues)
+
+
+def test_raw_metadata_repair_rebuilds_runtime_indexes(temp_wiki_root: Path) -> None:
+    from agent_wiki.infrastructure.repair.raw_metadata_repair import RawMetadataRepairService
+    from agent_wiki.infrastructure.retrieval.sqlite_fts import SQLiteFTSIndexProvider
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    (temp_wiki_root / "pages").mkdir(exist_ok=True)
+    (temp_wiki_root / "pages" / "repaired-index-1.md").write_text("# Repaired Index\n\nRepair searchable content.", encoding="utf-8")
+    pending_root = temp_wiki_root / ".agent-wiki"
+    pending_root.mkdir(exist_ok=True)
+    (pending_root / "pending_manifest.jsonl").write_text(
+        json.dumps({"doc_id": "repaired-index-1", "page_type": "raw", "vault_relative_path": "repaired-index-1.md"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    RawMetadataRepairService().repair(wiki)
+
+    retrieval_text = (temp_wiki_root / "retrieval_index.jsonl").read_text(encoding="utf-8")
+    fts_hits = SQLiteFTSIndexProvider(temp_wiki_root, wiki_id="personal-1").search("Repair searchable", top_k=5)
+    lint_result = LintService().run(wiki)
+
+    assert "repaired-index-1" in retrieval_text
+    assert [hit.doc_id for hit in fts_hits] == ["repaired-index-1"]
+    assert lint_result.ok is True

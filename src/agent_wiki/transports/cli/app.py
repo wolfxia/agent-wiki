@@ -21,6 +21,7 @@ from agent_wiki.bootstrap.registry_loader import RegistryLoader, WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import CaptureRawInput, CompileUpdateInput, IdentityContext, ProposalInput, QueryInput
 from agent_wiki.infrastructure.identity.resolver import IdentityResolver
+from agent_wiki.infrastructure.retrieval.index_consistency import IndexConsistencyChecker
 from agent_wiki.settings import DEFAULT_REGISTRY_PATH
 from agent_wiki.transports.errors import map_exception
 from agent_wiki.transports.errors import error_payload
@@ -91,8 +92,10 @@ def health(
         if wiki_count == 0:
             raise ValueError("registry must contain at least one wiki")
 
+        index_issues: list[str] = []
         if workspace:
-            _load_wiki(registry, workspace, None)
+            wiki = _load_wiki(registry, workspace, None)
+            index_issues = IndexConsistencyChecker().check(Path(wiki.workspace_path))
 
         actor = _actor()
         tools = MCPServer(registry_path=str(registry_path)).list_tools()
@@ -102,6 +105,9 @@ def health(
         typer.echo(f"tool_count={len(tools)}")
         typer.echo(f"actor_type={actor.actor_type}")
         typer.echo(f"actor_id={actor.actor_id}")
+        typer.echo(f"index_consistency={'fail' if index_issues else 'ok'}")
+        for issue in index_issues:
+            typer.echo(f"index_issue={issue}")
 
     _run_cli(_command)
 

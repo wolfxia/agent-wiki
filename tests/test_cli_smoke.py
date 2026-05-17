@@ -508,3 +508,38 @@ def test_cli_health_command_reports_registry_and_tool_surface(temp_wiki_root) ->
     assert "tool_count=5" in result.stdout
     assert "actor_type=agent" in result.stdout
     assert "actor_id=claude-code" in result.stdout
+
+
+def test_cli_health_reports_index_consistency_anomaly(temp_wiki_root) -> None:
+    import json
+
+    pages = temp_wiki_root / "pages"
+    pages.mkdir(exist_ok=True)
+    (pages / "raw-health-index.md").write_text("# Raw Health Index", encoding="utf-8")
+    (temp_wiki_root / "MANIFEST.jsonl").write_text(
+        json.dumps(
+            {
+                "wiki_id": "personal-1",
+                "doc_id": "raw-health-index",
+                "page_type": "raw",
+                "topic": "ops",
+                "problem_cluster": "health",
+                "summary": "health index",
+                "canonical_uri": "pages/raw-health-index.md",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (temp_wiki_root / "retrieval_index.jsonl").write_text("", encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["health", "--workspace", str(temp_wiki_root), "--registry", "tests/fixtures/registry.yaml"],
+        env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"},
+    )
+
+    assert result.exit_code == 0
+    assert "index_consistency=fail" in result.stdout
+    assert "rebuild retrieval indexes" in result.stdout.lower()
