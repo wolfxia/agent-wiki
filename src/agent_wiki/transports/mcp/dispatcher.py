@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 from agent_wiki.application.capture_raw import CaptureRawService
 from agent_wiki.application.compile_update import CompileUpdateService
@@ -51,7 +52,30 @@ class MCPDispatcher:
             return payload
 
     def resolve_identity(self, request_metadata: dict, session_metadata: dict):
-        return IdentityResolver().resolve(
+        # Extract default actor from registry permissions as last-resort fallback
+        default_type = os.environ.get("AGENT_WIKI_ACTOR_TYPE")
+        default_id = os.environ.get("AGENT_WIKI_ACTOR_ID")
+        if not default_type or not default_id:
+            try:
+                registry = RegistryLoader().load(self._registry_path)
+                for wiki in registry.wikis:
+                    for perm in getattr(wiki, "permissions", []) or []:
+                        perm_type = getattr(perm, "actor_type", None)
+                        perm_id = getattr(perm, "actor_id", None)
+                        if perm_type and perm_id:
+                            if not default_type:
+                                default_type = perm_type
+                            if not default_id:
+                                default_id = perm_id
+                            break
+                    if default_type and default_id:
+                        break
+            except Exception:
+                pass
+        return IdentityResolver(
+            default_actor_type=default_type,
+            default_actor_id=default_id,
+        ).resolve(
             IdentityContext(
                 transport="mcp",
                 metadata={**request_metadata, **session_metadata},
