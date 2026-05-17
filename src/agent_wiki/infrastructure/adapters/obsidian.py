@@ -1,10 +1,23 @@
 import re
+from datetime import date, datetime
 from pathlib import Path
 
 import yaml
 
 
 _FRONTMATTER_RE = re.compile(r"\A---\n(.*?\n)---\n", re.DOTALL)
+
+
+def _sanitize_frontmatter(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _sanitize_frontmatter(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_frontmatter(item) for item in value]
+    return value
 
 
 class ObsidianAdapter:
@@ -16,7 +29,7 @@ class ObsidianAdapter:
 
         match = _FRONTMATTER_RE.match(raw)
         if match:
-            frontmatter = yaml.safe_load(match.group(1)) or {}
+            frontmatter = _sanitize_frontmatter(yaml.safe_load(match.group(1)) or {})
             content = raw[match.end():]
 
         return {

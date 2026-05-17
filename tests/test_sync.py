@@ -882,3 +882,21 @@ def test_sync_push_view_exports_all_manifest_pages_even_when_pages_are_nested(te
     exported_pages = [path for path in external_dir.rglob("*.md") if path.name != "知识图谱索引.md"]
     assert len(exported_pages) == 5
     assert len([path for path in result.changed_files if not path.endswith("知识图谱索引.md")]) == 5
+
+
+def test_obsidian_adapter_sanitizes_yaml_dates_for_json_manifest(temp_wiki_root: Path) -> None:
+    import json
+
+    source = temp_wiki_root / "date-frontmatter.md"
+    source.write_text(
+        "---\ncreated: 2026-04-05\nnested:\n  reviewed: 2026-04-06\nitems:\n  - due: 2026-04-07\n---\n# Date Note\n",
+        encoding="utf-8",
+    )
+
+    document = ObsidianAdapter().read(str(source))
+    frontmatter = document["adapter_metadata"]["frontmatter"]
+
+    assert frontmatter["created"] == "2026-04-05"
+    assert frontmatter["nested"]["reviewed"] == "2026-04-06"
+    assert frontmatter["items"][0]["due"] == "2026-04-07"
+    json.dumps(document["adapter_metadata"])
