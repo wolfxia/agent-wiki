@@ -1,372 +1,250 @@
 # Agent Wiki
 
-> Version: v0.1.0  
-> Date: 2026-05-16  
-> Status: Repository overview aligned against the current Phase 1 implementation
+> Version: v0.2.0
+> Date: 2026-05-17
+> Status: working multi-agent knowledge system with MCP, CLI, REST, Obsidian sync, FTS5 retrieval, and graph visualization.
 >
-> A universal, agent-agnostic knowledge system for AI agents.
->
-> One knowledge asset base, many agent frontends: Hermes can search it, Claude Code can update it, Codex can query it, OpenClaw can maintain it, and OpenCode can reuse it.
+> One knowledge base, many agent frontends: Hermes, Claude Code, Codex, OpenClaw, and other agents can query, capture, compile, lint, and sync through shared core services.
 
-Agent Wiki is a Phase 1 implementation of a **personal multi-agent knowledge workflow** built around a shared core, a Git-first authority model, and thin agent adapters.
+Agent Wiki is an agent-agnostic knowledge system for long-lived AI memory. It treats the workspace as the single source of truth, exposes a real FastMCP stdio server for agents, and keeps human-facing tools such as Obsidian as read-write views over the same authority model.
 
-## Why this exists
+Current data baseline: **1034+ pages**, **382 topics**, and **235 passing tests**.
 
-Most agent knowledge systems are tightly coupled to one tool, one memory mechanism, or one UI. Agent Wiki takes a different approach:
+## Quick Integration Guide
 
-- **knowledge should outlive the current agent session**
-- **multiple agents should operate on the same knowledge base**
-- **Git should remain the authority of record**
-- **retrieval, compilation, and maintenance should be explicit workflows, not hidden prompt tricks**
+### Connect Through MCP
 
-The Phase 1 loop is:
+Hermes and other MCP clients should run Agent Wiki as a stdio sidecar. Always pass explicit actor identity through environment variables; request payloads must not override identity.
 
-```text
-capture_raw → compile_update → query → lint → sync → weekly-review
+```json
+{
+  "mcpServers": {
+    "agent-wiki": {
+      "command": "aw",
+      "args": ["serve", "--registry", "/Users/chao/agent-wiki-data/registry.yaml"],
+      "env": {
+        "AGENT_WIKI_ACTOR_TYPE": "agent",
+        "AGENT_WIKI_ACTOR_ID": "hermes"
+      }
+    }
+  }
+}
 ```
 
-## Architecture at a glance
+Available MCP tools:
 
-### System overview
+| Tool | Purpose |
+|---|---|
+| `wiki.query` | Query the knowledge base with layered results and debug scores |
+| `wiki.capture_raw` | Capture raw source or learning notes |
+| `wiki.compile_update` | Create or revise `atom` / `synthesis` pages |
+| `wiki.lint` | Check manifest, retrieval index, FTS, and consistency health |
+| `wiki.sync` | Run explicit `status`, `pull-view`, or `push-view` sync |
 
-![System overview](docs/architecture/system-overview.svg)
+### Connect Through CLI
 
-### Write propagation
+```bash
+pip install -e ".[dev]"
+export AGENT_WIKI_ACTOR_TYPE=agent
+export AGENT_WIKI_ACTOR_ID=hermes
 
-![Write propagation](docs/architecture/write-propagation.svg)
+aw health --registry /Users/chao/agent-wiki-data/registry.yaml --wiki-id main
+aw query "MCP integration" --registry /Users/chao/agent-wiki-data/registry.yaml --wiki-id main
+```
 
-### Query and retrieval flow
+Required environment variables:
 
-![Query retrieval flow](docs/architecture/query-retrieval.svg)
-
-> Note: the diagrams above are part of the repository architecture assets under `docs/architecture/`. They reflect the current Phase 1 implementation direction. Some richer propagation, governance, and deployability behaviors remain design targets beyond the current baseline.
-
-## What Agent Wiki does
-
-### Implemented runtime subsystems in the current Phase 1 baseline
-
-These subsystems exist in the current `src/agent_wiki/` runtime implementation:
-
-- Python package `agent_wiki` with a test-backed Phase 1 core under `src/agent_wiki/`
-- registry-driven multi-wiki configuration loading
-- raw capture flow with committed write and pending fallback
-- compiled update flow for `atom` and `synthesis`
-- lexical retrieval over `retrieval_index.jsonl`
-- layered query results with L1 / L2 / L3 output
-- dispute caveats in query context
-- pending truth-zone inclusion only when explicitly requested
-- manifest persistence and retrieval index updates
-- lint checks for manifest/page and manifest/index consistency
-- sync `status`, `pull-view`, and `push-view` filesystem flows
-- feedback recording and review queue insertion
-- weekly review summary generation
-- C-level proposal / approval smoke path
-- real FastMCP stdio MCP server process with five workflow tools
-- `aw serve` plus `aw-agent` alias entrypoints
-- workflow-complete CLI surface for query/capture/compile/lint/sync/feedback/weekly-review/approvals
-- transport-parity REST workflow surface for query/capture/compile/lint/sync/feedback/weekly-review/approvals
-- shared registry permissions for `hermes`, `openclaw`, and `claude-code`, with reserved low-trust `codex`
-- Obsidian `push-view` with frontmatter preservation and derived graph index export
-- shared wiki restrictions and cross-wiki query smoke coverage
-- regression-tested Phase 1 baseline with the current suite enforced in CI and local pytest runs
-
-### Implemented callable interfaces today
-
-The currently callable user/agent surface includes:
-
-- FastMCP stdio MCP server in `src/agent_wiki/transports/mcp/server.py`
-- workflow-complete CLI in `src/agent_wiki/transports/cli/app.py`
-- workflow-complete REST surface in `src/agent_wiki/transports/rest/app.py`
-- `aw` and `aw-agent` package entrypoints
-
-### Designed but not yet fully implemented
-
-- authority-promotion / commit orchestration for Git-first governance
-- rollback/stale-marker propagation recovery model
-- richer schema/frontmatter validation
-- richer review queue workflow fields
-- vector provider routing and load-budget enforcement
-
-
-## CLI surface today
-
-| Command | Status | Notes |
+| Variable | Example | Meaning |
 |---|---|---|
-| `aw --help` | Implemented | package/CLI help surface |
-| `aw info` | Implemented | minimal runtime info stub |
-| `aw capture-raw` | Implemented | raw capture workflow command |
-| `aw compile-update` | Implemented | compiled update workflow command |
-| `aw query` | Implemented | layered query workflow command |
-| `aw lint` | Implemented | lint workflow command |
-| `aw sync` | Implemented | `status` / `pull-view` / `push-view` subcommands |
-| `aw feedback` | Implemented | feedback intake command |
-| `aw weekly-review` | Implemented | weekly review report command |
-| `aw approvals` | Implemented | `propose` / `approve` plus explicit Phase 1 `reject` placeholder |
-| `aw serve` | Implemented | real FastMCP stdio service entrypoint |
-| `aw-agent` | Implemented | alias entrypoint for the same service identity |
+| `AGENT_WIKI_ACTOR_TYPE` | `agent` | Identity class used by registry permissions |
+| `AGENT_WIKI_ACTOR_ID` | `hermes` | Concrete actor id, for example `hermes`, `claude-code`, or `codex` |
 
-## Core design principles
+### Add A New Agent To `registry.yaml`
 
-- **Git is the authority** — committed knowledge lives in Git-visible artifacts.
-- **Workspace is runtime state** — local pending state, proposals, and maintenance metadata live under `.agent-wiki/`.
-- **Write = propagate** — writes are not just page edits; they update manifest, retrieval, logs, and queue state.
-- **Compile and retrieve are one closed loop** — intake feeds compilation, compilation defines retrieval units, and misses feed maintenance.
-- **Agent adapters stay thin** — core behavior belongs to the shared engine, not individual agent integrations.
+Add a permission entry under the target wiki. T1 agents can use C-level gates; T2 agents normally stop at B; T3 agents should usually be A-level capture/query only.
 
-## Phase 1 global priorities
+```yaml
+permissions:
+  - actor_type: agent
+    actor_id: new-agent
+    allowed_operations: [query, capture_raw, compile_update, lint, sync]
+    max_gate: B
+    allowed_page_types: [raw, atom, synthesis]
+```
 
-The canonical release priority ordering across the doc suite is:
+### Capture And Query Example
 
-- **P0** — usable retrieval quality and Obsidian-connected workflow
-- **P1** — knowledge lifecycle automation and purpose-driven evolution
-- **P2** — governance hardening for stronger multi-agent claims
-- **P3** — authority/deployability/operational maturity
+```bash
+aw capture-raw learn-2026-05-17-mcp-integration \
+  --topic "agent-os" \
+  --problem-cluster "mcp-integration" \
+  --content "# MCP integration note\nHermes should run agent-wiki as a stdio MCP sidecar." \
+  --registry /Users/chao/agent-wiki-data/registry.yaml \
+  --wiki-id main
 
-This ordering reflects the combined synthesis from Codex, Claude Code, and Tao: Phase 1 must be usable first, then self-evolving, then safely governable for stronger claims.
+aw query "How should Hermes connect to agent-wiki?" \
+  --registry /Users/chao/agent-wiki-data/registry.yaml \
+  --wiki-id main
+```
 
-## Gate model
+## Architecture Decisions
 
-The canonical runtime gate model is:
+Agent Wiki follows this authority chain:
 
-- **A** — raw/source capture
-- **B** — atom/synthesis/dispute updates
-- **C** — principle and other high-risk writes
+```text
+workspace SSOT -> local runtime indexes -> external human views
+```
 
-`D` is reserved only as a DFX maintenance/design note and is **not** a formal runtime gate level.
+Core decisions in v0.2.0:
 
-## Agent capability matrix
+- **Workspace = SSOT**: committed pages, `MANIFEST.jsonl`, `retrieval_index.jsonl`, `topic_index.md`, logs, and review records live in the workspace.
+- **Obsidian = display/read-write view**: Obsidian is for humans. `pull-view` imports edits into the workspace; `push-view` exports workspace pages back to the vault.
+- **Thin transports**: MCP, CLI, and REST call the same application services and permission gates.
+- **Trusted identity resolution**: actor identity comes from MCP metadata, CLI env, token/env, or registry fallback. Callers do not set their own identity in tool payloads.
+- **Team expansion model**: the architecture supports N personal workspaces plus M team workspaces, with permission tiers per actor, wiki, operation, page type, and A/B/C gate.
+- **Compile and retrieval are one loop**: intake metadata feeds compile candidates, compiled schema feeds retrieval, query misses feed feedback and weekly review.
 
-| Agent | Tier | Transport | Current Phase 1 capability | Constraints |
-|---|---|---|---|---|
-| Hermes | T1 Full | MCP / CLI | query, capture_raw, compile_update, lint, sync | strongest integration target for shared workflow |
-| Claude Code | T2 Standard | MCP / CLI / REST | capture, compile, query, lint, sync, feedback, weekly review, approvals | no built-in scheduler or vector search |
-| Codex | T3 Minimal | CLI `aw` + identity profile | query, capture_raw | reserved low-trust profile, no truth-zone writes |
-| OpenClaw | T1 Full | MCP / CLI | query, capture_raw, compile_update, lint, sync | prompt-based skill environment |
-| OpenCode | T3 Minimal | CLI wrapper | query, capture_raw style flows | no persistent state |
+## What Is New In v0.2.0
 
-For deeper per-agent notes, see `docs/agent-differences.md`.
+- FTS5 full-text search through `SQLiteFTSIndexProvider`, stored in `.agent-wiki/retrieval.db`.
+- Query ranking now exposes debug scores: `page_type_boost`, `lexical_score`, `structured_score`, `purpose_boost`, and `freshness`.
+- Index consistency health checks cover manifest, `retrieval_index.jsonl`, FTS, pages, and topic index consistency.
+- `aw migrate --normalize-doc-ids` lowercases and hyphenates old `doc_id`s, renames page files, updates source refs, and backs up `MANIFEST.jsonl`.
+- Obsidian `push-view` exports workspace pages by category: `raw -> 00-收件箱`, `atom + learning -> 01-学习笔记`, `synthesis -> 02-行业洞察`, `graph -> 04-知识图谱`.
+- Obsidian frontmatter dates are sanitized so YAML dates do not break JSON serialization during `pull-view`.
+- Knowledge graph visualizer ships as `knowledge-graph.html`, using sigma.js, graphology, and ForceAtlas2.
+- MCP `wiki.capture_raw` bug fix prevents the previous `name summary not defined` failure.
 
-## Current implementation map
+## Runtime Surfaces
 
-The current runtime implementation lives under `src/agent_wiki/` and is organized by subsystem.
+### CLI
 
-### Bootstrap and configuration
+| Command | Purpose |
+|---|---|
+| `aw info` | Show package/runtime info |
+| `aw health` | Registry load, actor resolution, and tool-list self-check |
+| `aw serve` | Start FastMCP stdio server |
+| `aw query` | Query the knowledge base |
+| `aw capture-raw` | Capture raw source or learning note |
+| `aw compile-update` | Create or revise compiled truth-zone pages |
+| `aw lint` | Run consistency checks |
+| `aw sync status` | Inspect external view sync status |
+| `aw sync pull-view` | Import external view edits into workspace |
+| `aw sync push-view` | Export workspace pages to external views |
+| `aw feedback` | Record query or content feedback |
+| `aw weekly-review` | Produce maintenance review summary |
+| `aw approvals propose/approve/reject` | C-level proposal workflow |
+| `aw migrate --slugify-doc-ids` | Preserve vault relative path in doc ids |
+| `aw migrate --normalize-doc-ids` | Normalize doc ids to lowercase hyphen form |
+| `aw maintain` | Run maintenance checks and queue generation |
+| `aw-agent` | Alias entrypoint for the same CLI/service package |
 
-- `src/agent_wiki/bootstrap/registry_loader.py` — registry and wiki config loading
-- `src/agent_wiki/bootstrap/container.py` — minimal service container
-- `src/agent_wiki/settings.py` — default paths
+### MCP
 
-### Application services
+The primary agent path is MCP stdio through `aw serve`. The MCP surface intentionally stays small:
 
-- `src/agent_wiki/application/capture_raw.py` — A-level raw capture
-- `src/agent_wiki/application/compile_update.py` — B-level compiled updates
-- `src/agent_wiki/application/query.py` — lexical query pipeline and cross-wiki query
-- `src/agent_wiki/application/linting.py` — Phase 1 lint checks
-- `src/agent_wiki/application/sync.py` — `status`, `pull-view`, `push-view`
-- `src/agent_wiki/application/feedback.py` — feedback intake and queue creation
-- `src/agent_wiki/application/weekly_review.py` — weekly summary generation
-- `src/agent_wiki/application/approvals.py` — C-level proposal and approval smoke path
-- `src/agent_wiki/application/propagation.py` — write propagation orchestration
+```text
+wiki.query
+wiki.capture_raw
+wiki.compile_update
+wiki.lint
+wiki.sync
+```
 
-### Domain and contracts
+### REST
 
-- `src/agent_wiki/domain/models.py` — typed inputs/outputs
-- `src/agent_wiki/domain/contracts.py` — runtime contracts and hit shapes
-- `src/agent_wiki/domain/enums.py` — gate, page type, actor enums
+REST is an auxiliary transport for local tooling and tests. It exposes workflow parity for query, capture, compile, lint, sync, feedback, weekly review, approvals, and health, but Hermes integration should prefer MCP stdio.
 
-### Infrastructure
+## Retrieval And Knowledge Flow
 
-- `src/agent_wiki/infrastructure/storage/manifest_repo.py` — manifest JSONL persistence
-- `src/agent_wiki/infrastructure/retrieval/retrieval_index.py` — retrieval index writes and lexical search
-- `src/agent_wiki/infrastructure/runtime/pending_state.py` — pending manifest state
-- `src/agent_wiki/infrastructure/runtime/review_queue.py` — review queue JSONL appends
-- `src/agent_wiki/infrastructure/runtime/operation_log.py` — operation log JSONL appends
-- `src/agent_wiki/infrastructure/identity/*.py` — identity, permission, and gate helpers
+```text
+capture_raw / pull-view
+  -> metadata normalization
+  -> pages/*.md + MANIFEST.jsonl
+  -> retrieval_index.jsonl + .agent-wiki/retrieval.db
+  -> topic_index.md
+  -> query ranking + debug scores
+  -> feedback / weekly-review / compile backlog
+```
 
-### Transport
+Retrieval currently combines structured metadata, lexical matching, FTS5 index health, purpose-aware ranking, page type boosts, and freshness. Vector search remains a plugin-level enhancement rather than the baseline.
 
-- `src/agent_wiki/transports/cli/app.py` — workflow-complete CLI surface and `aw` / `aw-agent` entrypoints
-- `src/agent_wiki/transports/mcp/server.py` — real FastMCP stdio MCP server with five workflow tools
-- `src/agent_wiki/transports/rest/app.py` — workflow-complete REST surface
+## Obsidian Workflow
 
-### Legacy / non-authoritative paths
+Obsidian is a human editing and reading surface, not the authority. The workspace remains authoritative.
 
-- `engine/` exists in the repository but is not the authoritative runtime implementation path for the current Phase 1 baseline.
-- Contributors should treat `src/agent_wiki/` as the active runtime tree unless or until the repository explicitly reintroduces `engine/` as a supported path.
+- `aw sync pull-view` reads Markdown files recursively, ignores `.obsidian` and trash folders, preserves vault-relative paths, sanitizes frontmatter, and imports successful raw pages into manifest and retrieval indexes.
+- `aw sync push-view` exports workspace pages to the vault with category routing and preserves frontmatter where possible.
+- The graph index and visual graph belong under `04-知识图谱` for human exploration.
 
-## Repository structure
+## Repository Structure
 
 ```text
 agent-wiki/
 ├── README.md
+├── AGENTS.md
 ├── pyproject.toml
-├── Makefile
 ├── Dockerfile
+├── knowledge-graph.html
+├── serve_graph.sh
+├── core/
+│   └── schema.md
+├── docs/
+│   ├── ROADMAP.md
+│   ├── design.md
+│   ├── requirements-and-architecture.md
+│   ├── deployment/
+│   ├── architecture/
+│   └── specs/
 ├── src/agent_wiki/
 │   ├── application/
 │   ├── bootstrap/
 │   ├── domain/
 │   ├── infrastructure/
+│   │   ├── adapters/
+│   │   ├── identity/
+│   │   ├── migrations/
+│   │   ├── retrieval/
+│   │   ├── runtime/
+│   │   └── storage/
 │   └── transports/
-├── tests/
-│   ├── fixtures/
-│   └── test_*.py
-├── core/
-│   └── schema.md
-├── docs/
-│   ├── design.md
-│   ├── requirements-and-architecture.md
-│   ├── agent-differences.md
-│   └── architecture/
-└── .agent-wiki/
-    └── plans/
+│       ├── cli/
+│       ├── mcp/
+│       └── rest/
+└── tests/
+    ├── fixtures/
+    └── test_*.py
 ```
 
-## Quick Start
+## Development
 
-### 1. Clone and run tests
+Install and verify:
 
 ```bash
-git clone https://github.com/<your-org>/agent-wiki.git
-cd agent-wiki
-python3 -m pytest
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e ".[dev]"
+pytest -q
 ```
 
-### 2. Inspect the current CLI surface
+Current verified suite: **235 passed**.
+
+Useful operational checks:
 
 ```bash
-python3 -m agent_wiki.transports.cli.app --help
-python3 -m agent_wiki.transports.cli.app info
-python3 -m agent_wiki.transports.cli.app sync status
+aw health --registry /Users/chao/agent-wiki-data/registry.yaml --wiki-id main
+aw lint --registry /Users/chao/agent-wiki-data/registry.yaml --wiki-id main
+aw sync status --registry /Users/chao/agent-wiki-data/registry.yaml --wiki-id main
 ```
 
-Or, after installing the package locally:
+## Documentation Map
 
-```bash
-pip install -e .
-aw --help
-aw info
-aw-agent --help
-```
-
-### 3. Review the design baseline
-
-Start here if you want the design and implementation context:
-
-- `docs/design.md`
-- `docs/requirements-and-architecture.md`
-- `core/schema.md`
-- `docs/agent-differences.md`
-- `docs/superpowers/specs/2026-05-16-phase-1-design.md`
-- `docs/reviews/`
-
-## Example workflows
-
-### Raw capture
-
-Phase 1 currently implements raw capture in `src/agent_wiki/application/capture_raw.py`.
-
-Conceptually:
-
-```text
-raw note/source
-  → validate doc_id
-  → write pages/{doc_id}.md
-  → append MANIFEST.jsonl
-  → append retrieval_index.jsonl
-  → append log.md
-```
-
-Invalid raw doc IDs are not committed; they fall back to pending state in `.agent-wiki/pending_manifest.jsonl`.
-
-### Compile update
-
-Compiled updates currently support `atom` and `synthesis` in `src/agent_wiki/application/compile_update.py`.
-
-Conceptually:
-
-```text
-compile_update analyze
-  → find existing doc or matching problem cluster
-  → classify create vs revise
-  → validate source_refs
-  → propagate compiled page + manifest + retrieval + logs
-```
-
-### Query
-
-The current query path is lexical and file-backed:
-
-```text
-query
-  → classify query type
-  → lexical search over retrieval_index.jsonl
-  → optional pending truth-zone inclusion
-  → manifest-backed filtering and ranking
-  → L1 answer + L2 context + L3 proof
-```
-
-## Documentation guide
-
-- `docs/specs/knowledge-system-architecture.md` — authoritative end-state architecture spec for intake, compilation, retrieval, and maintenance
-- `docs/design.md` — architecture design and implementation alignment
-- `docs/requirements-and-architecture.md` — requirements baseline and phase-boundary decisions
-- `core/schema.md` — operation contract and schema expectations
-- `docs/agent-differences.md` — per-agent adaptation notes
-- `docs/reviews/` — internal review materials and review responses
-
-## Testing status
-
-The current repository baseline includes passing milestone tests for:
-
-- scaffold and bootstrap
-- raw capture and propagation
-- compile analyze/apply
-- lexical query and layered output
-- lint, sync, feedback, weekly review
-- approvals, shared wiki, multi-wiki, and cross-wiki smoke paths
-
-Run the full suite with:
-
-```bash
-python3 -m pytest
-```
-
-## Roadmap
-
-### P0 — Must be usable
-
-- make source intake produce compile-ready raw authority entries instead of metadata-empty imports
-- enforce metadata continuity: low-confidence raw metadata is acceptable, null critical metadata is not
-- strengthen lexical retrieval quality for real use
-- replace the current CJK-bigram lexical baseline with stronger structured and indexed retrieval in later phases
-- add hit/miss tracking in the query path
-- ship Obsidian-connected workflow as a real adoption path
-
-### P1 — Must keep knowledge evolving
-
-- add auto-compile suggestions when raw pages accumulate by topic/problem cluster
-- add fast feedback triggers from repeated low-value queries
-- make `purpose.md` influence ranking, compile direction, and health evaluation
-- add low-cost candidate relations such as co-occurrence and cross-reference
-
-### P2 — Must support stronger governance claims
-
-- enforce trusted identity precedence
-- enforce `max_gate` centrally
-- add page-level sensitivity policy and filtering
-- expand review queue lifecycle records
-
-### P3 — Must complete authority and operational maturity
-
-- add authority-promotion / commit orchestration
-- deepen DFX readiness criteria and runbooks
-
-## Honest status note
-
-This repository now has a working, tested **Phase 1 baseline implementation** with real MCP/CLI/REST transport surfaces, shared registry permissions, and explicit Obsidian push-view support. It is still not the full end-state architecture described in the design docs. In particular, richer propagation guarantees, authority-promotion/commit orchestration, deeper schema enforcement, and broader deployability/operations work remain design targets.
-
-That split is intentional: the project is being built from the Phase 2 target architecture, but landed incrementally in Phase 1.
+- `docs/specs/knowledge-system-architecture.md` — authoritative end-state model for intake, compilation, retrieval, and maintenance.
+- `docs/design.md` — current baseline vs target design.
+- `docs/requirements-and-architecture.md` — requirements, phase boundaries, and architecture constraints.
+- `docs/ROADMAP.md` — v0.2+ execution order and known issues.
+- `docs/deployment/hermes-mcp.md` — Hermes MCP sidecar configuration.
+- `core/schema.md` — operation and schema contract.
 
 ## License
 
