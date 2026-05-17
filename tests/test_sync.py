@@ -62,7 +62,7 @@ def test_sync_pull_view_updates_retrieval_index_for_query(temp_wiki_root: Path) 
     result = QueryService().execute(wiki=wiki, actor=actor, data=QueryInput(query="pull view content queryable"))
 
     assert result.hit_count >= 1
-    assert result.hits[0].doc_id == "retrieval-note"
+    assert result.hits[0].doc_id == "obsidian-query-vault_retrieval-note"
 
 def test_sync_pull_view_imports_external_markdown(temp_wiki_root: Path) -> None:
     wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
@@ -84,7 +84,7 @@ def test_sync_pull_view_imports_external_markdown(temp_wiki_root: Path) -> None:
     result = sync_service.execute(wiki, ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"), SyncInput(mode="pull-view"))
 
     assert result.mode == "pull-view"
-    assert (temp_wiki_root / "pages" / "imported.md").exists()
+    assert (temp_wiki_root / "pages" / "external_imported.md").exists()
 
 
 def test_sync_push_view_exports_only_requested_doc_ids(temp_wiki_root: Path) -> None:
@@ -252,7 +252,7 @@ def test_sync_pull_uses_obsidian_adapter_for_obsidian_view(temp_wiki_root: Path)
     result = SyncService().execute(wiki, ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"), SyncInput(mode="pull-view"))
 
     assert result.mode == "pull-view"
-    imported = temp_wiki_root / "pages" / "obs-note.md"
+    imported = temp_wiki_root / "pages" / "obsidian-vault_obs-note.md"
     assert imported.exists()
     content = imported.read_text(encoding="utf-8")
     # Adapter dispatch should store only the content body in workspace pages
@@ -321,8 +321,8 @@ def test_sync_pull_creates_pending_manifest_entry(temp_wiki_root: Path) -> None:
     pending_path = temp_wiki_root / ".agent-wiki" / "pending_manifest.jsonl"
     assert pending_path.exists()
     entries = [json.loads(line) for line in pending_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    assert any(e["doc_id"] == "new-note" for e in entries)
-    entry = next(e for e in entries if e["doc_id"] == "new-note")
+    assert any(e["doc_id"] == "external_new-note" for e in entries)
+    entry = next(e for e in entries if e["doc_id"] == "external_new-note")
     assert entry["page_type"] == "raw"
     assert entry["source"] == "external_sync"
 
@@ -571,10 +571,10 @@ def test_sync_pull_view_recurses_subdirectories_and_skips_obsidian_system_dirs(t
     entries = [json.loads(line) for line in pending_path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
     assert result.mode == "pull-view"
-    assert (temp_wiki_root / "pages" / "deep-note.md").exists()
+    assert (temp_wiki_root / "pages" / "01-学习笔记_端侧AI_deep-note.md").exists()
     assert not (temp_wiki_root / "pages" / "ignore-me.md").exists()
     assert not (temp_wiki_root / "pages" / "trash-me.md").exists()
-    assert any(entry["doc_id"] == "deep-note" for entry in entries)
+    assert any(entry["doc_id"] == "01-学习笔记_端侧AI_deep-note" for entry in entries)
 
 
 
@@ -605,7 +605,7 @@ def test_sync_pull_view_preserves_vault_relative_path_in_pending_manifest(temp_w
 
     pending_path = temp_wiki_root / ".agent-wiki" / "pending_manifest.jsonl"
     entries = [json.loads(line) for line in pending_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    entry = next(item for item in entries if item["doc_id"] == "infra-note")
+    entry = next(item for item in entries if item["doc_id"] == "02-行业洞察_AI基础设施_infra-note")
 
     assert entry["vault_relative_path"] == "02-行业洞察/AI基础设施/infra-note.md"
 
@@ -715,9 +715,10 @@ def test_sync_pull_view_deduplicates_by_target_path(temp_wiki_root: Path) -> Non
         SyncInput(mode="pull-view"),
     )
 
-    pages = list((temp_wiki_root / "pages").glob("dup-note.md"))
-    assert len(pages) == 1
-    assert result.changed_files.count("pages/dup-note.md") == 1
+    assert (temp_wiki_root / "pages" / "obsidian-dup_dup-note.md").exists()
+    assert (temp_wiki_root / "pages" / "plain-dup_dup-note.md").exists()
+    assert "pages/obsidian-dup_dup-note.md" in result.changed_files
+    assert "pages/plain-dup_dup-note.md" in result.changed_files
 
 
 def test_obsidian_adapter_reads_frontmatter_for_intake(temp_wiki_root: Path) -> None:
@@ -764,3 +765,39 @@ def test_sync_pull_view_consumes_obsidian_frontmatter(temp_wiki_root: Path) -> N
     assert "frontmatter-cluster" in manifest
     assert "classification_confidence" in manifest
     assert "note summary" in manifest
+
+
+
+def test_sync_pull_view_slugifies_relative_path_for_same_name_files(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    external_dir = temp_wiki_root / "vault"
+    (external_dir / "agent-os").mkdir(parents=True)
+    (external_dir / "research").mkdir(parents=True)
+    (external_dir / "agent-os" / "2026-04-15_MCP协议.md").write_text("# Agent OS MCP", encoding="utf-8")
+    (external_dir / "research" / "2026-04-15_MCP协议.md").write_text("# Research MCP", encoding="utf-8")
+
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {"adapter": "obsidian", "mode": "read_write", "path": str(external_dir)}
+            ]
+        }
+    )
+
+    result = SyncService().execute(
+        wiki,
+        ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        SyncInput(mode="pull-view"),
+    )
+
+    assert (temp_wiki_root / "pages" / "agent-os_2026-04-15_MCP协议.md").exists()
+    assert (temp_wiki_root / "pages" / "research_2026-04-15_MCP协议.md").exists()
+    manifest = (temp_wiki_root / "MANIFEST.jsonl").read_text(encoding="utf-8")
+    assert '"doc_id": "agent-os_2026-04-15_MCP协议"' in manifest
+    assert '"doc_id": "research_2026-04-15_MCP协议"' in manifest
+    assert '"vault_relative_path": "agent-os/2026-04-15_MCP协议.md"' in manifest
+    assert '"vault_relative_path": "research/2026-04-15_MCP协议.md"' in manifest
+    assert "pages/agent-os_2026-04-15_MCP协议.md" in result.changed_files
+    assert "pages/research_2026-04-15_MCP协议.md" in result.changed_files

@@ -11,6 +11,7 @@ from agent_wiki.application.compile_update import CompileUpdateService
 from agent_wiki.application.feedback import FeedbackInput, FeedbackService
 from agent_wiki.application.linting import LintService
 from agent_wiki.application.maintenance import MaintenanceService
+from agent_wiki.application.migration import SlugifyDocIdsMigration
 from agent_wiki.application.quality_report import QualityReportService
 from agent_wiki.application.query import QueryService
 from agent_wiki.application.sync import SyncInput, SyncService
@@ -362,6 +363,29 @@ def approvals_reject(
         raise typer.BadParameter("--proposal-id is required")
     typer.echo("approval reject is not implemented in Phase 1")
     raise typer.Exit(code=1)
+
+
+@app.command("migrate")
+def migrate(
+    slugify_doc_ids: bool = typer.Option(False, "--slugify-doc-ids"),
+    workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
+) -> None:
+    def _command() -> None:
+        if not slugify_doc_ids:
+            raise ValueError("no migration selected")
+        if workspace and registry is None and wiki_id is None:
+            wiki_root = Path(workspace)
+        else:
+            wiki = _load_wiki(registry, workspace, wiki_id)
+            wiki_root = Path(wiki.workspace_path)
+        result = SlugifyDocIdsMigration().run(wiki_root)
+        typer.echo(f"changed_count={result.changed_count}")
+        if result.backup_path:
+            typer.echo(f"backup_path={result.backup_path}")
+
+    _run_cli(_command)
 
 
 @app.command("maintain")

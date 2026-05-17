@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.infrastructure.adapters.obsidian import ObsidianAdapter
+from agent_wiki.infrastructure.doc_id import doc_id_from_relative_path
 from agent_wiki.infrastructure.adapters.plain_markdown import PlainMarkdownAdapter
 from agent_wiki.infrastructure.identity.permissions import PermissionService
 from agent_wiki.infrastructure.intake.raw_intake import normalize_raw_intake
@@ -71,15 +72,15 @@ class SyncService:
             for source in external_path.rglob("*.md"):
                 if self._is_ignored_external_file(source, external_path):
                     continue
-                target = pages_root / source.name
+                vault_relative_path = str(source.relative_to(external_path))
+                doc_id = self._doc_id_for_pull_view_source(source, external_path)
+                target = pages_root / f"{doc_id}.md"
                 if target in seen_targets:
                     continue
                 document = adapter.read(str(source))
                 target.write_text(document["content"], encoding="utf-8")
                 changed_files.append(str(target.relative_to(wiki_root)))
                 seen_targets.add(target)
-                doc_id = source.stem
-                vault_relative_path = str(source.relative_to(external_path))
                 frontmatter = document.get("adapter_metadata", {}).get("frontmatter", {})
                 intake = normalize_raw_intake(
                     {
@@ -224,6 +225,13 @@ class SyncService:
                     "content": page_path.read_text(encoding="utf-8"),
                 })(),
             )
+
+
+    def _doc_id_for_pull_view_source(self, source: Path, external_root: Path) -> str:
+        relative_path = source.relative_to(external_root)
+        if len(relative_path.parts) == 1:
+            relative_path = Path(external_root.name) / relative_path
+        return doc_id_from_relative_path(relative_path)
 
     def _get_adapter(self, view: object) -> object:
         adapter_name = self._view_adapter(view)

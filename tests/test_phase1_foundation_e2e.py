@@ -34,14 +34,14 @@ def test_phase1_foundation_closed_loop(temp_wiki_root: Path) -> None:
 
     pull_result = SyncService().execute(wiki, actor, SyncInput(mode="pull-view"))
     assert pull_result.mode == "pull-view"
-    assert (temp_wiki_root / "pages" / "imported-raw-1.md").exists()
+    assert (temp_wiki_root / "pages" / "deploy_imported-raw-1.md").exists()
 
     manifest_entries = [
         json.loads(line)
         for line in (temp_wiki_root / "MANIFEST.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    imported_entry = next(entry for entry in manifest_entries if entry["doc_id"] == "imported-raw-1")
+    imported_entry = next(entry for entry in manifest_entries if entry["doc_id"] == "deploy_imported-raw-1")
     assert imported_entry["topic"] == "deployment"
     assert imported_entry["problem_cluster"] == "canary-release"
     assert imported_entry["summary"] == "Imported deployment evidence."
@@ -61,9 +61,9 @@ def test_phase1_foundation_closed_loop(temp_wiki_root: Path) -> None:
             aliases=["canary rollout"],
             confidence="high",
             contested=False,
-            wikilinks=["imported-raw-1"],
+            wikilinks=["deploy_imported-raw-1"],
             content="# Foundation Atom\n\nCompiled deployment guidance.",
-            source_refs=["personal-1:imported-raw-1"],
+            source_refs=["personal-1:deploy_imported-raw-1"],
         ),
     )
     assert compile_result.status == "committed"
