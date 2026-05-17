@@ -59,6 +59,14 @@ class TopicIndexRepository:
                 return row
         return None
 
+    def delete(self, doc_id: str) -> bool:
+        rows = self.read_all()
+        remaining = [row for row in rows if row.get("doc_id") != doc_id]
+        if len(remaining) == len(rows):
+            return False
+        self._write_all(remaining)
+        return True
+
     def _write_all(self, rows: list[dict]) -> None:
         lines = [_HEADER, _DIVIDER]
         for row in rows:

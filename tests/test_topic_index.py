@@ -43,3 +43,15 @@ def test_structured_index_provider_returns_hits_by_topic_and_summary(temp_wiki_r
     assert hits
     assert hits[0].doc_id == "atom-deploy-1"
     assert hits[0].score > 0
+
+
+
+def test_topic_index_repository_deletes_rows_by_doc_id(temp_wiki_root: Path) -> None:
+    repository = TopicIndexRepository(temp_wiki_root)
+    repository.upsert({"doc_id": "raw-1", "page_type": "raw", "topic": "ops", "problem_cluster": "ops", "summary": "one"})
+    repository.upsert({"doc_id": "raw-2", "page_type": "raw", "topic": "ops", "problem_cluster": "ops", "summary": "two"})
+
+    assert repository.delete("raw-1") is True
+    assert repository.find("raw-1") is None
+    assert repository.find("raw-2") is not None
+    assert repository.delete("raw-missing") is False

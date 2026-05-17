@@ -239,3 +239,50 @@ def test_maintenance_reports_metadata_repair_and_undercompiled_clusters(temp_wik
 
     assert summary["metadata_repair_candidates"] >= 1
     assert summary["compile_suggestions"] >= 1
+
+
+
+def test_maintenance_cleans_orphan_manifest_and_indexes(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    pages = temp_wiki_root / "pages"
+    pages.mkdir(exist_ok=True)
+    (pages / "raw-keep.md").write_text("# Keep\n\nKeep content.", encoding="utf-8")
+    (temp_wiki_root / "MANIFEST.jsonl").write_text(
+        '\n'.join([
+            json.dumps({"wiki_id": "personal-1", "doc_id": "raw-keep", "page_type": "raw", "topic": "ops", "problem_cluster": "cleanup", "summary": "keep", "canonical_uri": "pages/raw-keep.md"}),
+            json.dumps({"wiki_id": "personal-1", "doc_id": "raw-orphan", "page_type": "raw", "topic": "ops", "problem_cluster": "cleanup", "summary": "orphan", "canonical_uri": "pages/raw-orphan.md"}),
+        ]) + '\n',
+        encoding="utf-8",
+    )
+    (temp_wiki_root / "retrieval_index.jsonl").write_text(
+        '{"wiki_id":"personal-1","doc_id":"raw-keep","page_type":"raw","topic":"ops","problem_cluster":"cleanup","content":"keep"}\n'
+        '{"wiki_id":"personal-1","doc_id":"raw-orphan","page_type":"raw","topic":"ops","problem_cluster":"cleanup","content":"orphan"}\n',
+        encoding="utf-8",
+    )
+    (temp_wiki_root / "topic_index.md").write_text(
+        "| doc_id | page_type | topic | problem_cluster | summary |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| raw-keep | raw | ops | cleanup | keep |\n"
+        "| raw-orphan | raw | ops | cleanup | orphan |\n",
+        encoding="utf-8",
+    )
+
+    summary = MaintenanceService().run(wiki)
+
+    manifest = (temp_wiki_root / "MANIFEST.jsonl").read_text(encoding="utf-8")
+    retrieval = (temp_wiki_root / "retrieval_index.jsonl").read_text(encoding="utf-8")
+    topic_index = (temp_wiki_root / "topic_index.md").read_text(encoding="utf-8")
+    operations = [json.loads(line) for line in (temp_wiki_root / "operation_log.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    assert summary["orphan_cleanup_count"] == 1
+    assert "raw-keep" in manifest
+    assert "raw-orphan" not in manifest
+    assert "raw-keep" in retrieval
+    assert "raw-orphan" not in retrieval
+    assert "raw-keep" in topic_index
+    assert "raw-orphan" not in topic_index
+    assert any(entry.get("operation") == "orphan_cleanup" and entry.get("doc_id") == "raw-orphan" for entry in operations)

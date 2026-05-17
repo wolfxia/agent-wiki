@@ -46,6 +46,29 @@ class RetrievalIndexRepository:
         with self.index_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(card, ensure_ascii=False) + "\n")
 
+    def rebuild_from_manifest(self, manifest_entries: list[dict]) -> None:
+        wiki_root = self.index_path.parent
+        with self.index_path.open("w", encoding="utf-8") as handle:
+            for entry in manifest_entries:
+                canonical_uri = entry.get("canonical_uri")
+                if not canonical_uri:
+                    continue
+                page_path = wiki_root / str(canonical_uri)
+                if not page_path.exists() or not page_path.is_file():
+                    continue
+                card = {
+                    "wiki_id": entry.get("wiki_id"),
+                    "doc_id": entry.get("doc_id"),
+                    "page_type": entry.get("page_type"),
+                    "topic": entry.get("topic"),
+                    "problem_cluster": entry.get("problem_cluster"),
+                    "summary": entry.get("summary"),
+                    "content": page_path.read_text(encoding="utf-8"),
+                }
+                if entry.get("sensitivity") is not None:
+                    card["sensitivity"] = entry.get("sensitivity")
+                handle.write(json.dumps(card, ensure_ascii=False) + "\n")
+
     def lexical_search(self, query: str) -> list[RetrievalHit]:
         if not self.index_path.exists():
             return []

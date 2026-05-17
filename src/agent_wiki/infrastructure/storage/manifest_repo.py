@@ -38,3 +38,13 @@ class ManifestRepository:
             if entry["doc_id"] == doc_id:
                 return entry
         return None
+
+    def delete(self, doc_id: str) -> bool:
+        entries = self.read_all()
+        remaining = [entry for entry in entries if entry.get("doc_id") != doc_id]
+        if len(remaining) == len(entries):
+            return False
+        with self.manifest_path.open("w", encoding="utf-8") as handle:
+            for item in remaining:
+                handle.write(json.dumps(item, ensure_ascii=False) + "\n")
+        return True
