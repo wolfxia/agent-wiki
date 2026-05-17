@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+import os
+
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import IdentityContext
 
@@ -17,6 +21,13 @@ class IdentityResolver:
         else:
             actor_type = context.actor_type or metadata.get("actor_type")
             actor_id = context.actor_id or metadata.get("actor_id")
+
+        # Fallback to environment defaults when caller provides no identity
+        if not actor_type:
+            actor_type = os.environ.get("AGENT_WIKI_ACTOR_TYPE")
+        if not actor_id:
+            actor_id = os.environ.get("AGENT_WIKI_ACTOR_ID")
+
         if not actor_type or not actor_id:
             raise IdentityResolutionError("actor_type and actor_id are required")
         return ResolvedActor(actor_type=actor_type, actor_id=actor_id, transport=context.transport)
