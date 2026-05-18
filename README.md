@@ -53,6 +53,25 @@ aw health --registry /Users/chao/agent-wiki-data/registry.yaml
 aw query "MCP integration" --registry /Users/chao/agent-wiki-data/registry.yaml --wiki-id main
 ```
 
+Obsidian routing example:
+
+```yaml
+external_views:
+  - adapter: obsidian
+    mode: read_write
+    path: /path/to/vault
+    push_view_routing:
+      direction_folders:
+        agent-os: Agent OS
+      fallback_folders:
+        raw: raw
+        atom: atoms
+        synthesis: synthesis
+        principle: principles
+      graph_index_folder: knowledge-graph
+      graph_index_title: Knowledge Graph Index
+```
+
 Required environment variables:
 
 | Variable | Example | Meaning |
@@ -130,7 +149,7 @@ raw intake
 - Query ranking now exposes debug scores: `page_type_boost`, `lexical_score`, `structured_score`, `purpose_boost`, and `freshness`.
 - Index consistency health checks cover manifest, `retrieval_index.jsonl`, FTS, pages, and topic index consistency.
 - `aw migrate --normalize-doc-ids` lowercases and hyphenates old `doc_id`s, renames page files, updates source refs, and backs up `MANIFEST.jsonl`.
-- Obsidian `push-view` exports workspace pages by category: `raw -> 00-收件箱`, `atom + learning -> 01-学习笔记`, `synthesis -> 02-行业洞察`, `graph -> 04-知识图谱`.
+- Obsidian `push-view` exports workspace pages with configurable `push_view_routing`; generic defaults are `raw`, `atoms`, `synthesis`, `principles`, and `knowledge-graph`.
 - Obsidian frontmatter dates are sanitized so YAML dates do not break JSON serialization during `pull-view`.
 - Knowledge graph visualizer ships as `knowledge-graph.html`, using sigma.js, graphology, and ForceAtlas2.
 - MCP `wiki.capture_raw` bug fix prevents the previous `name summary not defined` failure.
@@ -200,8 +219,8 @@ Note: `registry.yaml` `coarse_provider` is design/configuration metadata today; 
 Obsidian is a human editing and reading surface, not the authority. The workspace remains authoritative.
 
 - `aw sync pull-view` reads Markdown files recursively, ignores `.obsidian` and trash folders, preserves vault-relative paths, sanitizes frontmatter, and imports successful raw pages into manifest and retrieval indexes.
-- `aw sync push-view` exports workspace pages to the vault with category routing and preserves frontmatter where possible.
-- The graph index and visual graph belong under `04-知识图谱` for human exploration.
+- `aw sync push-view` exports workspace pages to the vault with configurable category routing and preserves frontmatter where possible.
+- Obsidian graph index output defaults to `knowledge-graph/index.md`; vault-specific folders and titles belong in `external_views[].push_view_routing`.
 
 ## Repository Structure
 

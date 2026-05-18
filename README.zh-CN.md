@@ -107,11 +107,13 @@ Hermes 等 Agent 的首选集成路径仍是 MCP stdio；CLI 和 REST 主要服�
 | `aw compile-update` | Implemented | 写入或修订 atom / synthesis truth-zone 页面 |
 | `aw review-queue-consume` | Implemented | 分配指定类型的下一个 open review queue item |
 | `aw lint` | Implemented | 运行 manifest、index 与页面一致性检查 |
-| `aw sync status/pull-view/push-view` | Implemented | 检查、导入或导出外部 view |
+| `aw sync status/pull-view/push-view` | Implemented | 检查、导入或按 `push_view_routing` 配置导出外部 view |
 | `aw feedback` | Implemented | 记录反馈并按需创建 review queue item |
 | `aw weekly-review` | Implemented | 生成维护 review 摘要 |
 | `aw approvals propose/approve/reject` | Implemented | C 级 proposal workflow；`reject` 仍是占位命令 |
 | `aw maintain` | Implemented | 运行维护检查与 compile suggestion 入队 |
+
+`push_view_routing` 用于配置 Obsidian 导出路径，默认使用通用英文目录：`raw`、`atoms`、`synthesis`、`principles`、`knowledge-graph`。个人 vault 的中文目录或特定方向目录应写在 registry 的 `external_views[].push_view_routing` 中，而不是写在源码里。
 
 ## Core design principles
 

@@ -481,7 +481,7 @@ The approved next milestone sharpens that design boundary further:
 
 - `compile_update` still writes only internal authority/workspace artifacts
 - Obsidian export happens only through explicit `sync`
-- `push-view` for Obsidian gains adapter-aware export plus a derived graph index page under `04-知识图谱/知识图谱索引.md`
+- `push-view` for Obsidian gains adapter-aware export plus a configurable derived graph index page; the default is `knowledge-graph/index.md`
 
 #### 7.5 Candidate relations as differentiator
 
@@ -575,8 +575,8 @@ The current implementation in `src/agent_wiki/application/sync.py` supports:
 - optional `doc_ids` for incremental export
 - Obsidian frontmatter preservation on push-view
 - retrieval index, FTS, and `topic_index.md` updates on imported pages
-- category-routed Obsidian export (`raw -> 00-收件箱`, `atom + learning -> 01-学习笔记`, `synthesis -> 02-行业洞察`, `graph -> 04-知识图谱`)
-- derived graph index export at `04-知识图谱/知识图谱索引.md`
+- category-routed Obsidian export using `external_views[].push_view_routing`; generic defaults are `raw`, `atoms`, `synthesis`, `principles`, and `knowledge-graph`
+- derived graph index export at configurable `graph_index_folder/index.md`, defaulting to `knowledge-graph/index.md`
 
 ### Current boundary guarantee
 
@@ -584,7 +584,7 @@ The implemented design does **not** merge sync into compile. Instead it upgrades
 
 - `wiki.sync` is a first-class MCP tool alongside CLI `aw sync`
 - `push-view` remains explicit and may optionally target `doc_ids` for incremental export
-- Obsidian `push-view` exports a derived graph index page in `04-知识图谱/`
+- Obsidian `push-view` exports a derived graph index page to the configured graph index folder
 - the graph index remains an external-view artifact, not a new authority page type
 
 ### Deviation note

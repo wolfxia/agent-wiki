@@ -237,7 +237,7 @@ Target design remains:
 Current implementation note:
 - current Phase 1 sync is a copy-based markdown sync with `status`, `pull-view`, and `push-view`
 - adapter-driven reverse sync exists for markdown views, including recursive pull-view, `.obsidian` / trash ignores, frontmatter date sanitization, relative-path `doc_id`s, and index updates
-- Obsidian `push-view` category routing exists (`raw -> 00-收件箱`, `atom + learning -> 01-学习笔记`, `synthesis -> 02-行业洞察`, `graph -> 04-知识图谱`)
+- Obsidian `push-view` category routing exists through configurable `push_view_routing`; generic defaults use `raw`, `atoms`, `synthesis`, `principles`, and `knowledge-graph`
 - gate-to-Git promotion and commit orchestration remain future work
 
 ### 3.7 Pending and query policy
