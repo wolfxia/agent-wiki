@@ -19,6 +19,18 @@ wikis:
       coarse_provider: lexical
       optional_providers: [local_vector]
       route_priority: 80
+    dream_cycle:
+      enabled: true
+      schedule: "0 3 * * *"
+      synthesis:
+        min_atoms: 2
+        max_synthesis_per_run: 10
+        strength_threshold: 0.3
+      quality:
+        min_score: 50
+        staleness_days: 30
+      orphan:
+        report_path: .agent-wiki/dream_cycle_orphans.jsonl
     permissions:
       - actor_type: agent
         actor_id: hermes

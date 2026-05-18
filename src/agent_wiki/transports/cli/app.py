@@ -11,6 +11,7 @@ from agent_wiki.application.capture_raw import CaptureRawService
 from agent_wiki.application.compile_prepare import CompilePrepareInput, CompilePrepareService
 from agent_wiki.application.compile_execute import CompileExecuteInput, CompileExecuteService, CompileGeneratedInput
 from agent_wiki.application.compile_update import CompileUpdateService
+from agent_wiki.application.dream_cycle import DreamCycleService
 from agent_wiki.application.feedback import FeedbackInput, FeedbackService
 from agent_wiki.application.linting import LintService
 from agent_wiki.application.maintenance import MaintenanceService
@@ -459,6 +460,27 @@ def weekly_review(
         typer.echo(report.summary)
         for action in report.suggested_actions:
             typer.echo(action)
+
+    _run_cli(_command)
+
+
+@app.command("dream-cycle")
+def dream_cycle(
+    step: str | None = typer.Option(None, "--step", help="orphan, cross-ref, synthesis, or quality"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
+) -> None:
+    """Run Dream Cycle deep maintenance."""
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
+        summary = DreamCycleService().run(wiki=wiki, actor=_actor(), step=step, dry_run=dry_run)
+        for key, value in summary.items():
+            if isinstance(value, (list, dict)):
+                typer.echo(f"{key}={json.dumps(value, ensure_ascii=False, separators=(',', ':'))}")
+            else:
+                typer.echo(f"{key}={value}")
 
     _run_cli(_command)
 

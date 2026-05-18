@@ -340,6 +340,9 @@ Current implemented components:
 - `src/agent_wiki/application/sync.py`
 - `src/agent_wiki/application/feedback.py`
 - `src/agent_wiki/application/weekly_review.py`
+- `src/agent_wiki/application/dream_cycle.py`
+
+Dream Cycle is the deep maintenance subsystem behind `aw dream-cycle`. It runs four ordered steps over the same authority artifacts as the rest of the core: `orphan_scan` writes `.agent-wiki/dream_cycle_orphans.jsonl`, `cross_reference` groups related atom pages with zero-LLM keyword and graph analysis, `synthesis_generate` creates B-level synthesis pages from existing atom refs, and `quality_review` writes `quality_review` items into `review_queue.jsonl` for stale, underspecified, or broken compiled pages. Detection is deterministic; LLM use is reserved for synthesis body generation when `compile.llm` is configured.
 
 ### 5.5 Approvals and high-risk path
 

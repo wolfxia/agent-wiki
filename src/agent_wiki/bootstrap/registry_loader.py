@@ -46,6 +46,29 @@ class CompileConfig(BaseModel):
     llm: LLMConfig | None = None
 
 
+class DreamCycleSynthesisConfig(BaseModel):
+    min_atoms: int = 2
+    max_synthesis_per_run: int = 10
+    strength_threshold: float = 0.3
+
+
+class DreamCycleQualityConfig(BaseModel):
+    min_score: int = 50
+    staleness_days: int = 30
+
+
+class DreamCycleOrphanConfig(BaseModel):
+    report_path: str = ".agent-wiki/dream_cycle_orphans.jsonl"
+
+
+class DreamCycleConfig(BaseModel):
+    enabled: bool = True
+    schedule: str = "0 3 * * *"
+    synthesis: DreamCycleSynthesisConfig = Field(default_factory=DreamCycleSynthesisConfig)
+    quality: DreamCycleQualityConfig = Field(default_factory=DreamCycleQualityConfig)
+    orphan: DreamCycleOrphanConfig = Field(default_factory=DreamCycleOrphanConfig)
+
+
 class WikiConfig(BaseModel):
     wiki_id: str
     type: str
@@ -57,6 +80,7 @@ class WikiConfig(BaseModel):
     pending_query_policy: dict[str, str] = Field(default_factory=dict)
     retrieval: RetrievalConfig
     compile: CompileConfig = Field(default_factory=CompileConfig)
+    dream_cycle: DreamCycleConfig = Field(default_factory=DreamCycleConfig)
     permissions: list[PermissionConfig] = Field(default_factory=list)
 
 

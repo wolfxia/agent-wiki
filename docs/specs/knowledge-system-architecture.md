@@ -326,10 +326,32 @@ Maintenance must surface at least:
 - zero-hit queries
 - low-confidence raw classification backlog
 - raw clusters with high accumulation and low compile coverage
+- raw pages missing from compile suggestions
+- atom pages not referenced by synthesis pages or graph relations
 - compiled pages missing summary/aliases/source_refs
 - contradictions, disputes, and stale reviewed content
 
-### 7.3 Historical repair strategy
+### 7.3 Dream Cycle deep maintenance
+
+Dream Cycle is the long-cycle maintenance pass that complements the fast compile and feedback loops.
+
+```text
+aw dream-cycle
+  -> orphan_scan
+  -> cross_reference
+  -> synthesis_generate
+  -> quality_review
+```
+
+`orphan_scan` reads `MANIFEST.jsonl`, `review_queue.jsonl`, and `knowledge_graph.jsonl` to report raw pages that are not in compile suggestions and atom pages that are not referenced by synthesis or graph relations. The report is runtime state under `.agent-wiki/dream_cycle_orphans.jsonl`.
+
+`cross_reference` is deterministic. It extracts atom keywords from manifest fields, page frontmatter, titles, problem clusters, and graph relations, then emits candidate groups above a configured strength threshold.
+
+`synthesis_generate` is the only LLM-eligible step. It writes synthesis pages through the shared propagation path after B-level permission validation, and its `source_refs` must resolve to existing atom pages in the current wiki.
+
+`quality_review` scans atom and synthesis pages for missing frontmatter/schema, stale timestamps, broken source refs, and very short content, then writes `quality_review` tasks to `review_queue.jsonl`.
+
+### 7.4 Historical repair strategy
 
 When earlier imports created low-quality or pending-heavy raw state, the repair path is:
 

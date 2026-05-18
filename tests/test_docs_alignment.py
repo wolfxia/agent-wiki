@@ -60,6 +60,7 @@ def test_cli_help_surface_covers_documented_commands() -> None:
         "sync",
         "feedback",
         "weekly-review",
+        "dream-cycle",
         "approvals",
         "maintain",
     ]:

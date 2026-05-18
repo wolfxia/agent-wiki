@@ -8,7 +8,7 @@
 
 Agent Wiki is an agent-agnostic knowledge system for long-lived AI memory. It treats the workspace as the single source of truth, exposes a real FastMCP stdio server for agents, and keeps human-facing tools such as Obsidian as read-write views over the same authority model.
 
-Current data baseline: **1472 workspace pages**, **1488 manifest entries**, **383 indexed topics**, and **235 passing tests**.
+Current data baseline: **1472 workspace pages**, **1488 manifest entries**, **383 indexed topics**, and **319 passing tests**.
 
 ## Quick Integration Guide
 
@@ -188,6 +188,7 @@ compile:
 | `aw sync push-view` | Export workspace pages to external views |
 | `aw feedback` | Record query or content feedback |
 | `aw weekly-review` | Produce maintenance review summary |
+| `aw dream-cycle` | Run deep maintenance: orphan scan, cross-reference analysis, synthesis generation, and quality review |
 | `aw approvals propose/approve/reject` | C-level proposal workflow; `reject` is currently a placeholder and exits with code 1 |
 | `aw migrate --slugify-doc-ids` | Preserve vault relative path in doc ids |
 | `aw migrate --normalize-doc-ids` | Normalize doc ids to lowercase hyphen form |
@@ -287,7 +288,7 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
-Current verified suite: **235 passed**.
+Current verified suite: **319 passed**.
 
 Useful operational checks:
 
