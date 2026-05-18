@@ -18,6 +18,7 @@ class CompileSuggestService:
         manifest = ManifestRepository(wiki_root)
         pending = PendingStateRepository(wiki_root)
         purpose_reader = PurposeReader(wiki_root)
+        purpose = purpose_reader.read()
         entries = manifest.read_all()
 
         candidates: list[dict] = []
@@ -55,6 +56,9 @@ class CompileSuggestService:
                     "sub_cluster_id": self._sub_cluster_id(topic, problem_cluster, sub_cluster_index),
                     "raw_doc_ids": raw_doc_ids,
                     "purpose_aligned": purpose_reader.is_aligned(topic),
+                    "priority": 0 if self._topic_matches_p0(topic, purpose) else 1,
+                    "priority_label": "P0" if self._topic_matches_p0(topic, purpose) else "P1",
+                    "priority_reason": "purpose_aligned" if self._topic_matches_p0(topic, purpose) else "general",
                 })
 
         candidates.sort(
@@ -97,6 +101,9 @@ class CompileSuggestService:
                 "raw_count": candidate["raw_count"],
                 "cluster_raw_count": candidate.get("cluster_raw_count", candidate["raw_count"]),
                 "kind": candidate["kind"],
+                "priority": candidate.get("priority", 1),
+                "priority_label": candidate.get("priority_label", "P1"),
+                "priority_reason": candidate.get("priority_reason", "general"),
                 "sub_cluster_index": candidate.get("sub_cluster_index", 1),
                 "sub_cluster_id": candidate.get("sub_cluster_id"),
                 "raw_doc_ids": candidate.get("raw_doc_ids", []),
@@ -115,6 +122,14 @@ class CompileSuggestService:
 
     def _sub_cluster_id(self, topic: str, problem_cluster: str, index: int) -> str:
         return f"{slugify_doc_id(topic)}_{slugify_doc_id(problem_cluster)}_{index:04d}"
+
+    def _topic_matches_p0(self, topic: str, purpose: dict) -> bool:
+        normalized_topic = slugify_doc_id(topic).replace("-", "")
+        for purpose_topic in purpose.get("topics", []):
+            normalized_purpose_topic = slugify_doc_id(str(purpose_topic)).replace("-", "")
+            if normalized_topic == normalized_purpose_topic or normalized_topic in normalized_purpose_topic:
+                return True
+        return False
 
     def _metadata_repair_candidates(self, manifest_entries: list[dict], pending: PendingStateRepository) -> list[dict]:
         candidates: list[dict] = []

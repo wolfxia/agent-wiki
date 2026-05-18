@@ -210,3 +210,60 @@ def test_feedback_and_propagation_queue_items_include_core_schema_fields(temp_wi
         assert entry.get("priority") is not None
         assert entry.get("created_at")
         assert entry.get("content_state") is not None
+
+
+def test_review_queue_consume_uses_priority_then_created_at(temp_wiki_root: Path) -> None:
+    queue = ReviewQueueRepository(temp_wiki_root)
+    queue.append({
+        "item_id": "compile_suggestion:low",
+        "item_type": "compile_suggestion",
+        "status": "open",
+        "priority": 2,
+        "created_at": "2026-05-16T10:00:00Z",
+    })
+    queue.append({
+        "item_id": "compile_suggestion:p0-newer",
+        "item_type": "compile_suggestion",
+        "status": "open",
+        "priority": 0,
+        "priority_label": "P0",
+        "created_at": "2026-05-16T11:00:00Z",
+    })
+    queue.append({
+        "item_id": "compile_suggestion:p0-older",
+        "item_type": "compile_suggestion",
+        "status": "open",
+        "priority": 0,
+        "priority_label": "P0",
+        "created_at": "2026-05-16T09:00:00Z",
+    })
+
+    item = queue.consume("compile_suggestion", actor_id="claude-code")
+
+    assert item is not None
+    assert item["item_id"] == "compile_suggestion:p0-older"
+
+
+def test_review_queue_consume_supports_priority_filter(temp_wiki_root: Path) -> None:
+    queue = ReviewQueueRepository(temp_wiki_root)
+    queue.append({"item_id": "compile_suggestion:p1", "item_type": "compile_suggestion", "status": "open", "priority": 1, "priority_label": "P1"})
+    queue.append({"item_id": "compile_suggestion:p0", "item_type": "compile_suggestion", "status": "open", "priority": 0, "priority_label": "P0"})
+
+    item = queue.consume("compile_suggestion", actor_id="claude-code", priority_filter="P0")
+
+    assert item is not None
+    assert item["item_id"] == "compile_suggestion:p0"
+    assert queue.find("compile_suggestion:p1")["status"] == "open"
+
+
+def test_review_queue_can_mark_item_failed(temp_wiki_root: Path) -> None:
+    queue = ReviewQueueRepository(temp_wiki_root)
+    queue.append({"item_id": "compile_suggestion:fail", "item_type": "compile_suggestion", "status": "open"})
+    queue.consume("compile_suggestion", actor_id="claude-code")
+
+    assert queue.mark_failed("compile_suggestion:fail", "LLM output missing content") is True
+
+    stored = queue.find("compile_suggestion:fail")
+    assert stored["status"] == "failed"
+    assert stored["last_error"] == "LLM output missing content"
+    assert stored["failed_at"]

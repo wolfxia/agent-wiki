@@ -363,3 +363,35 @@ def test_detect_and_enqueue_removes_old_format_compile_suggestions(temp_wiki_roo
         ],
         "sub_cluster_index": 1,
     }
+
+
+def test_compile_suggestions_prioritize_purpose_aligned_clusters(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    (temp_wiki_root / "purpose.md").write_text(
+        "# Purpose\n\n## Topics\n\n- imaging-os\n- agent-os\n",
+        encoding="utf-8",
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    capture_service = CaptureRawService()
+    for topic, prefix in [("imaging-os", "p0"), ("misc-topic", "p1")]:
+        for index in range(3):
+            capture_service.execute(
+                wiki=wiki,
+                actor=actor,
+                data=CaptureRawInput(
+                    doc_id=f"raw-{prefix}-{index}",
+                    topic=topic,
+                    problem_cluster="cluster-priority",
+                    content=f"# Raw {topic} {index}",
+                    source_refs=[],
+                ),
+            )
+
+    candidates = CompileSuggestService().detect(wiki)
+
+    assert candidates[0]["topic"] == "imaging-os"
+    assert candidates[0]["priority"] == 0
+    assert candidates[0]["priority_label"] == "P0"
+    assert candidates[1]["priority"] == 1
