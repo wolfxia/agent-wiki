@@ -302,6 +302,101 @@ def test_compile_apply_service_defaults_timeout_to_120(monkeypatch, temp_wiki_ro
     assert captured["timeout"] == 120
 
 
+def test_compile_apply_service_retries_timeout_then_succeeds(monkeypatch, temp_wiki_root: Path) -> None:
+    wiki, _actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-llm-retry-timeout")
+    wiki = wiki.model_copy(
+        update={
+            "compile": {
+                "llm": {
+                    "base_url": "https://llm.example/v1",
+                    "api_key_env": "TEST_LLM_API_KEY",
+                    "model": "test-model",
+                }
+            }
+        }
+    )
+    packet = CompileExecuteService().prepare_next(
+        wiki=wiki,
+        actor=_actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )[0]
+    attempts = 0
+    slept: list[int] = []
+
+    def fake_post(url: str, *, headers: dict, json: dict, timeout: float):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise TimeoutError("request timed out")
+
+        class Response:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict:
+                return {"choices": [{"message": {"content": "# Retry Atom\n\nClaim: retry succeeded."}}]}
+
+        return Response()
+
+    monkeypatch.setenv("TEST_LLM_API_KEY", "secret-token")
+
+    content = CompileApplyService(http_post=fake_post, sleep=slept.append).generate(wiki, packet.prepare)
+
+    assert content == "# Retry Atom\n\nClaim: retry succeeded."
+    assert attempts == 3
+    assert slept == [10, 30]
+
+
+def test_compile_apply_service_retries_5xx_but_not_4xx(monkeypatch, temp_wiki_root: Path) -> None:
+    import httpx
+
+    wiki, _actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-llm-retry-http")
+    wiki = wiki.model_copy(
+        update={
+            "compile": {
+                "llm": {
+                    "base_url": "https://llm.example/v1",
+                    "api_key_env": "TEST_LLM_API_KEY",
+                    "model": "test-model",
+                }
+            }
+        }
+    )
+    packet = CompileExecuteService().prepare_next(
+        wiki=wiki,
+        actor=_actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )[0]
+    statuses = [500, 502, 400]
+    slept: list[int] = []
+
+    def fake_post(url: str, *, headers: dict, json: dict, timeout: float):
+        status = statuses.pop(0)
+        request = httpx.Request("POST", url)
+        response = httpx.Response(status, request=request)
+
+        class Response:
+            def raise_for_status(self) -> None:
+                raise httpx.HTTPStatusError("bad response", request=request, response=response)
+
+            def json(self) -> dict:
+                return {}
+
+        return Response()
+
+    monkeypatch.setenv("TEST_LLM_API_KEY", "secret-token")
+
+    try:
+        CompileApplyService(http_post=fake_post, sleep=slept.append).generate(wiki, packet.prepare)
+    except httpx.HTTPStatusError as exc:
+        assert exc.response.status_code == 400
+    else:
+        raise AssertionError("expected 400 response to escape without retry")
+
+    assert slept == [10, 30]
+    assert statuses == []
+
+
 def test_compile_execute_apply_next_generates_applies_and_resolves(temp_wiki_root: Path) -> None:
     wiki, actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-apply-next")
 

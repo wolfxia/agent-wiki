@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -12,8 +13,17 @@ from agent_wiki.bootstrap.registry_loader import WikiConfig
 
 
 class CompileApplyService:
-    def __init__(self, http_post: Callable[..., Any] | None = None) -> None:
+    def __init__(
+        self,
+        http_post: Callable[..., Any] | None = None,
+        sleep: Callable[[int], Any] | None = None,
+        max_retries: int = 3,
+        retry_delays: list[int] | None = None,
+    ) -> None:
         self._http_post = http_post or httpx.post
+        self._sleep = sleep or time.sleep
+        self._max_retries = max_retries
+        self._retry_delays = retry_delays or [10, 30, 60]
 
     def generate(self, wiki: WikiConfig, prepare_result: CompilePrepareResult) -> str:
         llm = self._llm_config(wiki)
@@ -25,7 +35,7 @@ class CompileApplyService:
             raise ValueError(f"missing LLM API key environment variable: {api_key_env}")
 
         prompt = self._build_prompt(prepare_result)
-        response = self._http_post(
+        response = self._post_with_retries(
             self._chat_completions_url(str(self._config_value(llm, "base_url"))),
             headers={
                 "Authorization": f"Bearer {api_key}",
@@ -50,6 +60,33 @@ class CompileApplyService:
         )
         response.raise_for_status()
         return self._extract_content(response.json())
+
+
+    def _post_with_retries(self, url: str, **kwargs: Any) -> Any:
+        attempt = 0
+        while True:
+            try:
+                response = self._http_post(url, **kwargs)
+                response.raise_for_status()
+                return response
+            except (httpx.TimeoutException, TimeoutError) as exc:
+                if not self._should_retry(attempt):
+                    raise
+                self._sleep_before_retry(attempt)
+                attempt += 1
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code
+                if status_code < 500 or not self._should_retry(attempt):
+                    raise
+                self._sleep_before_retry(attempt)
+                attempt += 1
+
+    def _should_retry(self, attempt: int) -> bool:
+        return attempt < self._max_retries
+
+    def _sleep_before_retry(self, attempt: int) -> None:
+        delay = self._retry_delays[min(attempt, len(self._retry_delays) - 1)]
+        self._sleep(delay)
 
 
     def _llm_config(self, wiki: WikiConfig) -> Any | None:
