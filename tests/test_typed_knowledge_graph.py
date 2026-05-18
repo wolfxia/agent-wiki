@@ -6,6 +6,7 @@ from agent_wiki.application.maintenance import MaintenanceService
 from agent_wiki.application.query import QueryInput, QueryService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
+from agent_wiki.infrastructure.retrieval.knowledge_graph import RelationExtractor, RelationTypeDefinition
 
 
 def _wiki(temp_wiki_root: Path):
@@ -159,3 +160,104 @@ def test_query_can_use_each_configured_relation_type(temp_wiki_root: Path) -> No
         result = QueryService().execute(wiki=wiki, actor=_actor(), data=QueryInput(query=query))
         assert result.hits[0].doc_id == expected_doc_id
         assert result.hits[0].section == "knowledge_graph"
+
+
+def _extractor(*definitions: RelationTypeDefinition) -> RelationExtractor:
+    return RelationExtractor(list(definitions))
+
+
+def test_relation_extractor_ignores_markdown_table_rows() -> None:
+    extractor = _extractor(
+        RelationTypeDefinition(
+            name="depends_on",
+            patterns=(r"(?P<a>.+?) depends on (?P<b>.+)",),
+            subject_type="technology",
+            object_type="technology",
+        )
+    )
+
+    relations = extractor.extract(
+        text="| **路径规划** | depends on SLAM 地图的路径规划 |",
+        source_doc_id="raw-markdown-table",
+        extracted_at="2026-05-18T00:00:00Z",
+    )
+
+    assert relations == []
+
+
+def test_relation_extractor_ignores_list_markers_as_entities() -> None:
+    extractor = _extractor(
+        RelationTypeDefinition(
+            name="depends_on",
+            patterns=(r"(?P<a>.+?) depends on (?P<b>.+)",),
+            subject_type="technology",
+            object_type="technology",
+        )
+    )
+
+    relations = extractor.extract(
+        text=(
+            "- token depends on h\n"
+            "1. **系统定位** - depends on Android 16\n"
+            "TensorRT depends on CUDA\n"
+        ),
+        source_doc_id="raw-list-markers",
+        extracted_at="2026-05-18T00:00:00Z",
+    )
+
+    assert [(relation["subject"], relation["object"]) for relation in relations] == [("TensorRT", "CUDA")]
+
+
+def test_relation_extractor_filters_empty_single_character_and_symbol_entities() -> None:
+    extractor = _extractor(
+        RelationTypeDefinition(
+            name="works_at",
+            patterns=(r"(?P<person>.*?) works at (?P<org>.+)",),
+            subject_type="person",
+            object_type="organization",
+        )
+    )
+
+    relations = extractor.extract(
+        text=(
+            " works at OpenAI\n"
+            "A works at OpenAI\n"
+            "> works at A\n"
+            "Ada Lovelace works at Analytical Engines Lab\n"
+        ),
+        source_doc_id="raw-short-entities",
+        extracted_at="2026-05-18T00:00:00Z",
+    )
+
+    assert [(relation["subject"], relation["object"]) for relation in relations] == [
+        ("Ada Lovelace", "Analytical Engines Lab")
+    ]
+
+
+def test_relation_extractor_keeps_meaningful_chinese_relations() -> None:
+    extractor = _extractor(
+        RelationTypeDefinition(
+            name="competes_with",
+            patterns=(r"(?P<a>[\u4e00-\u9fffA-Za-z0-9][\u4e00-\u9fffA-Za-z0-9 ._-]*?) (?:与|和) (?P<b>[\u4e00-\u9fffA-Za-z0-9][\u4e00-\u9fffA-Za-z0-9 ._-]*?) (?:竞争|对标)",),
+            subject_type="organization",
+            object_type="organization",
+            symmetric=True,
+        ),
+        RelationTypeDefinition(
+            name="depends_on",
+            patterns=(r"(?P<a>[\u4e00-\u9fffA-Za-z0-9][\u4e00-\u9fffA-Za-z0-9 ._-]*?) (?:依赖|基于) (?P<b>[\u4e00-\u9fffA-Za-z0-9][\u4e00-\u9fffA-Za-z0-9 ._-]*)",),
+            subject_type="technology",
+            object_type="technology",
+        ),
+    )
+
+    relations = extractor.extract(
+        text="华为 与 苹果 竞争\n鸿蒙 依赖 Linux",
+        source_doc_id="raw-chinese-relations",
+        extracted_at="2026-05-18T00:00:00Z",
+    )
+
+    relation_keys = {(relation["subject"], relation["relation"], relation["object"]) for relation in relations}
+    assert ("华为", "competes_with", "苹果") in relation_keys
+    assert ("苹果", "competes_with", "华为") in relation_keys
+    assert ("鸿蒙", "depends_on", "Linux") in relation_keys

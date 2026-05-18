@@ -111,8 +111,42 @@ class RelationExtractor:
     def _clean_entity(self, value: str | None) -> str:
         if value is None:
             return ""
-        cleaned = re.sub(r"\s+", " ", value).strip()
-        return cleaned.strip(" #\t\r\n.,;:!?，。；：！？[]()（）\"\'")
+        original = re.sub(r"\s+", " ", value).strip()
+        if self._has_markdown_boundary_noise(original):
+            return ""
+
+        cleaned = self._remove_inline_markdown(original)
+        cleaned = cleaned.strip(" #\t\r\n.,;:!?，。；：！？[]()（）\"\'")
+        if not self._is_meaningful_entity(cleaned):
+            return ""
+        return cleaned
+
+    def _has_markdown_boundary_noise(self, value: str) -> bool:
+        if "|" in value:
+            return True
+        return bool(re.match(r"^(?:[-*+]\s+|\d+\.\s+|#+\s+|>\s*)", value))
+
+    def _remove_inline_markdown(self, value: str) -> str:
+        cleaned = value
+        cleaned = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", cleaned)
+        cleaned = re.sub(r"\[\[([^\]]+)\]\]", r"\1", cleaned)
+        cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", cleaned)
+        cleaned = re.sub(r"__([^_]+)__", r"\1", cleaned)
+        cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
+        return re.sub(r"\s+", " ", cleaned).strip()
+
+    def _is_meaningful_entity(self, value: str) -> bool:
+        if len(value) < 2:
+            return False
+        if "|" in value:
+            return False
+        if re.match(r"^(?:[-*+]\s+|\d+\.\s+|#+\s+|>\s*)", value):
+            return False
+        if re.search(r"(?:^|\s)-$", value):
+            return False
+        if not re.search(r"[A-Za-z0-9\u4e00-\u9fff]", value):
+            return False
+        return True
 
 
 class KnowledgeGraphRepository:
