@@ -135,6 +135,9 @@ def serve(
     registry: str | None = typer.Option(None, "--registry"),
 ) -> None:
     """Start the long-running agent-wiki MCP stdio service."""
+    # The SIGALRM timer set in main() will kill the process after 300s.
+    # `serve` is a long-running daemon — cancel the timer immediately.
+    signal.alarm(0)
     if workspace:
         os.environ["AGENT_WIKI_WORKSPACE"] = workspace
     run_stdio_server(registry_path=registry)
