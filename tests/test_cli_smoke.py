@@ -628,3 +628,128 @@ def test_cli_health_reports_index_consistency_anomaly(temp_wiki_root) -> None:
     assert result.exit_code == 0
     assert "index_consistency=fail" in result.stdout
     assert "rebuild retrieval indexes" in result.stdout.lower()
+
+
+def test_cli_compile_execute_prints_packet_json(temp_wiki_root) -> None:
+    import json
+    from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+    from agent_wiki.bootstrap.registry_loader import RegistryLoader
+    from agent_wiki.domain.contracts import ResolvedActor
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    (temp_wiki_root / "purpose.md").write_text(
+        "# Purpose\n\n## Topics\n\n- imaging-os\n",
+        encoding="utf-8",
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    for index in range(3):
+        CaptureRawService().execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-execute-{index}",
+                topic="imaging-os",
+                problem_cluster="cluster-execute",
+                content=f"# Raw execute {index}\n\nClaim: execute {index}.",
+                source_refs=[],
+            ),
+        )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "compile-execute",
+            "--limit",
+            "1",
+            "--priority-filter",
+            "P0",
+            "--workspace",
+            str(temp_wiki_root),
+            "--registry",
+            "tests/fixtures/registry.yaml",
+        ],
+        env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"},
+    )
+
+    assert result.exit_code == 0
+    packet = json.loads(result.stdout.strip().splitlines()[-1])
+    assert packet["item_type"] == "compile_suggestion"
+    assert packet["priority_label"] == "P0"
+    assert packet["prepare"]["agent_objective"] == "create_retrieval_ready_atom"
+
+
+def test_cli_compile_execute_applies_input_file_and_resolves_queue_item(temp_wiki_root) -> None:
+    import json
+    from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+    from agent_wiki.bootstrap.registry_loader import RegistryLoader
+    from agent_wiki.domain.contracts import ResolvedActor
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    (temp_wiki_root / "purpose.md").write_text(
+        "# Purpose\n\n## Topics\n\n- imaging-os\n",
+        encoding="utf-8",
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    for index in range(3):
+        CaptureRawService().execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-execute-input-{index}",
+                topic="imaging-os",
+                problem_cluster="cluster-execute-input",
+                content=f"# Raw execute input {index}\n\nClaim: compile execution {index}.",
+                source_refs=[],
+            ),
+        )
+
+    packet_result = CliRunner().invoke(
+        app,
+        [
+            "compile-execute",
+            "--limit",
+            "1",
+            "--priority-filter",
+            "P0",
+            "--workspace",
+            str(temp_wiki_root),
+            "--registry",
+            "tests/fixtures/registry.yaml",
+        ],
+        env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"},
+    )
+    packet = json.loads(packet_result.stdout.strip().splitlines()[-1])
+    payload = {
+        "item_id": packet["item_id"],
+        "doc_id": packet["prepare"]["proposed_doc_id"],
+        "page_type": packet["prepare"]["proposed_page_type"],
+        "topic": packet["prepare"]["topic"],
+        "problem_cluster": packet["prepare"]["problem_cluster"],
+        "source_refs": packet["prepare"]["source_refs"],
+        "content": "# Atom compiled\n\nClaim: compile execution.",
+    }
+    input_path = temp_wiki_root / "compiled.json"
+    input_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "compile-execute",
+            "--input-file",
+            str(input_path),
+            "--workspace",
+            str(temp_wiki_root),
+            "--registry",
+            "tests/fixtures/registry.yaml",
+        ],
+        env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"},
+    )
+
+    assert result.exit_code == 0
+    assert "status=committed" in result.stdout
+    assert "queue_status=resolved" in result.stdout
+    assert (temp_wiki_root / "pages" / f"{payload['doc_id']}.md").exists()

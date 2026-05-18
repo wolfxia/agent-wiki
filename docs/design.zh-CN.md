@@ -170,7 +170,7 @@ Phase 1 采用的组合是：
 
 - **粒度：先做 sub-cluster。** 大型 `(topic, problem_cluster)` 会被确定性地拆成 sub-cluster。每个 sub-cluster 先准备为一个 `atom` 候选；同 cluster 下的 atoms 后续再支撑 synthesis。
 - **触发：maintain 负责准备与入队。** `maintain` 检测可编译 cluster，并写入带有 raw doc ids 的 review queue 工作项。它不会直接创建 truth-zone 页面。
-- **内容生成：Agent 驱动。** `wiki.compile_prepare` 返回面向 Agent 的 evidence packet：有界 raw 证据、候选 claims、关系提示、矛盾标记、source refs 与建议输出元数据。Hermes、Claude Code 或其他 Agent 负责写实际编译内容，并调用 `wiki.compile_update`。
+- **内容生成：Agent 驱动。** `wiki.compile_prepare` 返回面向 Agent 的 evidence packet：有界 raw 证据、候选 claims、关系提示、矛盾标记、source refs 与建议输出元数据。`aw compile-execute` 作为 queue 与外部 cron worker 之间的 CLI 桥接：它分配 suggestion 并输出 JSON packet，再通过 `--input-file` 接收外部生成内容并调用 `wiki.compile_update`。Hermes、Claude Code 或其他 Agent 在 Agent Wiki 外部负责实际 LLM 生成。
 - **增量策略：delta atom，后续再修订 synthesis。** 新 raw 证据产生新的 atom 候选。synthesis 修订仍是独立的 B 级 compile update，不是自动副作用。
 - **source refs：由准备阶段自动收集。** prepare 输出 `wiki_id:doc_id` 引用，compile suggestion 也携带同一组 doc ids，保证编译页可追踪到 Git 中的 raw 页。
 
@@ -179,6 +179,7 @@ Phase 1 采用的组合是：
 Phase 1 实现边界：
 
 - `wiki.compile_prepare` 是共享服务层上的只读 MCP 工具。
+- `aw compile-execute` 是面向 cron worker 的 CLI-only executor bridge；它不引入 LLM 依赖。
 - CLI/REST 可以暴露同一服务给 operator 和 dashboard 使用，但 MCP 仍是主要 Agent 接口。
 - review queue consume 只改变状态（`open -> assigned -> in_progress -> resolved -> archived`）并记录 consumer；它不会自己生成编译内容。
 - `compile_update.analyze()` 保持基础 create/revise 启发式。自动编译准备应传递明确的建议 doc id 与 source refs，而不是只依赖 analyze 来决定批处理边界。

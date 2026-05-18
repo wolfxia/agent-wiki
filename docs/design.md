@@ -202,7 +202,7 @@ Chosen Phase 1 combination:
 
 - **Granularity: sub-cluster first.** A large `(topic, problem_cluster)` is split into deterministic sub-clusters. Each sub-cluster is prepared as an `atom` candidate; atoms can later support a synthesis for the broader cluster.
 - **Trigger: maintain prepares and queues.** `maintain` detects compile-ready clusters and writes review queue work items that contain enough raw doc ids for an agent to act. It does not directly create truth-zone pages.
-- **Content generation: agent-driven.** `wiki.compile_prepare` returns an agent-facing evidence packet: bounded raw evidence, extracted claim candidates, relationship hints, contradiction markers, source refs, and proposed output metadata. Hermes, Claude Code, or another agent writes the actual compiled content and calls `wiki.compile_update`.
+- **Content generation: agent-driven.** `wiki.compile_prepare` returns an agent-facing evidence packet: bounded raw evidence, extracted claim candidates, relationship hints, contradiction markers, source refs, and proposed output metadata. `aw compile-execute` bridges the queue to external cron workers: it claims suggestions and emits JSON packets, then accepts generated content through `--input-file` and applies `wiki.compile_update`. Hermes, Claude Code, or another agent owns the actual LLM generation outside Agent Wiki.
 - **Incremental strategy: delta atom plus later synthesis revision.** New raw evidence creates additional atom candidates. Synthesis revision remains a separate B-level compile update, not an automatic side effect.
 - **Source refs: automatic from prepared raw pages.** Prepared items expose `wiki_id:doc_id` refs, and compile suggestions carry the same doc ids so compiled pages stay traceable to Git-tracked raw pages.
 
@@ -211,6 +211,7 @@ This design answers the current backlog problem without making `maintain` fabric
 Implementation boundaries for Phase 1:
 
 - `wiki.compile_prepare` is a read-only MCP tool over the shared service layer.
+- `aw compile-execute` is a CLI-only executor bridge for cron workers; it does not contain an LLM dependency.
 - CLI/REST may expose the same service for operator and dashboard use, but MCP is the primary agent interface.
 - Review queue consumption changes state (`open -> assigned -> in_progress -> resolved -> archived`) and records the consumer; it does not execute compile content generation by itself.
 - `compile_update.analyze()` stays a baseline revise/create heuristic. Automatic compile preparation should pass explicit proposed doc ids and source refs rather than relying on analyze alone for batching decisions.

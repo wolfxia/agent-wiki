@@ -43,7 +43,7 @@ capture_raw → compile_update → query → lint → sync → weekly-review
 
 ![编译管道](docs/architecture/compile-pipeline.svg)
 
-编译管道把 raw 证据转换为 Agent 工作记忆。主目标是提升 Agent 的检索、推理与二阶整理质量；给人阅读只是次级收益。完整路径是：raw intake → `compile_prepare` → review queue → Agent 生成并调用 `compile_update` → truth zone → 更好的 retrieval。
+编译管道把 raw 证据转换为 Agent 工作记忆。主目标是提升 Agent 的检索、推理与二阶整理质量；给人阅读只是次级收益。完整路径是：raw intake → review queue → `aw compile-execute` 输出 `compile_prepare` JSON → 外部 Agent/LLM 生成内容 → `aw compile-execute --input-file` 调用 `compile_update` → truth zone → 更好的 retrieval。
 
 > 说明：以上图表位于仓库 `docs/architecture/` 下，反映当前 Phase 1 实现方向；部分未来的 MCP/REST 与更丰富的传播行为仍以设计目标形式记录。
 
@@ -75,7 +75,7 @@ capture_raw → compile_update → query → lint → sync → weekly-review
 当前实现已经提供三类共享核心之上的薄接口：
 
 - MCP stdio：`wiki.query`、`wiki.capture_raw`、`wiki.compile_prepare`、`wiki.compile_update`、`wiki.lint`、`wiki.sync`
-- CLI：`aw query`、`aw capture-raw`、`aw compile-prepare`、`aw compile-update`、`aw review-queue-consume`、`aw lint`、`aw sync`、`aw feedback`、`aw weekly-review`、`aw approvals`、`aw maintain`
+- CLI：`aw query`、`aw capture-raw`、`aw compile-prepare`、`aw compile-execute`、`aw compile-update`、`aw review-queue-consume`、`aw lint`、`aw sync`、`aw feedback`、`aw weekly-review`、`aw approvals`、`aw maintain`
 - REST：query、capture、compile prepare/update、review queue consume、lint、sync、feedback、weekly review、approvals 与 health
 
 Hermes 等 Agent 的首选集成路径仍是 MCP stdio；CLI 和 REST 主要服务本地工具、测试和人工运维。
@@ -103,6 +103,7 @@ Hermes 等 Agent 的首选集成路径仍是 MCP stdio；CLI 和 REST 主要服�
 | `aw query` | Implemented | 查询知识库 |
 | `aw capture-raw` | Implemented | 捕获 raw source 或学习笔记 |
 | `aw compile-prepare` | Implemented | 生成面向 Agent 的编译 evidence packet |
+| `aw compile-execute` | Implemented | 分配 compile suggestion，输出 JSON evidence packet，或从 `--input-file` 应用外部生成内容 |
 | `aw compile-update` | Implemented | 写入或修订 atom / synthesis truth-zone 页面 |
 | `aw review-queue-consume` | Implemented | 分配指定类型的下一个 open review queue item |
 | `aw lint` | Implemented | 运行 manifest、index 与页面一致性检查 |

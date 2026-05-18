@@ -111,18 +111,18 @@ The compile pipeline turns raw evidence into agent working memory. Its primary g
 
 ```text
 raw intake
-  -> compile_prepare
-       -> agent-facing evidence packet
-          claims, relationship hints, contradiction markers, source_refs
   -> review_queue compile_suggestion
-       -> open -> assigned -> in_progress -> resolved -> archived
+       -> priority ordered open work items
+  -> aw compile-execute
+       -> claims compile_suggestion and emits compile_prepare JSON
+       -> external agent writes content and calls back with --input-file
   -> agent-authored compile_update
        -> atom / synthesis truth zone
   -> retrieval indexes
        -> better query answers and second-order curation
 ```
 
-`wiki.compile_prepare` is read-only. It prepares bounded raw batches and traceable source refs, but it does not generate truth-zone prose inside Agent Wiki. Agents such as Hermes or Claude Code consume the packet, write the semantic synthesis, and call `wiki.compile_update`.
+`wiki.compile_prepare` is read-only. It prepares bounded raw batches and traceable source refs, but it does not generate truth-zone prose inside Agent Wiki. `aw compile-execute` is the CLI bridge for external cron workers: without `--input-file` it claims suggestions and prints evidence packets as JSON; with `--input-file` it applies generated content through `compile_update` and resolves or fails the queue item. The LLM call remains outside Agent Wiki.
 
 ## What Is New In v0.2.0
 
@@ -147,6 +147,7 @@ raw intake
 | `aw query` | Query the knowledge base |
 | `aw capture-raw` | Capture raw source or learning note |
 | `aw compile-prepare` | Prepare agent-facing raw evidence packets for compilation |
+| `aw compile-execute` | Claim compile suggestions, emit JSON packets, or apply generated content from `--input-file` |
 | `aw compile-update` | Create or revise compiled truth-zone pages |
 | `aw review-queue-consume` | Assign the next open review queue item of a given type |
 | `aw lint` | Run consistency checks |

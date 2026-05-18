@@ -3,6 +3,7 @@ from pathlib import Path
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import CaptureRawInput, CaptureResult
+from agent_wiki.application.compile_suggest import CompileSuggestService
 from agent_wiki.application.propagation import PropagationService
 from agent_wiki.infrastructure.identity.permissions import PermissionService
 from agent_wiki.domain.validators import validate_doc_id
@@ -25,4 +26,7 @@ class CaptureRawService:
             validate_doc_id(normalized.doc_id)
         except ValueError:
             return propagation_service.record_pending_capture_raw(wiki=wiki, actor=actor, data=normalized)
-        return propagation_service.propagate_capture_raw(wiki=wiki, actor=actor, data=normalized)
+        result = propagation_service.propagate_capture_raw(wiki=wiki, actor=actor, data=normalized)
+        if result.status == "committed" and normalized.topic and normalized.problem_cluster:
+            CompileSuggestService().detect_and_enqueue(wiki)
+        return result

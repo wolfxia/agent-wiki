@@ -130,3 +130,41 @@ def test_capture_raw_persists_normalized_metadata(temp_wiki_root: Path) -> None:
     manifest = (temp_wiki_root / "MANIFEST.jsonl").read_text(encoding="utf-8")
     assert "raw-intake-1" in manifest
     assert "classification_confidence" in manifest
+
+
+def test_capture_raw_enqueues_compile_suggestion_when_cluster_reaches_threshold(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    (temp_wiki_root / "purpose.md").write_text(
+        "# Purpose\n\n## Topics\n\n- imaging-os\n",
+        encoding="utf-8",
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    for index in range(3):
+        CaptureRawService().execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-capture-trigger-{index}",
+                topic="imaging-os",
+                problem_cluster="capture-trigger",
+                content=f"# Raw capture trigger {index}",
+                source_refs=[],
+            ),
+        )
+
+    queue_entries = [
+        json.loads(line)
+        for line in (temp_wiki_root / "review_queue.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    suggestion = next(entry for entry in queue_entries if entry.get("item_type") == "compile_suggestion")
+    assert suggestion["item_id"] == "compile_suggestion:imaging-os:capture-trigger:0001"
+    assert suggestion["priority_label"] == "P0"
+    assert suggestion["raw_doc_ids"] == [
+        "raw-capture-trigger-0",
+        "raw-capture-trigger-1",
+        "raw-capture-trigger-2",
+    ]

@@ -9,6 +9,7 @@ import typer
 from agent_wiki.application.approvals import ApprovalService
 from agent_wiki.application.capture_raw import CaptureRawService
 from agent_wiki.application.compile_prepare import CompilePrepareInput, CompilePrepareService
+from agent_wiki.application.compile_execute import CompileExecuteInput, CompileExecuteService, CompileGeneratedInput
 from agent_wiki.application.compile_update import CompileUpdateService
 from agent_wiki.application.feedback import FeedbackInput, FeedbackService
 from agent_wiki.application.linting import LintService
@@ -255,6 +256,42 @@ def compile_prepare(
         typer.echo(f"total_raw_count={result.total_raw_count}")
         for item in result.items:
             typer.echo(f"source_ref={item.source_ref} doc_id={item.doc_id}")
+
+    _run_cli(_command)
+
+
+@app.command("compile-execute")
+def compile_execute(
+    limit: int = typer.Option(1, "--limit"),
+    priority_filter: str | None = typer.Option(None, "--priority-filter"),
+    input_file: Path | None = typer.Option(None, "--input-file"),
+    workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
+) -> None:
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
+        actor = _actor()
+        service = CompileExecuteService()
+        if input_file is not None:
+            payload = json.loads(input_file.read_text(encoding="utf-8"))
+            result = service.apply_generated(
+                wiki=wiki,
+                actor=actor,
+                data=CompileGeneratedInput.model_validate(payload),
+            )
+            queue_item = ReviewQueueRepository(Path(wiki.workspace_path)).find(str(payload.get("item_id")))
+            typer.echo(f"status={result.status} doc_id={result.doc_id}")
+            typer.echo(f"queue_status={queue_item.get('status') if queue_item else 'missing'}")
+            return
+
+        packets = service.prepare_next(
+            wiki=wiki,
+            actor=actor,
+            data=CompileExecuteInput(limit=limit, priority_filter=priority_filter),
+        )
+        for packet in packets:
+            typer.echo(json.dumps(packet.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")))
 
     _run_cli(_command)
 
