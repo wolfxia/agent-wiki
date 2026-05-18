@@ -40,3 +40,21 @@ def test_thinking_with_multiline_content() -> None:
     content = f"{tag_open}\nline1\nline2\n{tag_close}\n\n# Title\nBody"
     result = _service()._strip_thinking(content)
     assert result.startswith("# Title")
+
+
+def test_think_tag_with_attributes_stripped() -> None:
+    content = '# Title\n<think model="reasoner">internal reasoning</think>\nBody'
+    result = _service()._strip_thinking(content)
+    assert result == "# Title\nBody"
+
+
+def test_xml_style_thinking_keyword_tags_stripped() -> None:
+    content = (
+        "# Title\n"
+        "<reasoning_trace>hidden reasoning</reasoning_trace>\n"
+        "<thought-process>hidden thought</thought-process>\n"
+        "<reflectionNotes>hidden reflection</reflectionNotes>\n"
+        "Body"
+    )
+    result = _service()._strip_thinking(content)
+    assert result == "# Title\nBody"

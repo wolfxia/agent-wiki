@@ -94,15 +94,24 @@ class CompileApplyService:
     def _strip_thinking(self, content: str) -> str:
         """Remove LLM thinking/reasoning blocks that leak into output.
 
-        Some models (e.g. MiniMax M2.7) include <think>...</think> or
-        raw thinking text before the actual answer. Strip these blocks
-        and return only the content after the last closing tag.
+        Some models include <think>...</think>, <reasoning_trace>...</reasoning_trace>,
+        or raw thinking text before the actual answer. Strip these blocks and
+        return only the content after the last closing tag.
         """
         import re
-        # Remove blocks (may span multiple lines)
-        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
-        # Remove <<thinking>...</thinking> variant
-        content = re.sub(r"<thinking>.*?</thinking>", "", content, flags=re.DOTALL).strip()
+        thinking_tag = r"(?:think|thinking|reasoning|thought|reflection)[A-Za-z0-9_-]*"
+        content = re.sub(
+            rf"^[ \t]*<(?P<tag>{thinking_tag})\b[^>]*>.*?</(?P=tag)>[ \t]*(?:\r?\n)?",
+            "",
+            content,
+            flags=re.DOTALL | re.IGNORECASE | re.MULTILINE,
+        )
+        content = re.sub(
+            rf"<(?P<tag>{thinking_tag})\b[^>]*>.*?</(?P=tag)>",
+            "",
+            content,
+            flags=re.DOTALL | re.IGNORECASE,
+        ).strip()
         # If content starts with raw thinking (no tags), find first markdown heading
         # which typically marks the start of actual content
         lines = content.splitlines()
