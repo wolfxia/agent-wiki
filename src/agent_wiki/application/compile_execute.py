@@ -19,6 +19,7 @@ class CompileExecutePacket(BaseModel):
     item_id: str
     item_type: str
     priority_label: str | None = None
+    fallback_priority: str | None = None
     prepare: CompilePrepareResult
 
 
@@ -44,6 +45,7 @@ class CompileExecuteResult(BaseModel):
     queue_status: str
     doc_id: str | None = None
     error: str | None = None
+    fallback_priority: str | None = None
 
 
 class CompileExecuteService:
@@ -59,11 +61,7 @@ class CompileExecuteService:
         queue = ReviewQueueRepository(Path(wiki.workspace_path))
         packets: list[CompileExecutePacket] = []
         for _ in range(max(data.limit, 0)):
-            item = queue.consume(
-                "compile_suggestion",
-                actor_id=actor.actor_id,
-                priority_filter=data.priority_filter,
-            )
+            item, fallback_priority = self._consume_compile_suggestion(queue, actor, data.priority_filter)
             if item is None:
                 break
             prepare_params = item.get("prepare_params") or {}
@@ -83,10 +81,35 @@ class CompileExecuteService:
                     item_id=str(item.get("item_id")),
                     item_type=str(item.get("item_type")),
                     priority_label=item.get("priority_label"),
+                    fallback_priority=fallback_priority,
                     prepare=prepare,
                 )
             )
         return packets
+
+    def _consume_compile_suggestion(
+        self,
+        queue: ReviewQueueRepository,
+        actor: ResolvedActor,
+        priority_filter: str | None,
+    ) -> tuple[dict | None, str | None]:
+        item = queue.consume(
+            "compile_suggestion",
+            actor_id=actor.actor_id,
+            priority_filter=priority_filter,
+        )
+        if item is not None:
+            return item, None
+        if priority_filter and priority_filter.upper() == "P0":
+            fallback_priority = "P1"
+            fallback_item = queue.consume(
+                "compile_suggestion",
+                actor_id=actor.actor_id,
+                priority_filter=fallback_priority,
+            )
+            if fallback_item is not None:
+                return fallback_item, fallback_priority
+        return None, None
 
 
     def apply_next(
@@ -120,6 +143,7 @@ class CompileExecuteService:
                         status=result.status,
                         queue_status=queue_status,
                         doc_id=result.doc_id,
+                        fallback_priority=packet.fallback_priority,
                     )
                 )
             except Exception as exc:
@@ -131,6 +155,7 @@ class CompileExecuteService:
                         status="failed",
                         queue_status="failed",
                         error=str(exc),
+                        fallback_priority=packet.fallback_priority,
                     )
                 )
         return results

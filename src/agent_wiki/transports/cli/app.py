@@ -312,6 +312,8 @@ def compile_execute(
                 ]
                 if result.doc_id:
                     parts.append(f"doc_id={result.doc_id}")
+                if result.fallback_priority:
+                    parts.append(f"fallback_priority={result.fallback_priority}")
                 if result.error:
                     parts.append(f"error={result.error}")
                 typer.echo(" ".join(parts))

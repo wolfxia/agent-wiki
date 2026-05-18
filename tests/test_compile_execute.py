@@ -16,7 +16,12 @@ def _wiki(temp_wiki_root: Path):
     )
 
 
-def _seed_cluster(temp_wiki_root: Path, topic: str = "imaging-os", problem_cluster: str = "cluster-execute"):
+def _seed_cluster(
+    temp_wiki_root: Path,
+    topic: str = "imaging-os",
+    problem_cluster: str = "cluster-execute",
+    raw_doc_prefix: str = "raw-service-execute",
+):
     wiki = _wiki(temp_wiki_root)
     (temp_wiki_root / "purpose.md").write_text(
         "# Purpose\n\n## Topics\n\n- imaging-os\n- agent-os\n",
@@ -28,7 +33,7 @@ def _seed_cluster(temp_wiki_root: Path, topic: str = "imaging-os", problem_clust
             wiki=wiki,
             actor=actor,
             data=CaptureRawInput(
-                doc_id=f"raw-service-execute-{index}",
+                doc_id=f"{raw_doc_prefix}-{index}",
                 topic=topic,
                 problem_cluster=problem_cluster,
                 content=f"# Raw service execute {index}\n\nClaim: service execute {index}.",
@@ -59,6 +64,60 @@ def test_compile_execute_claims_suggestion_and_returns_prepare_packet(temp_wiki_
         "personal-1:raw-service-execute-2",
     ]
     assert ReviewQueueRepository(temp_wiki_root).find(result.item_id)["status"] == "assigned"
+
+
+def test_compile_execute_priority_filter_p0_prefers_p0_when_available(temp_wiki_root: Path) -> None:
+    p0_wiki, actor = _seed_cluster(
+        temp_wiki_root,
+        topic="imaging-os",
+        problem_cluster="cluster-p0",
+        raw_doc_prefix="raw-service-p0",
+    )
+    _seed_cluster(
+        temp_wiki_root,
+        topic="misc-topic",
+        problem_cluster="cluster-p1",
+        raw_doc_prefix="raw-service-p1",
+    )
+
+    results = CompileExecuteService().prepare_next(
+        wiki=p0_wiki,
+        actor=actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )
+
+    assert len(results) == 1
+    assert results[0].priority_label == "P0"
+    assert results[0].fallback_priority is None
+    assert results[0].item_id == "compile_suggestion:imaging-os:cluster-p0:0001"
+
+
+def test_compile_execute_priority_filter_p0_falls_back_to_p1_when_p0_empty(temp_wiki_root: Path) -> None:
+    wiki, actor = _seed_cluster(temp_wiki_root, topic="misc-topic", problem_cluster="cluster-p1-only")
+
+    results = CompileExecuteService().prepare_next(
+        wiki=wiki,
+        actor=actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )
+
+    assert len(results) == 1
+    assert results[0].priority_label == "P1"
+    assert results[0].fallback_priority == "P1"
+    assert results[0].item_id == "compile_suggestion:misc-topic:cluster-p1-only:0001"
+
+
+def test_compile_execute_priority_filter_p0_returns_empty_when_p0_and_p1_empty(temp_wiki_root: Path) -> None:
+    wiki = _wiki(temp_wiki_root)
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    results = CompileExecuteService().prepare_next(
+        wiki=wiki,
+        actor=actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )
+
+    assert results == []
 
 
 def test_compile_execute_apply_generated_content_resolves_suggestion(temp_wiki_root: Path) -> None:
@@ -230,10 +289,34 @@ def test_compile_execute_apply_next_generates_applies_and_resolves(temp_wiki_roo
     assert result.status == "committed"
     assert result.queue_status == "resolved"
     assert result.doc_id == "atom-imaging-os-cluster-apply-next-0001"
+    assert result.fallback_priority is None
     assert (temp_wiki_root / "pages" / "atom-imaging-os-cluster-apply-next-0001.md").read_text(encoding="utf-8").startswith("# Generated Apply Next")
     stored = ReviewQueueRepository(temp_wiki_root).find(result.item_id)
     assert stored["status"] == "resolved"
     assert stored["content_state"]["compiled_doc_id"] == result.doc_id
+
+
+def test_compile_execute_apply_next_reports_fallback_priority(temp_wiki_root: Path) -> None:
+    wiki, actor = _seed_cluster(temp_wiki_root, topic="misc-topic", problem_cluster="cluster-apply-p1")
+
+    class FakeApplyService:
+        def generate(self, wiki, prepare):
+            assert prepare.proposed_doc_id == "atom-misc-topic-cluster-apply-p1-0001"
+            return "# Generated Apply P1\n\nClaim: fallback compile."
+
+    results = CompileExecuteService(apply_service=FakeApplyService()).apply_next(
+        wiki=wiki,
+        actor=actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )
+
+    assert len(results) == 1
+    result = results[0]
+    assert result.item_id == "compile_suggestion:misc-topic:cluster-apply-p1:0001"
+    assert result.status == "committed"
+    assert result.queue_status == "resolved"
+    assert result.doc_id == "atom-misc-topic-cluster-apply-p1-0001"
+    assert result.fallback_priority == "P1"
 
 
 def test_compile_execute_apply_next_marks_failed_and_continues(temp_wiki_root: Path) -> None:
