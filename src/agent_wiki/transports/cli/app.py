@@ -38,6 +38,8 @@ app.add_typer(sync_app, name="sync")
 app.add_typer(approvals_app, name="approvals")
 
 _DEFAULT_CLI_TIMEOUT_SECONDS = 300
+_COMPILE_APPLY_TIMEOUT_SECONDS_PER_ITEM = 120
+_COMPILE_APPLY_TIMEOUT_SECONDS_BUFFER = 60
 
 
 def _raise_cli_timeout(signum: int, frame: object) -> None:
@@ -52,6 +54,15 @@ def _cli_timeout_seconds() -> int:
         return int(value)
     except ValueError:
         return _DEFAULT_CLI_TIMEOUT_SECONDS
+
+
+def _ensure_compile_apply_timeout(limit: int) -> None:
+    current_timeout = _cli_timeout_seconds()
+    if current_timeout <= 0:
+        return
+    apply_timeout = max(limit, 0) * _COMPILE_APPLY_TIMEOUT_SECONDS_PER_ITEM + _COMPILE_APPLY_TIMEOUT_SECONDS_BUFFER
+    if apply_timeout > current_timeout:
+        signal.alarm(apply_timeout)
 
 
 def _resolve_registry_path(registry: str | None) -> Path:
@@ -287,6 +298,7 @@ def compile_execute(
             return
 
         if apply:
+            _ensure_compile_apply_timeout(limit)
             results = service.apply_next(
                 wiki=wiki,
                 actor=actor,

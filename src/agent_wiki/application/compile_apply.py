@@ -46,7 +46,7 @@ class CompileApplyService:
                 "max_tokens": self._config_value(llm, "max_tokens", 4096),
                 "temperature": 0.2,
             },
-            timeout=self._config_value(llm, "timeout_seconds", 30),
+            timeout=self._config_value(llm, "timeout_seconds", 120),
         )
         response.raise_for_status()
         return self._extract_content(response.json())

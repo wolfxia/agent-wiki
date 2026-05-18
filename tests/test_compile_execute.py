@@ -170,6 +170,46 @@ def test_compile_apply_service_calls_openai_compatible_api(monkeypatch, temp_wik
     assert captured["timeout"] == 12
 
 
+def test_compile_apply_service_defaults_timeout_to_120(monkeypatch, temp_wiki_root: Path) -> None:
+    wiki, _actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-llm-default-timeout")
+    wiki = wiki.model_copy(
+        update={
+            "compile": {
+                "llm": {
+                    "base_url": "https://llm.example/v1",
+                    "api_key_env": "TEST_LLM_API_KEY",
+                    "model": "test-model",
+                    "max_tokens": 1234,
+                }
+            }
+        }
+    )
+    packet = CompileExecuteService().prepare_next(
+        wiki=wiki,
+        actor=_actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )[0]
+    captured: dict[str, object] = {}
+
+    def fake_post(url: str, *, headers: dict, json: dict, timeout: float):
+        captured["timeout"] = timeout
+
+        class Response:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict:
+                return {"choices": [{"message": {"content": "# Generated Atom\n\nClaim: compiled."}}]}
+
+        return Response()
+
+    monkeypatch.setenv("TEST_LLM_API_KEY", "secret-token")
+
+    CompileApplyService(http_post=fake_post).generate(wiki, packet.prepare)
+
+    assert captured["timeout"] == 120
+
+
 def test_compile_execute_apply_next_generates_applies_and_resolves(temp_wiki_root: Path) -> None:
     wiki, actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-apply-next")
 

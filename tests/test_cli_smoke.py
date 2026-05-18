@@ -23,6 +23,42 @@ def test_cli_entrypoint_sets_default_timeout(monkeypatch) -> None:
     assert alarms == [300, 0]
 
 
+def test_cli_compile_execute_apply_increases_timeout_from_limit(monkeypatch) -> None:
+    import agent_wiki.transports.cli.app as cli_app
+
+    alarms: list[int] = []
+
+    class FakeService:
+        def apply_next(self, wiki, actor, data):
+            assert data.limit == 3
+            return []
+
+    def fake_alarm(seconds: int) -> int:
+        alarms.append(seconds)
+        return 0
+
+    monkeypatch.setattr(cli_app.signal, "alarm", fake_alarm)
+    monkeypatch.setattr(cli_app, "CompileExecuteService", lambda: FakeService())
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "compile-execute",
+            "--apply",
+            "--limit",
+            "3",
+            "--workspace",
+            "/tmp",
+            "--registry",
+            "tests/fixtures/registry.yaml",
+        ],
+        env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"},
+    )
+
+    assert result.exit_code == 0
+    assert alarms == [420]
+
+
 def test_cli_help_renders() -> None:
     runner = CliRunner()
 

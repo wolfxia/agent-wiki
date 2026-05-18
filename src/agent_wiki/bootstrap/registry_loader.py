@@ -39,7 +39,7 @@ class LLMConfig(BaseModel):
     api_key_env: str
     model: str
     max_tokens: int = 4096
-    timeout_seconds: int = 30
+    timeout_seconds: int = 120
 
 
 class CompileConfig(BaseModel):
