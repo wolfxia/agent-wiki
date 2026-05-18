@@ -224,6 +224,68 @@ def test_rest_compile_update_endpoint_delegates_to_service(temp_wiki_root: Path)
     assert (temp_wiki_root / "pages" / "atom-rest-compile-1.md").exists()
 
 
+def test_rest_compile_prepare_endpoint_returns_agent_packet(temp_wiki_root: Path) -> None:
+    from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+    from agent_wiki.domain.contracts import ResolvedActor
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=ResolvedActor(actor_type="agent", actor_id="claude-code", transport="rest"),
+        data=CaptureRawInput(
+            doc_id="raw-rest-prepare-1",
+            topic="agents",
+            problem_cluster="memory",
+            content="# REST Prepare\n\nClaim: Agents need compile packets.",
+            source_refs=[],
+        ),
+    )
+    app = create_app(
+        wiki_workspace=str(temp_wiki_root),
+        registry_path="tests/fixtures/registry.yaml",
+        token_identities={"token-claude": {"actor_type": "agent", "actor_id": "claude-code"}},
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/compile-prepare",
+        headers={"Authorization": "Bearer token-claude"},
+        json={"topic": "agents", "problem_cluster": "memory"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["agent_objective"] == "create_retrieval_ready_atom"
+    assert payload["source_refs"] == ["personal-1:raw-rest-prepare-1"]
+    assert payload["items"][0]["claims"] == ["Claim: Agents need compile packets."]
+
+
+def test_rest_review_queue_consume_endpoint_assigns_item(temp_wiki_root: Path) -> None:
+    from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
+
+    ReviewQueueRepository(temp_wiki_root).append(
+        {"item_id": "compile_suggestion:rest:consume", "item_type": "compile_suggestion", "status": "open"}
+    )
+    app = create_app(
+        wiki_workspace=str(temp_wiki_root),
+        registry_path="tests/fixtures/registry.yaml",
+        token_identities={"token-claude": {"actor_type": "agent", "actor_id": "claude-code"}},
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/review-queue/consume",
+        headers={"Authorization": "Bearer token-claude"},
+        json={"item_type": "compile_suggestion"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["item_id"] == "compile_suggestion:rest:consume"
+    assert ReviewQueueRepository(temp_wiki_root).find("compile_suggestion:rest:consume")["assigned_to"] == "claude-code"
+
+
 def test_rest_lint_endpoint_returns_structured_issues(temp_wiki_root: Path) -> None:
     pages_dir = temp_wiki_root / "pages"
     pages_dir.mkdir(exist_ok=True)

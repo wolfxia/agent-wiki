@@ -100,6 +100,74 @@ def test_cli_query_command(temp_wiki_root) -> None:
     assert "atom-cli-1" in result.stdout
 
 
+def test_cli_compile_prepare_command_prints_source_refs(temp_wiki_root) -> None:
+    from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+    from agent_wiki.bootstrap.registry_loader import RegistryLoader
+    from agent_wiki.domain.contracts import ResolvedActor
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-cli-prepare-1",
+            topic="agents",
+            problem_cluster="memory",
+            content="# CLI Prepare\n\nClaim: Agents need working memory.",
+            source_refs=[],
+        ),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "compile-prepare",
+            "--topic",
+            "agents",
+            "--problem-cluster",
+            "memory",
+            "--workspace",
+            str(temp_wiki_root),
+            "--registry",
+            "tests/fixtures/registry.yaml",
+        ],
+        env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"},
+    )
+
+    assert result.exit_code == 0
+    assert "proposed_doc_id=atom-agents-memory-0001" in result.stdout
+    assert "source_ref=personal-1:raw-cli-prepare-1" in result.stdout
+
+
+def test_cli_review_queue_consume_command_assigns_item(temp_wiki_root) -> None:
+    from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
+
+    ReviewQueueRepository(temp_wiki_root).append(
+        {"item_id": "compile_suggestion:cli:consume", "item_type": "compile_suggestion", "status": "open"}
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "review-queue-consume",
+            "--item-type",
+            "compile_suggestion",
+            "--workspace",
+            str(temp_wiki_root),
+            "--registry",
+            "tests/fixtures/registry.yaml",
+        ],
+        env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"},
+    )
+
+    assert result.exit_code == 0
+    assert "item_id=compile_suggestion:cli:consume" in result.stdout
+    assert ReviewQueueRepository(temp_wiki_root).find("compile_suggestion:cli:consume")["assigned_to"] == "claude-code"
+
+
 def test_cli_lint_command(temp_wiki_root) -> None:
     runner = CliRunner()
 
@@ -522,7 +590,7 @@ def test_cli_health_command_reports_registry_and_tool_surface(temp_wiki_root) ->
     assert result.exit_code == 0
     assert "status=ok" in result.stdout
     assert "wiki_count=1" in result.stdout
-    assert "tool_count=5" in result.stdout
+    assert "tool_count=6" in result.stdout
     assert "actor_type=agent" in result.stdout
     assert "actor_id=claude-code" in result.stdout
 

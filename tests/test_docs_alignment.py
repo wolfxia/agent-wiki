@@ -53,6 +53,8 @@ def test_cli_help_surface_covers_documented_commands() -> None:
         "query",
         "capture-raw",
         "compile-update",
+        "compile-prepare",
+        "review-queue-consume",
         "lint",
         "sync",
         "feedback",

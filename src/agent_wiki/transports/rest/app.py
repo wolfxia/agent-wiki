@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from agent_wiki.application.approvals import ApprovalService
 from agent_wiki.application.capture_raw import CaptureRawService
+from agent_wiki.application.compile_prepare import CompilePrepareInput, CompilePrepareService
 from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
 from agent_wiki.application.feedback import FeedbackInput, FeedbackService
 from agent_wiki.application.linting import LintService
@@ -17,6 +18,7 @@ from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import CaptureRawInput, IdentityContext, QueryInput, ProposalInput
 from agent_wiki.infrastructure.identity.resolver import IdentityResolver
+from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 from agent_wiki.settings import DEFAULT_REGISTRY_PATH
 from agent_wiki.transports.errors import error_payload, map_exception
 
@@ -48,6 +50,18 @@ class CompileUpdateRequest(BaseModel):
     sensitivity: str | None = None
     content: str
     source_refs: list[str] = []
+
+
+class CompilePrepareRequest(BaseModel):
+    topic: str
+    problem_cluster: str
+    doc_ids: list[str] | None = None
+    max_items: int = 8
+    sub_cluster_index: int = 1
+
+
+class ReviewQueueConsumeRequest(BaseModel):
+    item_type: str
 
 
 class SyncRequest(BaseModel):
@@ -223,6 +237,39 @@ def create_app(
             ),
         )
         return {"status": result.status, "doc_id": result.doc_id, "page_path": result.page_path}
+
+    @app.post("/compile-prepare")
+    def compile_prepare(request: CompilePrepareRequest, authorization: str | None = Header(default=None)) -> dict:
+        return _rest_call(lambda: _compile_prepare_impl(request, authorization))
+
+    def _compile_prepare_impl(request: CompilePrepareRequest, authorization: str | None) -> dict:
+        wiki = _resolve_wiki()
+        actor = _resolve_actor(authorization)
+        result = CompilePrepareService().prepare(
+            wiki=wiki,
+            actor=actor,
+            data=CompilePrepareInput(
+                topic=request.topic,
+                problem_cluster=request.problem_cluster,
+                doc_ids=request.doc_ids,
+                max_items=request.max_items,
+                sub_cluster_index=request.sub_cluster_index,
+            ),
+        )
+        return result.model_dump()
+
+    @app.post("/review-queue/consume")
+    def review_queue_consume(
+        request: ReviewQueueConsumeRequest,
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        return _rest_call(lambda: _review_queue_consume_impl(request, authorization))
+
+    def _review_queue_consume_impl(request: ReviewQueueConsumeRequest, authorization: str | None) -> dict:
+        wiki = _resolve_wiki()
+        actor = _resolve_actor(authorization)
+        item = ReviewQueueRepository(Path(wiki.workspace_path)).consume(request.item_type, actor.actor_id)
+        return item or {}
 
     @app.get("/lint")
     def lint(authorization: str | None = Header(default=None)) -> dict:

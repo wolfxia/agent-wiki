@@ -346,6 +346,7 @@ def test_build_fastmcp_server_registers_agent_wiki_tools() -> None:
     assert tools == {
         "wiki.query",
         "wiki.capture_raw",
+        "wiki.compile_prepare",
         "wiki.compile_update",
         "wiki.lint",
         "wiki.sync",

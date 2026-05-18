@@ -146,7 +146,9 @@ raw intake
 | `aw serve` | Start FastMCP stdio server |
 | `aw query` | Query the knowledge base |
 | `aw capture-raw` | Capture raw source or learning note |
+| `aw compile-prepare` | Prepare agent-facing raw evidence packets for compilation |
 | `aw compile-update` | Create or revise compiled truth-zone pages |
+| `aw review-queue-consume` | Assign the next open review queue item of a given type |
 | `aw lint` | Run consistency checks |
 | `aw sync status` | Inspect external view sync status |
 | `aw sync pull-view` | Import external view edits into workspace |
@@ -174,7 +176,7 @@ wiki.sync
 
 ### REST
 
-REST is an auxiliary transport for local tooling and tests. It exposes workflow parity for query, capture, compile, lint, sync, feedback, weekly review, approvals, and health, but Hermes integration should prefer MCP stdio.
+REST is an auxiliary transport for local tooling and tests. It exposes workflow parity for query, capture, compile prepare/update, review queue consume, lint, sync, feedback, weekly review, approvals, and health, but Hermes integration should prefer MCP stdio.
 
 ## Retrieval And Knowledge Flow
 

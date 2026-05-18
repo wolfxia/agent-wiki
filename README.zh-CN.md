@@ -72,18 +72,16 @@ capture_raw → compile_update → query → lint → sync → weekly-review
 
 ### 当前已可调用的接口面
 
-当前可调用的用户 / Agent 接口面刻意保持很小：
+当前实现已经提供三类共享核心之上的薄接口：
 
-- `src/agent_wiki/transports/cli/app.py` 中的最小 CLI stub
-- `aw --help`
-- `aw info`
+- MCP stdio：`wiki.query`、`wiki.capture_raw`、`wiki.compile_prepare`、`wiki.compile_update`、`wiki.lint`、`wiki.sync`
+- CLI：`aw query`、`aw capture-raw`、`aw compile-prepare`、`aw compile-update`、`aw review-queue-consume`、`aw lint`、`aw sync`、`aw feedback`、`aw weekly-review`、`aw approvals`、`aw maintain`
+- REST：query、capture、compile prepare/update、review queue consume、lint、sync、feedback、weekly review、approvals 与 health
 
-这足以检查 packaging 与 runtime wiring，但它**还不是**完整工作流 CLI，也不是一个可部署的长驻 `aw-agent` 服务。
+Hermes 等 Agent 的首选集成路径仍是 MCP stdio；CLI 和 REST 主要服务本地工具、测试和人工运维。
 
 ### 已设计但尚未完整实现
 
-- MCP 传输层
-- REST 传输层
 - 针对 `max_gate` 的完整 gate 执行
 - 相比 caller-supplied actor fields 更高优先级的可信身份解析
 - 面向 Git-first governance 的 authority-promotion / commit orchestration
@@ -99,15 +97,20 @@ capture_raw → compile_update → query → lint → sync → weekly-review
 | Command | Status | Notes |
 |---|---|---|
 | `aw --help` | Implemented | package/CLI 帮助界面 |
-| `aw info` | Implemented | 最小运行时信息桩接口 |
-| `aw capture-raw` | Planned | application service 已存在，但命令接口未实现 |
-| `aw compile-*` | Planned | application service 已存在，但命令接口未实现 |
-| `aw query` | Planned | application service 已存在，但命令接口未实现 |
-| `aw lint` | Planned | application service 已存在，但命令接口未实现 |
-| `aw sync` | Planned | application service 已存在，但命令接口未实现 |
-| `aw feedback` | Planned | application service 已存在，但命令接口未实现 |
-| `aw weekly-review` | Planned | application service 已存在，但命令接口未实现 |
-| `aw serve` | Not started | 在 `aw-agent` 成为真实长驻服务前必须实现 |
+| `aw info` | Implemented | 运行时信息接口 |
+| `aw health` | Implemented | registry、actor 与 MCP tool surface 自检 |
+| `aw serve` | Implemented | 启动 FastMCP stdio 服务 |
+| `aw query` | Implemented | 查询知识库 |
+| `aw capture-raw` | Implemented | 捕获 raw source 或学习笔记 |
+| `aw compile-prepare` | Implemented | 生成面向 Agent 的编译 evidence packet |
+| `aw compile-update` | Implemented | 写入或修订 atom / synthesis truth-zone 页面 |
+| `aw review-queue-consume` | Implemented | 分配指定类型的下一个 open review queue item |
+| `aw lint` | Implemented | 运行 manifest、index 与页面一致性检查 |
+| `aw sync status/pull-view/push-view` | Implemented | 检查、导入或导出外部 view |
+| `aw feedback` | Implemented | 记录反馈并按需创建 review queue item |
+| `aw weekly-review` | Implemented | 生成维护 review 摘要 |
+| `aw approvals propose/approve/reject` | Implemented | C 级 proposal workflow；`reject` 仍是占位命令 |
+| `aw maintain` | Implemented | 运行维护检查与 compile suggestion 入队 |
 
 ## Core design principles
 
@@ -163,6 +166,8 @@ capture_raw → compile_update → query → lint → sync → weekly-review
 ### Application services
 
 - `src/agent_wiki/application/capture_raw.py` — A 级原始捕获
+- `src/agent_wiki/application/compile_prepare.py` — 面向 Agent 的 raw evidence packet 准备
+- `src/agent_wiki/application/compile_suggest.py` — compile suggestion 检测与 sub-cluster 入队
 - `src/agent_wiki/application/compile_update.py` — B 级编译更新
 - `src/agent_wiki/application/query.py` — 词法查询管线与 cross-wiki query
 - `src/agent_wiki/application/linting.py` — Phase 1 lint 检查
@@ -189,7 +194,9 @@ capture_raw → compile_update → query → lint → sync → weekly-review
 
 ### Transport
 
-- `src/agent_wiki/transports/cli/app.py` — 当前 CLI stub surface
+- `src/agent_wiki/transports/mcp/` — MCP stdio tool surface
+- `src/agent_wiki/transports/cli/app.py` — CLI workflow surface
+- `src/agent_wiki/transports/rest/app.py` — REST workflow surface
 
 ### Legacy / non-authoritative paths
 

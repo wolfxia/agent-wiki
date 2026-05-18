@@ -8,6 +8,7 @@ import typer
 
 from agent_wiki.application.approvals import ApprovalService
 from agent_wiki.application.capture_raw import CaptureRawService
+from agent_wiki.application.compile_prepare import CompilePrepareInput, CompilePrepareService
 from agent_wiki.application.compile_update import CompileUpdateService
 from agent_wiki.application.feedback import FeedbackInput, FeedbackService
 from agent_wiki.application.linting import LintService
@@ -23,6 +24,7 @@ from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import CaptureRawInput, CompileUpdateInput, IdentityContext, ProposalInput, QueryInput
 from agent_wiki.infrastructure.identity.resolver import IdentityResolver
 from agent_wiki.infrastructure.retrieval.index_consistency import IndexConsistencyChecker
+from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 from agent_wiki.settings import DEFAULT_REGISTRY_PATH
 from agent_wiki.transports.errors import map_exception
 from agent_wiki.transports.errors import error_payload
@@ -218,6 +220,62 @@ def compile_update(
             ),
         )
         typer.echo(f"status={result.status} doc_id={result.doc_id}")
+
+    _run_cli(_command)
+
+
+@app.command("compile-prepare")
+def compile_prepare(
+    topic: str = typer.Option(..., "--topic"),
+    problem_cluster: str = typer.Option(..., "--problem-cluster"),
+    doc_ids: list[str] = typer.Option(None, "--doc-id"),
+    max_items: int = typer.Option(8, "--max-items"),
+    sub_cluster_index: int = typer.Option(1, "--sub-cluster-index"),
+    workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
+) -> None:
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
+        result = CompilePrepareService().prepare(
+            wiki=wiki,
+            actor=_actor(),
+            data=CompilePrepareInput(
+                topic=topic,
+                problem_cluster=problem_cluster,
+                doc_ids=doc_ids or None,
+                max_items=max_items,
+                sub_cluster_index=sub_cluster_index,
+            ),
+        )
+        typer.echo(f"agent_objective={result.agent_objective}")
+        typer.echo(f"sub_cluster_id={result.sub_cluster_id}")
+        typer.echo(f"proposed_page_type={result.proposed_page_type}")
+        typer.echo(f"proposed_doc_id={result.proposed_doc_id}")
+        typer.echo(f"total_raw_count={result.total_raw_count}")
+        for item in result.items:
+            typer.echo(f"source_ref={item.source_ref} doc_id={item.doc_id}")
+
+    _run_cli(_command)
+
+
+@app.command("review-queue-consume")
+def review_queue_consume(
+    item_type: str = typer.Option(..., "--item-type"),
+    workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
+) -> None:
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
+        actor = _actor()
+        item = ReviewQueueRepository(Path(wiki.workspace_path)).consume(item_type, actor.actor_id)
+        if item is None:
+            typer.echo("item_id=")
+            return
+        typer.echo(
+            f"item_id={item.get('item_id')} status={item.get('status')} assigned_to={item.get('assigned_to')}"
+        )
 
     _run_cli(_command)
 
