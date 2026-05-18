@@ -58,6 +58,7 @@ capture_raw → compile_update → query → lint → sync → weekly-review
 - 原始捕获流程（含 committed 写入与 pending 回退）
 - `atom` 与 `synthesis` 的编译更新流程
 - 基于 `retrieval_index.jsonl` 的词法检索
+- 基于 `relation_schema.yaml` 与 `knowledge_graph.jsonl` 的零 LLM 类型化关系抽取与图谱检索补强
 - 分层查询结果（L1 / L2 / L3 输出）
 - 查询上下文中的争议提示
 - 仅在显式请求时包含 pending truth-zone

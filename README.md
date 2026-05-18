@@ -123,6 +123,7 @@ Core decisions in v0.2.0:
 - **Trusted identity resolution**: actor identity comes from MCP metadata, CLI env, token/env, or registry fallback. Callers do not set their own identity in tool payloads.
 - **Team expansion model**: the architecture supports N personal workspaces plus M team workspaces, with permission tiers per actor, wiki, operation, page type, and A/B/C gate.
 - **Compile and retrieval are one loop**: intake metadata feeds compile candidates, compiled schema feeds retrieval, query misses feed feedback and weekly review.
+- **Typed graph is configurable**: `relation_schema.yaml` defines zero-LLM relation extraction, `maintain` rebuilds `knowledge_graph.jsonl`, and query ranking uses graph hits when available.
 
 ### Compile Pipeline
 
@@ -210,7 +211,7 @@ capture_raw / pull-view
   -> feedback / weekly-review / compile backlog
 ```
 
-Retrieval currently combines structured metadata, lexical matching, FTS5 index health, purpose-aware ranking, page type boosts, and freshness. Vector search remains a plugin-level enhancement rather than the baseline.
+Retrieval currently combines typed graph hits from `knowledge_graph.jsonl`, structured metadata, lexical matching, FTS5 index health, purpose-aware ranking, page type boosts, and freshness. Vector search remains a plugin-level enhancement rather than the baseline. A wiki can opt into typed relation extraction by adding `relation_schema.yaml`; `templates/relation_schema.yaml` provides a configurable starting point.
 
 Note: `registry.yaml` `coarse_provider` is design/configuration metadata today; it is not yet the runtime switch that selects the active retrieval provider.
 

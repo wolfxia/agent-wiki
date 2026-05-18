@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent_wiki.domain.contracts import RetrievalHit
+from agent_wiki.infrastructure.retrieval.knowledge_graph import KnowledgeGraphRetrievalProvider
 from agent_wiki.infrastructure.retrieval.retrieval_index import LexicalRetrievalProvider, RetrievalIndexRepository
 from agent_wiki.infrastructure.retrieval.sqlite_fts import SQLiteFTSIndexProvider
 from agent_wiki.infrastructure.retrieval.topic_index import StructuredIndexProvider
@@ -10,6 +11,7 @@ from agent_wiki.infrastructure.retrieval.topic_index import StructuredIndexProvi
 
 class RetrievalRouter:
     def __init__(self, wiki_root: Path, wiki_id: str) -> None:
+        self.graph = KnowledgeGraphRetrievalProvider(wiki_root, wiki_id=wiki_id)
         self.structured = StructuredIndexProvider(wiki_root, wiki_id=wiki_id)
         self.fts = SQLiteFTSIndexProvider(wiki_root, wiki_id=wiki_id)
         self.lexical = LexicalRetrievalProvider(RetrievalIndexRepository)
@@ -18,25 +20,41 @@ class RetrievalRouter:
     def search(self, query: str, top_k: int = 10) -> list[RetrievalHit]:
         merged: dict[str, RetrievalHit] = {}
 
+        for hit in self.graph.search(query, top_k=top_k):
+            merged[hit.doc_id] = self._with_scores(
+                hit,
+                lexical_score=0.0,
+                structured_score=0.0,
+                graph_score=hit.score,
+                section="knowledge_graph",
+            )
+
         fts_hits = self.fts.search(query, top_k=top_k)
         lexical_hits = fts_hits or self.lexical.search(self.wiki_root, query)
         for hit in lexical_hits:
+            existing = merged.get(hit.doc_id)
+            graph_score = float(existing.metadata.get("graph_score", 0.0)) if existing else 0.0
+            base_hit = existing if existing and existing.section == "knowledge_graph" else hit
             merged[hit.doc_id] = self._with_scores(
-                hit,
+                base_hit,
                 lexical_score=hit.score,
                 structured_score=0.0,
-                section=hit.section or "lexical",
+                graph_score=graph_score,
+                section=base_hit.section or "lexical",
             )
 
         for hit in self.structured.search(query, top_k=top_k):
             existing = merged.get(hit.doc_id)
             lexical_score = float(existing.metadata.get("lexical_score", 0.0)) if existing else 0.0
+            graph_score = float(existing.metadata.get("graph_score", 0.0)) if existing else 0.0
             structured_score = hit.score
+            base_hit = existing if existing and existing.section == "knowledge_graph" else hit
             merged[hit.doc_id] = self._with_scores(
-                hit,
+                base_hit,
                 lexical_score=lexical_score,
                 structured_score=structured_score,
-                section="topic_index",
+                graph_score=graph_score,
+                section=base_hit.section or "topic_index",
             )
 
         hits = list(merged.values())
@@ -49,13 +67,15 @@ class RetrievalRouter:
         *,
         lexical_score: float,
         structured_score: float,
+        graph_score: float = 0.0,
         section: str,
     ) -> RetrievalHit:
-        final_score = lexical_score + structured_score
+        final_score = lexical_score + structured_score + graph_score
         metadata = {
             **hit.metadata,
             "lexical_score": lexical_score,
             "structured_score": structured_score,
+            "graph_score": graph_score,
             "final_score": final_score,
         }
         return hit.model_copy(update={"score": final_score, "section": section, "metadata": metadata})

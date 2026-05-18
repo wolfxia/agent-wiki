@@ -215,6 +215,24 @@ Implementation boundaries for Phase 1:
 - CLI/REST may expose the same service for operator and dashboard use, but MCP is the primary agent interface.
 - Review queue consumption changes state (`open -> assigned -> in_progress -> resolved -> archived`) and records the consumer; it does not execute compile content generation by itself.
 - `compile_update.analyze()` stays a baseline revise/create heuristic. Automatic compile preparation should pass explicit proposed doc ids and source refs rather than relying on analyze alone for batching decisions.
+### 2.6 Typed knowledge graph
+
+Phase 1 also maintains a deterministic typed knowledge graph for agent reasoning. The graph is not a human navigation feature first; it is a compact relation layer that helps agents answer questions such as who founded a project, which companies compete, or which technology depends on another technology without asking an LLM to infer every relation at query time.
+
+Implemented flow:
+
+```text
+relation_schema.yaml
+  -> regex RelationExtractor over raw pages
+  -> knowledge_graph.jsonl
+  -> RetrievalRouter graph hits
+  -> wiki.query hybrid ranking with graph_score
+```
+
+`relation_schema.yaml` lives in the wiki root and is intentionally user-configurable. If it is missing, maintain skips graph extraction and query falls back to existing FTS/lexical/structured retrieval. `knowledge_graph.jsonl` stores one relation per line with subject, relation, object, entity types, `source_doc_id`, confidence, and extraction timestamp. Symmetric relation types write both directions so query can traverse either side.
+
+A template is available at `templates/relation_schema.yaml`; domains should copy and edit it rather than hardcoding personal topics or entity vocabularies in source code.
+
 
 ---
 

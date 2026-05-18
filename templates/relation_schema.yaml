@@ -1,0 +1,45 @@
+# Copy this file to a wiki root as relation_schema.yaml and edit it for the domain.
+# Patterns are Python regular expressions. Use named groups for subject/object roles.
+relation_types:
+  - name: works_at
+    patterns:
+      - "(?P<person>.+?) (?:works at|joins) (?P<org>.+)"
+      - "(?P<person>.+?) (?:在|加入|任职于) (?P<org>.+?)(?:工作|任职|就职)?"
+    subject_type: person
+    object_type: organization
+
+  - name: founded
+    patterns:
+      - "(?P<person>.+?) founded (?P<org>.+)"
+      - "(?P<person>.+?) (?:创立|创办|创建) (?P<org>.+)"
+    subject_type: person
+    object_type: organization
+
+  - name: invested_in
+    patterns:
+      - "(?P<investor>.+?) invested in (?P<company>.+)"
+      - "(?P<investor>.+?) (?:投资|领投|参投) (?P<company>.+)"
+    subject_type: organization
+    object_type: organization
+
+  - name: competes_with
+    patterns:
+      - "(?P<a>.+?) competes with (?P<b>.+)"
+      - "(?P<a>.+?) (?:与|和) (?P<b>.+?) (?:竞争|对标|对齐)"
+    subject_type: organization
+    object_type: organization
+    symmetric: true
+
+  - name: powers
+    patterns:
+      - "(?P<tech>.+?) (?:powers|drives) (?P<target>.+)"
+      - "(?P<tech>.+?) (?:驱动|支撑|赋能) (?P<target>.+)"
+    subject_type: technology
+    object_type: product
+
+  - name: depends_on
+    patterns:
+      - "(?P<a>.+?) (?:depends on|is built on|built on) (?P<b>.+)"
+      - "(?P<a>.+?) (?:依赖|基于) (?P<b>.+)"
+    subject_type: technology
+    object_type: technology

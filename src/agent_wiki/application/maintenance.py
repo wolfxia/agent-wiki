@@ -5,6 +5,7 @@ from agent_wiki.application.fast_feedback import FastFeedbackService
 from agent_wiki.application.relations import RelationsService
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.infrastructure.repair.raw_metadata_repair import RawMetadataRepairService
+from agent_wiki.infrastructure.retrieval.knowledge_graph import KnowledgeGraphRepository
 from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRepository
 from agent_wiki.infrastructure.retrieval.sqlite_fts import SQLiteFTSIndexProvider
 from agent_wiki.infrastructure.retrieval.topic_index import TopicIndexRepository
@@ -20,6 +21,7 @@ class MaintenanceService:
         orphan_cleanup_count = self._clean_orphan_authority_entries(wiki)
         compile_candidates = CompileSuggestService().detect_and_enqueue(wiki)
         quality_signals = FastFeedbackService().detect_and_enqueue(wiki)
+        typed_relations = KnowledgeGraphRepository(Path(wiki.workspace_path), wiki_id=wiki.wiki_id).rebuild_from_raw_pages()
         relations = RelationsService()
         co_occurrences = relations.detect_and_enqueue_co_occurrences(wiki)
         cross_references = relations.detect_and_enqueue_cross_references(wiki)
@@ -55,6 +57,7 @@ class MaintenanceService:
             "orphan_cleanup_count": orphan_cleanup_count,
             "queue_timeouts_recovered": queue_timeouts_recovered,
             "compile_suggestions": len(compile_suggestions),
+            "typed_relations": typed_relations,
             "quality_signals": len(quality_signals),
             "co_occurrence_candidates": len(co_occurrences),
             "cross_reference_candidates": len(cross_references),

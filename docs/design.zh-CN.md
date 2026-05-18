@@ -183,6 +183,24 @@ Phase 1 实现边界：
 - CLI/REST 可以暴露同一服务给 operator 和 dashboard 使用，但 MCP 仍是主要 Agent 接口。
 - review queue consume 只改变状态（`open -> assigned -> in_progress -> resolved -> archived`）并记录 consumer；它不会自己生成编译内容。
 - `compile_update.analyze()` 保持基础 create/revise 启发式。自动编译准备应传递明确的建议 doc id 与 source refs，而不是只依赖 analyze 来决定批处理边界。
+### 2.6 类型化知识图谱
+
+Phase 1 同时维护一个确定性的类型化知识图谱，用于提升 Agent 推理质量。它首先不是给人看的导航图，而是给 Agent 使用的紧凑关系层：例如谁创立了某项目、哪些公司互相竞争、某技术依赖什么基础设施，都可以在 query 阶段由图谱直接补强，而不是每次交给 LLM 临场推断。
+
+已实现流程：
+
+```text
+relation_schema.yaml
+  -> 对 raw 页面执行 regex RelationExtractor
+  -> knowledge_graph.jsonl
+  -> RetrievalRouter 图谱命中
+  -> wiki.query 通过 graph_score 参与混合排序
+```
+
+`relation_schema.yaml` 位于 wiki 根目录，并且必须由用户按知识库配置。缺失该文件时，maintain 会跳过图谱抽取，query 回退到现有 FTS / 词法 / 结构化检索。`knowledge_graph.jsonl` 每行保存一条关系，包含 subject、relation、object、实体类型、`source_doc_id`、confidence 与抽取时间。对称关系会写入双向边，便于从任一实体方向查询。
+
+模板位于 `templates/relation_schema.yaml`；领域关系应复制模板后配置，而不是把个人 topic 或实体词表硬编码进源码。
+
 
 ---
 
