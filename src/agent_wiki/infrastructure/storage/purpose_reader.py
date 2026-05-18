@@ -2,6 +2,12 @@ import re
 from pathlib import Path
 
 
+_HEADING_ALIASES = {
+    "Topics": ["Topics", "主题", "主题范围"],
+    "Goals": ["Goals", "目标"],
+}
+
+
 class PurposeReader:
     def __init__(self, wiki_root: Path) -> None:
         self.purpose_path = wiki_root / "purpose.md"
@@ -27,6 +33,13 @@ class PurposeReader:
         return self._cache
 
     def _extract_list_section(self, content: str, heading: str) -> list[str]:
+        for alias in _HEADING_ALIASES.get(heading, [heading]):
+            items = self._extract_list_section_by_heading(content, alias)
+            if items:
+                return items
+        return []
+
+    def _extract_list_section_by_heading(self, content: str, heading: str) -> list[str]:
         pattern = rf"##\s+{re.escape(heading)}\s*\n(.*?)(?=\n##|\Z)"
         match = re.search(pattern, content, re.DOTALL)
         if not match:

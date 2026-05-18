@@ -45,3 +45,21 @@ def test_purpose_reader_topic_alignment_check(temp_wiki_root: Path) -> None:
     assert reader.is_aligned("deployment")
     assert reader.is_aligned("security")
     assert not reader.is_aligned("unrelated-topic")
+
+
+def test_purpose_reader_parses_chinese_heading_aliases(temp_wiki_root: Path) -> None:
+    purpose_path = temp_wiki_root / "purpose.md"
+    purpose_path.write_text(
+        "# 目标说明\n\n"
+        "## 主题范围\n\n"
+        "- imaging-os\n"
+        "- agent-os\n\n"
+        "## 目标\n\n"
+        "- 建立可持续演化的知识库\n",
+        encoding="utf-8",
+    )
+
+    purpose = PurposeReader(temp_wiki_root).read()
+
+    assert purpose["topics"] == ["imaging-os", "agent-os"]
+    assert purpose["goals"] == ["建立可持续演化的知识库"]
