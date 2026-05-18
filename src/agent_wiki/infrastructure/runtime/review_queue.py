@@ -64,6 +64,26 @@ class ReviewQueueRepository:
             return updated
         return None
 
+    def remove_old_format_compile_suggestions(self) -> int:
+        items = self.read_all()
+        kept: list[dict] = []
+        removed_count = 0
+        for item in items:
+            if item.get("item_type") == "compile_suggestion" and not self._is_current_compile_suggestion(item):
+                removed_count += 1
+                continue
+            kept.append(item)
+        if removed_count:
+            self._write_all(kept)
+        return removed_count
+
+    def _is_current_compile_suggestion(self, item: dict) -> bool:
+        return (
+            bool(item.get("sub_cluster_id"))
+            and isinstance(item.get("raw_doc_ids"), list)
+            and isinstance(item.get("prepare_params"), dict)
+        )
+
     def _normalize_entry(self, entry: dict) -> dict:
         item_type = entry.get("item_type", "task")
         doc_id = entry.get("doc_id", "unknown")

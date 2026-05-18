@@ -253,3 +253,113 @@ def test_compile_suggestions_queue_contains_prepare_payload(temp_wiki_root: Path
         "doc_ids": ["raw-prepare-queue-0", "raw-prepare-queue-1", "raw-prepare-queue-2"],
         "sub_cluster_index": 1,
     }
+
+
+def test_compile_suggestion_item_ids_include_subcluster_index(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    for index in range(7):
+        CaptureRawService().execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-queue-subcluster-{index}",
+                topic="edge-ai",
+                problem_cluster="imaging",
+                content=f"# Raw Queue Subcluster {index}",
+                source_refs=[],
+            ),
+        )
+
+    CompileSuggestService().detect_and_enqueue(wiki, threshold=3)
+
+    entries = [
+        json.loads(line)
+        for line in (temp_wiki_root / "review_queue.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    suggestions = [entry for entry in entries if entry.get("item_type") == "compile_suggestion"]
+
+    assert [entry["item_id"] for entry in suggestions] == [
+        "compile_suggestion:edge-ai:imaging:0001",
+        "compile_suggestion:edge-ai:imaging:0002",
+        "compile_suggestion:edge-ai:imaging:0003",
+    ]
+    assert [entry["sub_cluster_id"] for entry in suggestions] == [
+        "edge-ai_imaging_0001",
+        "edge-ai_imaging_0002",
+        "edge-ai_imaging_0003",
+    ]
+
+
+def test_detect_and_enqueue_removes_old_format_compile_suggestions(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    queue_path = temp_wiki_root / "review_queue.jsonl"
+    queue_path.write_text(
+        json.dumps(
+            {
+                "item_id": "compile_suggestion:edge-ai:imaging",
+                "item_type": "compile_suggestion",
+                "topic": "edge-ai",
+                "problem_cluster": "imaging",
+                "status": "open",
+            },
+            ensure_ascii=False,
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "item_id": "feedback_issue:q1",
+                "item_type": "feedback_issue",
+                "status": "open",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    for index in range(3):
+        CaptureRawService().execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-old-queue-cleanup-{index}",
+                topic="edge-ai",
+                problem_cluster="imaging",
+                content=f"# Raw Old Queue Cleanup {index}",
+                source_refs=[],
+            ),
+        )
+
+    CompileSuggestService().detect_and_enqueue(wiki, threshold=3)
+
+    entries = [json.loads(line) for line in queue_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    assert not any(entry.get("item_id") == "compile_suggestion:edge-ai:imaging" for entry in entries)
+    assert any(entry.get("item_id") == "feedback_issue:q1" for entry in entries)
+    suggestion = next(entry for entry in entries if entry.get("item_id") == "compile_suggestion:edge-ai:imaging:0001")
+    assert suggestion["sub_cluster_id"] == "edge-ai_imaging_0001"
+    assert suggestion["raw_doc_ids"] == [
+        "raw-old-queue-cleanup-0",
+        "raw-old-queue-cleanup-1",
+        "raw-old-queue-cleanup-2",
+    ]
+    assert suggestion["prepare_params"] == {
+        "topic": "edge-ai",
+        "problem_cluster": "imaging",
+        "doc_ids": [
+            "raw-old-queue-cleanup-0",
+            "raw-old-queue-cleanup-1",
+            "raw-old-queue-cleanup-2",
+        ],
+        "sub_cluster_index": 1,
+    }

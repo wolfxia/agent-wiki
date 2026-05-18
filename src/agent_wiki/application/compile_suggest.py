@@ -74,6 +74,7 @@ class CompileSuggestService:
 
         wiki_root = Path(wiki.workspace_path)
         queue = ReviewQueueRepository(wiki_root)
+        queue.remove_old_format_compile_suggestions()
         for candidate in candidates:
             if candidate["kind"] == "needs_metadata_repair":
                 queue.append({
@@ -86,7 +87,10 @@ class CompileSuggestService:
                 continue
 
             queue.append({
-                "item_id": f"compile_suggestion:{candidate['topic']}:{candidate['problem_cluster']}",
+                "item_id": (
+                    f"compile_suggestion:{candidate['topic']}:{candidate['problem_cluster']}:"
+                    f"{candidate.get('sub_cluster_index', 1):04d}"
+                ),
                 "item_type": "compile_suggestion",
                 "topic": candidate["topic"],
                 "problem_cluster": candidate["problem_cluster"],
