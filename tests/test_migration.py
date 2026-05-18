@@ -122,7 +122,27 @@ def test_migrate_normalize_doc_ids_updates_authority_indexes_pages_and_refs(temp
 
 def test_normalize_doc_id_uses_lowercase_hyphen_style() -> None:
     from agent_wiki.infrastructure.doc_id import normalize_doc_id
+    from agent_wiki.domain.validators import validate_doc_id
 
     assert normalize_doc_id("2026-04-06-AI-inference-optimization-notes") == "2026-04-06-ai-inference-optimization-notes"
-    assert normalize_doc_id("IoT OS - 辩证讨论核心结论 2026-04-25") == "iot-os-辩证讨论核心结论-2026-04-25"
-    assert normalize_doc_id("agent-os_2026-04-15_MCP协议") == "agent-os-2026-04-15-mcp协议"
+    normalized_chinese = normalize_doc_id("IoT OS - 辩证讨论核心结论 2026-04-25")
+    normalized_mixed = normalize_doc_id("agent-os_2026-04-15_MCP协议")
+
+    assert normalized_chinese.startswith("iot-os-")
+    assert normalized_chinese.endswith("-2026-04-25")
+    assert normalized_chinese.isascii()
+    assert normalized_mixed.startswith("agent-os-2026-04-15-mcp-")
+    assert normalized_mixed.isascii()
+    validate_doc_id(normalized_chinese)
+    validate_doc_id(normalized_mixed)
+
+
+def test_normalize_doc_id_handles_chinese_compile_suggestion_ids() -> None:
+    from agent_wiki.infrastructure.doc_id import normalize_doc_id
+    from agent_wiki.domain.validators import validate_doc_id
+
+    doc_id = f"atom-{normalize_doc_id('external_sync')}-{normalize_doc_id('AI推理优化:cluster:AI推理优化')}-0009"
+
+    assert doc_id.isascii()
+    assert "推理" not in doc_id
+    validate_doc_id(doc_id)

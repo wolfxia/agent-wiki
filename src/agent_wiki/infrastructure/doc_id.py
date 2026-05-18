@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 _ALLOWED_SEPARATORS = {"-", "_"}
@@ -35,14 +36,33 @@ def doc_id_from_relative_path(relative_path: str | Path) -> str:
 def normalize_doc_id(value: str) -> str:
     parts: list[str] = []
     previous_separator = False
+    non_ascii_buffer: list[str] = []
+
+    def flush_non_ascii() -> None:
+        nonlocal previous_separator
+        if not non_ascii_buffer:
+            return
+        digest = hashlib.md5("".join(non_ascii_buffer).encode("utf-8")).hexdigest()[:10]
+        if parts and not previous_separator:
+            parts.append("-")
+        parts.append(f"u{digest}")
+        previous_separator = False
+        non_ascii_buffer.clear()
+
     for char in value.replace("\\", "/"):
         lowered = char.lower()
-        if lowered.isalnum():
+        if lowered.isascii() and lowered.isalnum():
+            flush_non_ascii()
             parts.append(lowered)
             previous_separator = False
             continue
+        if lowered.isalnum():
+            non_ascii_buffer.append(char)
+            continue
+        flush_non_ascii()
         if parts and not previous_separator:
             parts.append("-")
             previous_separator = True
+    flush_non_ascii()
     normalized = "".join(parts).strip("-")
     return normalized or "untitled"
