@@ -84,10 +84,42 @@ class CompileApplyService:
         except (KeyError, IndexError, TypeError) as exc:
             raise ValueError("LLM response missing choices[0].message.content") from exc
         content = str(content).strip()
+        content = self._strip_thinking(content)
         if content.startswith("```"):
             content = self._strip_code_fence(content)
         if not content:
             raise ValueError("LLM returned empty content")
+        return content
+
+    def _strip_thinking(self, content: str) -> str:
+        """Remove LLM thinking/reasoning blocks that leak into output.
+
+        Some models (e.g. MiniMax M2.7) include <think>...</think> or
+        raw thinking text before the actual answer. Strip these blocks
+        and return only the content after the last closing tag.
+        """
+        import re
+        # Remove blocks (may span multiple lines)
+        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+        # Remove <<thinking>...</thinking> variant
+        content = re.sub(r"<thinking>.*?</thinking>", "", content, flags=re.DOTALL).strip()
+        # If content starts with raw thinking (no tags), find first markdown heading
+        # which typically marks the start of actual content
+        lines = content.splitlines()
+        first_heading = None
+        for i, line in enumerate(lines):
+            if line.startswith("#") and not line.startswith("#!") and not line.startswith("## "):
+                # Skip lines inside code blocks
+                first_heading = i
+                break
+            if line.startswith("## ") or line.startswith("# "):
+                first_heading = i
+                break
+        if first_heading is not None and first_heading > 0:
+            # Check if everything before the heading looks like thinking
+            preamble = "\n".join(lines[:first_heading]).strip()
+            if preamble and not preamble.startswith("#"):
+                content = "\n".join(lines[first_heading:]).strip()
         return content
 
     def _strip_code_fence(self, content: str) -> str:
