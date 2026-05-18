@@ -88,7 +88,7 @@ def test_e2e_workflow_from_capture_to_weekly_review(temp_wiki_root: Path) -> Non
     exported_text = exported.read_text(encoding="utf-8")
     assert exported_text.startswith("---\n")
     assert "preserved" in exported_text
-    assert (external_dir / "04-知识图谱" / "知识图谱索引.md").exists()
+    assert (external_dir / "knowledge-graph" / "index.md").exists()
 
     feedback_result = FeedbackService().record(
         wiki,
