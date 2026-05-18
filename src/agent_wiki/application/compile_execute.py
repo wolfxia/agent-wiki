@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from agent_wiki.application.compile_prepare import CompilePrepareInput, CompilePrepareResult, CompilePrepareService
 from agent_wiki.application.compile_update import CompileUpdateService
-from agent_wiki.application.compile_apply import CompileApplyService
+from agent_wiki.application.compile_apply import CompileApplyService, CompileStructuredOutput
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import CompileResult, CompileUpdateInput
@@ -50,6 +50,11 @@ class CompileExecuteResult(BaseModel):
     doc_id: str | None = None
     error: str | None = None
     fallback_priority: str | None = None
+
+
+class GeneratedCompilePacket(BaseModel):
+    content: str
+    structured_output: CompileStructuredOutput | None = None
 
 
 class CompileExecuteService:
@@ -168,14 +173,12 @@ class CompileExecuteService:
                 result = self.apply_generated(
                     wiki=wiki,
                     actor=actor,
-                    data=CompileGeneratedInput(
-                        item_id=packet.item_id,
-                        doc_id=packet.prepare.proposed_doc_id,
-                        page_type=packet.prepare.proposed_page_type,
-                        topic=packet.prepare.topic,
-                        problem_cluster=packet.prepare.problem_cluster,
-                        content=content,
-                        source_refs=packet.prepare.source_refs,
+                    data=self._generated_input_from_packet(
+                        packet=packet,
+                        generated=GeneratedCompilePacket(
+                            content=content,
+                            structured_output=getattr(self._apply_service, "last_structured_output", None),
+                        ),
                     ),
                     telemetry=telemetry,
                     start_time=start_time,
@@ -219,13 +222,13 @@ class CompileExecuteService:
         packets: list[CompileExecutePacket],
         concurrency: int,
     ) -> list[CompileExecuteResult]:
-        generated: list[tuple[CompileExecutePacket, str | None, dict, Exception | None]] = []
+        generated: list[tuple[CompileExecutePacket, GeneratedCompilePacket | None, dict, Exception | None]] = []
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
             futures = [executor.submit(self._generate_packet, wiki, packet) for packet in packets]
             for packet, future in zip(packets, futures, strict=True):
                 try:
-                    content, telemetry = future.result()
-                    generated.append((packet, content, telemetry, None))
+                    generated_packet, telemetry = future.result()
+                    generated.append((packet, generated_packet, telemetry, None))
                 except Exception as exc:
                     telemetry = getattr(exc, "compile_telemetry", None)
                     if not isinstance(telemetry, dict):
@@ -233,7 +236,7 @@ class CompileExecuteService:
                     generated.append((packet, None, telemetry, exc))
 
         results: list[CompileExecuteResult] = []
-        for packet, content, telemetry, error in generated:
+        for packet, generated_packet, telemetry, error in generated:
             if error is not None:
                 queue = ReviewQueueRepository(Path(wiki.workspace_path))
                 queue.mark_failed(packet.item_id, str(error), content_state=telemetry)
@@ -252,15 +255,7 @@ class CompileExecuteService:
                 result = self.apply_generated(
                     wiki=wiki,
                     actor=actor,
-                    data=CompileGeneratedInput(
-                        item_id=packet.item_id,
-                        doc_id=packet.prepare.proposed_doc_id,
-                        page_type=packet.prepare.proposed_page_type,
-                        topic=packet.prepare.topic,
-                        problem_cluster=packet.prepare.problem_cluster,
-                        content=content or "",
-                        source_refs=packet.prepare.source_refs,
-                    ),
+                    data=self._generated_input_from_packet(packet=packet, generated=generated_packet),
                     telemetry=telemetry,
                     start_time=telemetry.get("_start_time") if telemetry else None,
                 )
@@ -287,7 +282,7 @@ class CompileExecuteService:
                 )
         return results
 
-    def _generate_packet(self, wiki: WikiConfig, packet: CompileExecutePacket) -> tuple[str, dict]:
+    def _generate_packet(self, wiki: WikiConfig, packet: CompileExecutePacket) -> tuple[GeneratedCompilePacket, dict]:
         start_time = time.monotonic()
         apply_service = self._apply_service_for_generate()
         try:
@@ -301,7 +296,30 @@ class CompileExecuteService:
             raise
         telemetry = self._attempt_telemetry(start_time, error_type=None, apply_service=apply_service)
         telemetry["_start_time"] = start_time
-        return content, telemetry
+        return GeneratedCompilePacket(
+            content=content,
+            structured_output=getattr(apply_service, "last_structured_output", None),
+        ), telemetry
+
+    def _generated_input_from_packet(
+        self,
+        packet: CompileExecutePacket,
+        generated: GeneratedCompilePacket | None,
+    ) -> CompileGeneratedInput:
+        structured = generated.structured_output if generated else None
+        return CompileGeneratedInput(
+            item_id=packet.item_id,
+            doc_id=packet.prepare.proposed_doc_id,
+            page_type=packet.prepare.proposed_page_type,
+            topic=packet.prepare.topic,
+            problem_cluster=packet.prepare.problem_cluster,
+            content=generated.content if generated else "",
+            source_refs=packet.prepare.source_refs,
+            summary=structured.summary if structured else None,
+            aliases=structured.aliases if structured else [],
+            confidence=structured.confidence if structured else None,
+            wikilinks=structured.wikilinks if structured else [],
+        )
 
     def apply_generated(
         self,

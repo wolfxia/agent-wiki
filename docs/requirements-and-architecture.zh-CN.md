@@ -137,7 +137,7 @@ Git authority → Local workspace compile/index/staging → External view/edit l
 2. Git 保存 workspace 的持久化权威：页面、`purpose.md`、配置、`MANIFEST.jsonl`、`retrieval_index.jsonl` 以及审计/日志工件。
 3. Workspace 保存 runtime、pending、proposal、index 和 conflict 状态。
 4. `.agent-wiki/` 保存本地运行时状态，不提交到 Git。
-5. `retrieval_index.jsonl` 是 Phase 1 的粗检索基线；FTS5 retrieval.db 是 v0.2 的加速索引（不进 Git，可 rebuild）。
+5. `retrieval_index.jsonl` 是 Phase 1 的粗检索基线；FTS5 retrieval.db 是 v0.2 的加速索引（不进 Git，可 rebuild）。FTS ranking 会优先 topic/problem_cluster/summary，再看正文 content，并支持 page_type 过滤。
 6. 向量检索仍是可选能力。
 
 **数据流向：**
@@ -269,8 +269,10 @@ workspace → push-view → Obsidian（全量可浏览/可编辑视图）
   - L3 proof/evidence
 
 当前实现说明：
-- 词法基线与分层输出已实现
+- FTS5+jieba 主检索、structured `topic_index.md` merge、JSONL lexical fallback 与分层输出已实现
 - `query_outcomes.jsonl` 条目包含 latency、page_type 分布、top-hit score breakdown，以及为后续 feedback join 预留的 accepted/rejected doc id 字段
+- `aw eval-retrieval` 会基于 JSONL 评估集计算 recall@k、precision@k、MRR、compiled hit ratio 与 latency，且不会写入 query outcome 日志
+- Query 可以通过 `page_types` 过滤到 atom/synthesis 等页面类型；混合检索默认对 compiled 页面加权
 - 向量路由、load budget 与更丰富的 provider orchestration 尚未实现
 
 ### 3.10 反馈与 weekly review 闭环
@@ -376,10 +378,10 @@ Review queue 在概念上仍支持 conflict、missing evidence、pending gate fi
 | Identity safety | caller cannot override resolved identity | explicit actor fields still override metadata | Divergence |
 | Propagation recovery | rollback + stale markers + mirror handling | direct write/append model only | Phase 1 Simplification |
 | Authority promotion | gate-checked commit orchestration to Git authority | Git-visible file writes only, no full orchestrator yet | Divergence |
-| Retrieval runtime | provider-pluggable, load-policy aware, budgeted | lexical baseline + layered output | Phase 1 Simplification |
+| Retrieval runtime | provider-pluggable, load-policy aware, budgeted | FTS5 + structured routing + JSONL fallback + layered output | Partial |
 | Sync | adapter-driven reverse sync and gate-to-authority path | markdown file copy modes | Phase 1 Simplification |
 | Review queue | rich workflow schema | minimal queue entries | Phase 1 Simplification |
-| Query outcomes | query path logs outcomes directly | feedback path records outcomes | Simplified |
+| Query outcomes | query path logs outcomes directly plus offline eval | feedback path records outcomes；`aw eval-retrieval` 输出检索指标 | Partial |
 | Page sensitivity | schema-backed page access policy with query filtering | no page-level sensitivity enforcement yet | Not Yet Implemented |
 
 ---

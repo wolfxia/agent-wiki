@@ -45,6 +45,82 @@ def test_structured_index_provider_returns_hits_by_topic_and_summary(temp_wiki_r
     assert hits[0].score > 0
 
 
+def test_structured_index_prefilters_unrelated_large_rows(temp_wiki_root: Path, monkeypatch) -> None:
+    import agent_wiki.infrastructure.retrieval.topic_index as topic_index_module
+
+    repository = TopicIndexRepository(temp_wiki_root)
+    for index in range(100):
+        repository.upsert(
+            {
+                "doc_id": f"raw-topic-large-{index:04d}",
+                "page_type": "raw",
+                "topic": "misc",
+                "problem_cluster": "misc",
+                "summary": "unrelated summary text " * 50,
+            }
+        )
+    repository.upsert(
+        {
+            "doc_id": "atom-topic-target",
+            "page_type": "atom",
+            "topic": "deployment",
+            "problem_cluster": "canary",
+            "summary": "canary rollout strategy",
+        }
+    )
+    tokenized_texts: list[str] = []
+    original_tokenize = topic_index_module.tokenize
+
+    def counting_tokenize(text: str):
+        tokenized_texts.append(text)
+        return original_tokenize(text)
+
+    monkeypatch.setattr(topic_index_module, "tokenize", counting_tokenize)
+
+    hits = StructuredIndexProvider(temp_wiki_root, wiki_id="personal-1").search("canary rollout", top_k=5)
+
+    assert hits[0].doc_id == "atom-topic-target"
+    assert len(tokenized_texts) < 25
+
+
+def test_structured_index_prefilter_ignores_short_common_terms(temp_wiki_root: Path, monkeypatch) -> None:
+    import agent_wiki.infrastructure.retrieval.topic_index as topic_index_module
+
+    repository = TopicIndexRepository(temp_wiki_root)
+    for index in range(100):
+        repository.upsert(
+            {
+                "doc_id": f"raw-common-large-{index:04d}",
+                "page_type": "raw",
+                "topic": "AI OS common",
+                "problem_cluster": "misc",
+                "summary": "AI OS unrelated summary",
+            }
+        )
+    repository.upsert(
+        {
+            "doc_id": "atom-rtos-target",
+            "page_type": "atom",
+            "topic": "RTOS kernel",
+            "problem_cluster": "virtualization",
+            "summary": "RTOS AI OS kernel virtualization",
+        }
+    )
+    tokenized_texts: list[str] = []
+    original_tokenize = topic_index_module.tokenize
+
+    def counting_tokenize(text: str):
+        tokenized_texts.append(text)
+        return original_tokenize(text)
+
+    monkeypatch.setattr(topic_index_module, "tokenize", counting_tokenize)
+
+    hits = StructuredIndexProvider(temp_wiki_root, wiki_id="personal-1").search("RTOS AI OS", top_k=5)
+
+    assert hits[0].doc_id == "atom-rtos-target"
+    assert len(tokenized_texts) < 25
+
+
 
 def test_topic_index_repository_deletes_rows_by_doc_id(temp_wiki_root: Path) -> None:
     repository = TopicIndexRepository(temp_wiki_root)

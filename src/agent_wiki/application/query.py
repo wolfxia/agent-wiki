@@ -23,20 +23,43 @@ class QueryService:
         query_type = self._classifier.classify(data.query)
         wiki_root = Path(wiki.workspace_path)
         manifest = ManifestRepository(wiki_root)
+        manifest_entries = manifest.read_all()
+        manifest_by_doc_id = {
+            str(entry.get("doc_id")): entry
+            for entry in manifest_entries
+            if entry.get("doc_id")
+        }
         router = RetrievalRouter(wiki_root, wiki_id=wiki.wiki_id)
 
-        hits = router.search(data.query)
+        filters = {"page_types": data.page_types} if data.page_types else None
+        hits = router.search(data.query, filters=filters)
         if data.include_pending:
             hits.extend(self._search_pending_truth_zone(wiki_root, wiki.wiki_id, data.query))
 
-        filtered_hits = [hit for hit in hits if self._include_hit(manifest, wiki_root, hit, data.include_pending)]
+        filtered_hits = [
+            hit for hit in hits
+            if self._include_hit(manifest, wiki_root, hit, data.include_pending, manifest_by_doc_id)
+        ]
+        if data.page_types:
+            allowed_page_types = set(data.page_types)
+            filtered_hits = [
+                hit for hit in filtered_hits
+                if manifest_by_doc_id.get(hit.doc_id, {}).get("page_type") in allowed_page_types
+            ]
         max_sensitivity = data.max_sensitivity or Sensitivity.INTERNAL
-        filtered_hits = [hit for hit in filtered_hits if self._sensitivity_allowed(manifest, hit.doc_id, max_sensitivity)]
+        filtered_hits = [
+            hit for hit in filtered_hits
+            if self._sensitivity_allowed(manifest, hit.doc_id, max_sensitivity, manifest_by_doc_id)
+        ]
         purpose_reader = PurposeReader(wiki_root)
-        filtered_hits = self._apply_ranking(manifest, purpose_reader, filtered_hits)
-        l2_context = self._build_l2_context(manifest, filtered_hits)
-        l3_proof = self._build_l3_proof(manifest, filtered_hits)
-        l1_answer = self._build_l1_answer(filtered_hits, wiki_root, manifest)
+        filtered_hits = self._apply_ranking(manifest, purpose_reader, filtered_hits, manifest_by_doc_id)
+        l2_context = self._build_l2_context(manifest, filtered_hits, manifest_by_doc_id)
+        l3_proof = self._build_l3_proof(manifest, filtered_hits, manifest_by_doc_id)
+        topic_index_entries = {
+            row["doc_id"]: row for row in TopicIndexRepository(wiki_root).read_all()
+            if row.get("doc_id")
+        }
+        l1_answer = self._build_l1_answer(filtered_hits, wiki_root, manifest, manifest_by_doc_id, topic_index_entries)
         if write_outcome:
             self._append_query_outcome(
                 wiki_root,
@@ -44,6 +67,7 @@ class QueryService:
                 data,
                 filtered_hits,
                 manifest,
+                manifest_by_doc_id,
                 latency_ms=round(max(time.monotonic() - start_time, 0.0) * 1000, 3),
             )
 
@@ -57,8 +81,8 @@ class QueryService:
             miss_signal=len(filtered_hits) == 0,
         )
 
-    def _include_hit(self, manifest: ManifestRepository, wiki_root: Path, hit: RetrievalHit, include_pending: bool) -> bool:
-        entry = manifest.find(hit.doc_id)
+    def _include_hit(self, manifest: ManifestRepository, wiki_root: Path, hit: RetrievalHit, include_pending: bool, manifest_by_doc_id: dict[str, dict] | None = None) -> bool:
+        entry = (manifest_by_doc_id or {}).get(hit.doc_id) or manifest.find(hit.doc_id)
         if entry is not None:
             return True
         pending_manifest_path = wiki_root / ".agent-wiki" / "pending_manifest.jsonl"
@@ -96,8 +120,8 @@ class QueryService:
                 hits.append(RetrievalHit(wiki_id=wiki_id, doc_id=pending_entry["doc_id"], score=float(score)))
         return hits
 
-    def _manifest_priority(self, manifest: ManifestRepository, doc_id: str) -> int:
-        entry = manifest.find(doc_id)
+    def _manifest_priority(self, manifest: ManifestRepository, doc_id: str, manifest_by_doc_id: dict[str, dict] | None = None) -> int:
+        entry = (manifest_by_doc_id or {}).get(doc_id) or manifest.find(doc_id)
         if entry is None:
             return 0
         if entry.get("review_status") == "disputed":
@@ -106,8 +130,8 @@ class QueryService:
             return 2
         return 1
 
-    def _purpose_boost(self, manifest: ManifestRepository, purpose_reader: PurposeReader, doc_id: str) -> float:
-        entry = manifest.find(doc_id)
+    def _purpose_boost(self, manifest: ManifestRepository, purpose_reader: PurposeReader, doc_id: str, manifest_by_doc_id: dict[str, dict] | None = None) -> float:
+        entry = (manifest_by_doc_id or {}).get(doc_id) or manifest.find(doc_id)
         if entry is None:
             return 0.0
         topic = entry.get("topic", "")
@@ -115,16 +139,18 @@ class QueryService:
             return 1.5
         return 0.0
 
-    def _apply_ranking(self, manifest: ManifestRepository, purpose_reader: PurposeReader, hits: list[RetrievalHit]) -> list[RetrievalHit]:
+    def _apply_ranking(self, manifest: ManifestRepository, purpose_reader: PurposeReader, hits: list[RetrievalHit], manifest_by_doc_id: dict[str, dict] | None = None) -> list[RetrievalHit]:
         ranked: list[RetrievalHit] = []
         for hit in hits:
-            manifest_entry = manifest.find(hit.doc_id) or {}
+            manifest_entry = (manifest_by_doc_id or {}).get(hit.doc_id) or manifest.find(hit.doc_id) or {}
             page_type_boost = 0.0
-            if manifest_entry.get("page_type") in {PageType.ATOM.value, PageType.SYNTHESIS.value, PageType.PRINCIPLE.value}:
+            if manifest_entry.get("page_type") in {PageType.ATOM.value, PageType.SYNTHESIS.value}:
+                page_type_boost = 4.0
+            elif manifest_entry.get("page_type") == PageType.PRINCIPLE.value:
                 page_type_boost = 2.0
-            purpose_boost = self._purpose_boost(manifest, purpose_reader, hit.doc_id)
+            purpose_boost = self._purpose_boost(manifest, purpose_reader, hit.doc_id, manifest_by_doc_id)
             freshness = float(manifest_entry.get("updated_at_score") or 0.0)
-            manifest_priority = float(self._manifest_priority(manifest, hit.doc_id))
+            manifest_priority = float(self._manifest_priority(manifest, hit.doc_id, manifest_by_doc_id))
             final_score = hit.score + page_type_boost + purpose_boost + freshness + manifest_priority
             metadata = {
                 **hit.metadata,
@@ -140,8 +166,8 @@ class QueryService:
 
     _SENSITIVITY_ORDER = {Sensitivity.PUBLIC: 0, Sensitivity.INTERNAL: 1, Sensitivity.CONFIDENTIAL: 2}
 
-    def _sensitivity_allowed(self, manifest: ManifestRepository, doc_id: str, max_sensitivity: Sensitivity) -> bool:
-        entry = manifest.find(doc_id)
+    def _sensitivity_allowed(self, manifest: ManifestRepository, doc_id: str, max_sensitivity: Sensitivity, manifest_by_doc_id: dict[str, dict] | None = None) -> bool:
+        entry = (manifest_by_doc_id or {}).get(doc_id) or manifest.find(doc_id)
         if entry is None:
             return True
         doc_sensitivity = Sensitivity(entry.get("sensitivity") or Sensitivity.PUBLIC)
@@ -149,10 +175,10 @@ class QueryService:
         doc_level = self._SENSITIVITY_ORDER[doc_sensitivity]
         return doc_level <= max_level
 
-    def _build_l2_context(self, manifest: ManifestRepository, hits: list[RetrievalHit]) -> list[dict]:
+    def _build_l2_context(self, manifest: ManifestRepository, hits: list[RetrievalHit], manifest_by_doc_id: dict[str, dict] | None = None) -> list[dict]:
         context = []
         for hit in hits[:3]:
-            entry = manifest.find(hit.doc_id) or {}
+            entry = (manifest_by_doc_id or {}).get(hit.doc_id) or manifest.find(hit.doc_id) or {}
             caveat = ""
             if entry.get("review_status") == "disputed":
                 dispute_reason = entry.get("dispute_reason", "unknown dispute")
@@ -160,21 +186,21 @@ class QueryService:
             context.append({"wiki_id": hit.wiki_id, "doc_id": hit.doc_id, "score": hit.score, "caveat": caveat})
         return context
 
-    def _build_l3_proof(self, manifest: ManifestRepository, hits: list[RetrievalHit]) -> list[dict]:
+    def _build_l3_proof(self, manifest: ManifestRepository, hits: list[RetrievalHit], manifest_by_doc_id: dict[str, dict] | None = None) -> list[dict]:
         proof = []
         for hit in hits[:3]:
-            entry = manifest.find(hit.doc_id) or {}
+            entry = (manifest_by_doc_id or {}).get(hit.doc_id) or manifest.find(hit.doc_id) or {}
             proof.append({"doc_id": hit.doc_id, "source_refs": entry.get("source_refs", [])})
         return proof
 
-    def _build_l1_answer(self, hits: list[RetrievalHit], wiki_root: Path, manifest: ManifestRepository) -> str:
+    def _build_l1_answer(self, hits: list[RetrievalHit], wiki_root: Path, manifest: ManifestRepository, manifest_by_doc_id: dict[str, dict] | None = None, topic_index_entries: dict[str, dict] | None = None) -> str:
         if not hits:
             return "No matching knowledge found."
         top_hit = hits[0]
-        topic_index_entry = TopicIndexRepository(wiki_root).find(top_hit.doc_id)
+        topic_index_entry = (topic_index_entries or {}).get(top_hit.doc_id) or TopicIndexRepository(wiki_root).find(top_hit.doc_id)
         if topic_index_entry and topic_index_entry.get("summary"):
             return topic_index_entry["summary"]
-        manifest_entry = manifest.find(top_hit.doc_id) or {}
+        manifest_entry = (manifest_by_doc_id or {}).get(top_hit.doc_id) or manifest.find(top_hit.doc_id) or {}
         if manifest_entry.get("summary"):
             return str(manifest_entry["summary"])
         page_path = wiki_root / "pages" / f"{top_hit.doc_id}.md"
@@ -192,6 +218,7 @@ class QueryService:
         data: QueryInput,
         hits: list[RetrievalHit],
         manifest: ManifestRepository,
+        manifest_by_doc_id: dict[str, dict] | None,
         latency_ms: float,
     ) -> None:
         path = wiki_root / "query_outcomes.jsonl"
@@ -203,7 +230,7 @@ class QueryService:
             "actor_id": actor.actor_id,
             "latency_ms": latency_ms,
             "score_breakdown": self._score_breakdown(hits),
-            "page_types": self._page_type_distribution(manifest, hits),
+            "page_types": self._page_type_distribution(manifest, hits, manifest_by_doc_id),
             "accepted_doc_ids": [],
             "rejected_doc_ids": [],
         }
@@ -235,10 +262,10 @@ class QueryService:
             )
         return breakdown
 
-    def _page_type_distribution(self, manifest: ManifestRepository, hits: list[RetrievalHit]) -> dict[str, int]:
+    def _page_type_distribution(self, manifest: ManifestRepository, hits: list[RetrievalHit], manifest_by_doc_id: dict[str, dict] | None = None) -> dict[str, int]:
         distribution: dict[str, int] = {}
         for hit in hits:
-            entry = manifest.find(hit.doc_id) or {}
+            entry = (manifest_by_doc_id or {}).get(hit.doc_id) or manifest.find(hit.doc_id) or {}
             page_type = str(entry.get("page_type") or "unknown")
             distribution[page_type] = distribution.get(page_type, 0) + 1
         return distribution

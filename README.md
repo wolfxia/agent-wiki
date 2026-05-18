@@ -144,6 +144,8 @@ raw intake
 
 `wiki.compile_prepare` is read-only. It prepares bounded raw batches and traceable source refs, but it does not generate truth-zone prose inside Agent Wiki. `aw compile-execute` is the CLI bridge for cron workers: without `--input-file` or `--apply` it claims suggestions and prints evidence packets as JSON; with `--input-file` it applies generated content through `compile_update`; with `--apply` it runs the full loop in one command: prepare, call an OpenAI-compatible chat completions API, apply the generated atom page, and resolve or fail the queue item. `--apply --concurrency N` parallelizes only LLM generation; authority writes to pages, `MANIFEST.jsonl`, `review_queue.jsonl`, FTS, and `topic_index.md` remain serialized by the executor.
 
+LLM compile output is requested as structured JSON with `content`, `summary`, `aliases`, `confidence`, `wikilinks`, `claims`, `open_questions`, and `evidence_coverage`. `content` remains the Markdown page body, while supported metadata fields are written through `CompileGeneratedInput` into `MANIFEST.jsonl`, FTS, and `topic_index.md`. Plain Markdown responses still fall back to the previous compatible path.
+
 Each compile attempt records operational telemetry in the related `review_queue` item's `content_state`: `latency_seconds`, `attempts`, `error_type`, and `token_usage` when the provider returns usage data. This lets `aw maintain` and `QualityReportService` report failure rate, failure breakdown, average compile latency, metadata completeness, and raw-cluster coverage without changing the authority model.
 
 `--apply` requires per-wiki registry config:
@@ -163,8 +165,9 @@ compile:
 
 ## What Is New In v0.2.0
 
-- FTS5 full-text search through `SQLiteFTSIndexProvider`, stored in `.agent-wiki/retrieval.db`.
-- Query ranking now exposes debug scores: `page_type_boost`, `lexical_score`, `structured_score`, `purpose_boost`, and `freshness`.
+- FTS5 full-text search through `SQLiteFTSIndexProvider`, stored in `.agent-wiki/retrieval.db`, with topic/problem-cluster/summary weighted above body content and prefix fallback for short queries.
+- Query ranking now exposes debug scores: `page_type_boost`, `lexical_score`, `structured_score`, `purpose_boost`, and `freshness`; `QueryInput.page_types` can filter retrieval to page types such as `atom` and `synthesis`.
+- `aw eval-retrieval` runs JSONL retrieval eval sets and reports recall@k, precision@k, MRR, compiled hit ratio, and latency stats without writing query outcomes.
 - Query outcome logging records latency, page-type distribution, score breakdown, and empty feedback hooks (`accepted_doc_ids`, `rejected_doc_ids`) for later evaluation loops.
 - Index consistency health checks cover manifest, `retrieval_index.jsonl`, FTS, pages, and topic index consistency.
 - `aw migrate --normalize-doc-ids` lowercases and hyphenates old `doc_id`s, renames page files, updates source refs, and backs up `MANIFEST.jsonl`.
@@ -183,6 +186,7 @@ compile:
 | `aw health` | Registry load, actor resolution, and tool-list self-check |
 | `aw serve` | Start FastMCP stdio server |
 | `aw query` | Query the knowledge base |
+| `aw eval-retrieval` | Run retrieval quality evals from `eval/retrieval_queries.jsonl` or a custom JSONL file |
 | `aw capture-raw` | Capture raw source or learning note |
 | `aw compile-prepare` | Prepare agent-facing raw evidence packets for compilation |
 | `aw compile-execute` | Claim compile suggestions, emit JSON packets, apply generated content from `--input-file`, or run one-command LLM compile with `--apply` |
@@ -230,7 +234,7 @@ capture_raw / pull-view
   -> feedback / weekly-review / compile backlog
 ```
 
-Retrieval currently combines typed graph hits from `knowledge_graph.jsonl`, structured metadata, lexical matching, FTS5 index health, purpose-aware ranking, page type boosts, and freshness. Vector search remains a plugin-level enhancement rather than the baseline. A wiki can opt into typed relation extraction by adding `relation_schema.yaml`; `templates/relation_schema.yaml` provides a configurable starting point.
+Retrieval currently combines typed graph hits from `knowledge_graph.jsonl`, FTS5 field-weighted matching, structured metadata from `topic_index.md`, JSONL lexical fallback, purpose-aware ranking, page type boosts, and freshness. Structured and lexical fallback paths prefilter obvious non-candidates before token/fuzzy scoring so historical large indexes remain usable. Vector search remains a plugin-level enhancement rather than the baseline. A wiki can opt into typed relation extraction by adding `relation_schema.yaml`; `templates/relation_schema.yaml` provides a configurable starting point.
 
 Note: `registry.yaml` `coarse_provider` is design/configuration metadata today; it is not yet the runtime switch that selects the active retrieval provider.
 

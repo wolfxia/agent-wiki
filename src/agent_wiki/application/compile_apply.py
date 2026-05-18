@@ -7,9 +7,28 @@ from collections.abc import Callable
 from typing import Any
 
 import httpx
+from pydantic import BaseModel, Field, field_validator
 
 from agent_wiki.application.compile_prepare import CompilePrepareResult
 from agent_wiki.bootstrap.registry_loader import WikiConfig
+
+
+class CompileStructuredOutput(BaseModel):
+    content: str
+    summary: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+    confidence: str | None = None
+    wikilinks: list[str] = Field(default_factory=list)
+    claims: list[str] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+    evidence_coverage: str | None = None
+
+    @field_validator("content")
+    @classmethod
+    def content_must_not_be_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("content must not be empty")
+        return value.strip()
 
 
 class CompileApplyService:
@@ -27,6 +46,7 @@ class CompileApplyService:
         self.last_attempts = 0
         self.last_usage: dict | None = None
         self.last_error_type: str | None = None
+        self.last_structured_output: CompileStructuredOutput | None = None
 
     def generate(self, wiki: WikiConfig, prepare_result: CompilePrepareResult) -> str:
         llm = self._llm_config(wiki)
@@ -42,6 +62,7 @@ class CompileApplyService:
         prompt = self._build_prompt(prepare_result)
         self.last_usage = None
         self.last_error_type = None
+        self.last_structured_output = None
         response = self._post_with_retries(
             self._chat_completions_url(str(self._config_value(llm, "base_url"))),
             headers={
@@ -55,7 +76,7 @@ class CompileApplyService:
                         "role": "system",
                         "content": (
                             "You compile raw evidence into an Agent Wiki atom page. "
-                            "Return only Markdown content for the page, no code fence."
+                            "Return only valid JSON, no Markdown code fence and no prose outside JSON."
                         ),
                     },
                     {"role": "user", "content": prompt},
@@ -143,6 +164,18 @@ class CompileApplyService:
             "The primary reader is an AI agent. Use concise structured Markdown.\n"
             "Include sections for Claims, Applicability, Evidence, Relationship Hints, and Open Questions when relevant.\n"
             "Preserve source refs exactly. Do not invent facts beyond the raw evidence.\n\n"
+            "Return only valid JSON with this object shape:\n"
+            "{\n"
+            '  "content": "Markdown page body",\n'
+            '  "summary": "one retrieval-ready sentence",\n'
+            '  "aliases": ["alternate search phrase"],\n'
+            '  "confidence": "low|medium|high",\n'
+            '  "wikilinks": ["[[related-doc-id]]"],\n'
+            '  "claims": ["atomic factual claim"],\n'
+            '  "open_questions": ["unknown or weakly evidenced question"],\n'
+            '  "evidence_coverage": "brief coverage note"\n'
+            "}\n"
+            "If you cannot provide an optional field, use null or an empty list.\n\n"
             f"compile_prepare_packet:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
         )
 
@@ -158,7 +191,23 @@ class CompileApplyService:
         if not content:
             self.last_error_type = "invalid_output"
             raise ValueError("LLM returned empty content")
+        structured = self._parse_structured_output(content)
+        if structured is not None:
+            self.last_structured_output = structured
+            return structured.content
         return content
+
+    def _parse_structured_output(self, content: str) -> CompileStructuredOutput | None:
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return CompileStructuredOutput.model_validate(payload)
+        except ValueError:
+            return None
 
     def _strip_thinking(self, content: str) -> str:
         """Remove LLM thinking/reasoning blocks that leak into output.

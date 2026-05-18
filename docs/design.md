@@ -20,7 +20,7 @@ In cybernetic terms: knowledge base is the controlled object, agent behavior is 
 
 1. **Compile before retrieve** — Correct. But compiled products must be maintainable, traceable, reusable knowledge artifacts, not fancy summaries.
 2. **Skillify is a design principle, not a post-hoc feature** — Knowledge must carry routing semantics from entry into the system.
-3. **Hybrid retrieval is the calling skeleton, not an optimization** — A configured coarse retrieval provider finds candidate pages, full-page/section loading provides understanding, and layered presentation controls context cost. Phase 1/v0.2 defaults to FTS5+jieba when `.agent-wiki/retrieval.db` exists, merges structured `topic_index.md` hits, and falls back to JSONL lexical retrieval; vector retrieval is an optional provider.
+3. **Hybrid retrieval is the calling skeleton, not an optimization** — A configured coarse retrieval provider finds candidate pages, full-page/section loading provides understanding, and layered presentation controls context cost. Phase 1/v0.2 defaults to FTS5+jieba when `.agent-wiki/retrieval.db` exists, merges structured `topic_index.md` hits, and falls back to JSONL lexical retrieval; vector retrieval is an optional provider. FTS and structured fallback paths now include field weighting, page-type filtering, short-query prefix fallback, and prefiltering so local evals can run against the live wiki without full-scan tokenization.
 4. **Schema must be an operation contract, not a directional manifesto** — It must explicitly tell LLM/Agent: which pages to update on new source, what contradictions to mark, when to create vs revise.
 
 ---
@@ -214,6 +214,7 @@ Implementation boundaries for Phase 1:
 - `wiki.compile_prepare` is a read-only MCP tool over the shared service layer.
 - `aw compile-execute` is a CLI-only executor bridge for cron workers; it does not contain an LLM dependency.
 - `aw compile-execute --apply --concurrency N` is bounded at the generation layer; the current Phase 1 executor does not make authority writes concurrently.
+- `aw compile-execute --apply` requests structured JSON output from the LLM. Valid JSON populates Markdown `content` plus `summary`, `aliases`, `confidence`, and `wikilinks` for manifest and retrieval indexes; invalid JSON falls back to legacy Markdown-only output.
 - CLI/REST may expose the same service for operator and dashboard use, but MCP is the primary agent interface.
 - Review queue consumption changes state (`open -> assigned -> in_progress -> resolved -> archived`) and records the consumer; it does not execute compile content generation by itself.
 - `compile_update.analyze()` stays a baseline revise/create heuristic. Automatic compile preparation should pass explicit proposed doc ids and source refs rather than relying on analyze alone for batching decisions.
@@ -402,7 +403,10 @@ Implemented today:
 - FTS5+jieba primary retrieval when `.agent-wiki/retrieval.db` exists; JSONL lexical fallback remains
 - CJK tokenization in `src/agent_wiki/infrastructure/retrieval/tokenizer.py`
 - simple fuzzy matching in `src/agent_wiki/infrastructure/retrieval/fuzzy.py`
-- weighted lexical scoring across topic, problem cluster, and content
+- weighted lexical scoring across topic, problem cluster, summary, and content
+- FTS5 column weights that prioritize topic/problem-cluster/summary over content, plus `page_type` / `page_types` filters
+- short-query prefix fallback and long-query phrase/token matching
+- retrieval eval through `aw eval-retrieval`, backed by `eval/retrieval_queries.jsonl`
 - implemented routing through `StructuredIndexProvider`, `TopicIndexRepository`, `SQLiteFTSIndexProvider`, and `RetrievalRouter`
 - heuristic query classification
 - layered L1/L2/L3 response assembly
@@ -1161,6 +1165,7 @@ Agent Wiki should remain fast enough for local agent workflows while preserving 
 Current baseline characteristics:
 
 - Query path routes through FTS5+jieba when `.agent-wiki/retrieval.db` exists, merges structured `topic_index.md` hits, and falls back to file-backed lexical retrieval over `retrieval_index.jsonl`.
+- FTS, structured, and fallback ranking now support page-type filtering and default compiled-page boosts; eval runs can compare full-corpus retrieval with atom/synthesis-only retrieval.
 - Writes are bounded filesystem and JSONL append/update flows.
 - Cross-wiki query exists but remains a simple fan-out baseline.
 - No vector or heavyweight remote retrieval provider is required for minimum functionality.

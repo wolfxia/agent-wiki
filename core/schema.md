@@ -114,7 +114,7 @@ The current v0.2 Pydantic models implement a smaller runtime schema than the ful
 |---|---|
 | `CaptureRawInput` | `doc_id`, `topic`, `problem_cluster`, `summary`, `content`, `source_refs` |
 | `CompileUpdateInput` | `doc_id`, `page_type`, `topic`, `problem_cluster`, `summary`, `aliases`, `confidence`, `contested`, `wikilinks`, `content`, `source_refs`, `evidence_note`, `review_status`, `dispute_reason`, `sensitivity`, `allow_shared_write_without_sources` |
-| `QueryInput` | `query`, `include_pending`, `max_sensitivity` |
+| `QueryInput` | `query`, `include_pending`, `max_sensitivity`, `page_types` |
 
 Target fields such as `query_types`, `route_priority`, `load_policy`, `updated`, and `access_policy` do **not** exist in the current Pydantic input models. They remain target schema fields for later contract expansion.
 
@@ -300,6 +300,9 @@ Six fixed types:
 ### 8.2.1 Retrieval provider baseline
 - Retrieval is provider-based, not vector-mandatory.
 - Phase 1/v0.2 runtime uses FTS5+jieba as the primary path when `.agent-wiki/retrieval.db` exists, merges structured `topic_index.md` hits, and falls back to JSONL lexical search over `retrieval_index.jsonl`.
+- Current FTS ranking weights `topic`, `problem_cluster`, and `summary` above body `content`, supports `page_type` / `page_types` filters, and uses prefix fallback for short queries.
+- Structured and JSONL fallback paths prefilter obvious non-candidates before token/fuzzy scoring to keep large local indexes usable.
+- `aw eval-retrieval` reads `eval/retrieval_queries.jsonl`-style ground-truth queries and reports recall@k, precision@k, MRR, compiled hit ratio, and latency without appending query outcomes.
 - Vector retrieval is an optional enhancement provider and must not be required for minimum query capability.
 - Provider outputs must use the same normalized retrieval hit shape and must reference `wiki_id:doc_id`.
 
@@ -537,6 +540,7 @@ The current implementation baseline in `src/agent_wiki/` enforces the following 
 - raw capture with committed and pending paths
 - compile update for `atom` and `synthesis`
 - FTS5 primary retrieval, structured topic-index merge, JSONL lexical fallback, and L1/L2/L3 output
+- structured retrieval eval through `aw eval-retrieval`
 - dispute caveats during query
 - pending truth-zone opt-in querying
 - minimal manifest persistence

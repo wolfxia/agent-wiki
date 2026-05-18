@@ -86,14 +86,46 @@ class StructuredIndexProvider:
 
     def search(self, query: str, top_k: int, filters: dict | None = None) -> list[RetrievalHit]:
         terms = tokenize(query)
+        lowercase_terms = [term.lower() for term in terms if term]
+        required_terms = self._candidate_terms(lowercase_terms)
+        page_types = self._filter_page_types(filters)
         hits: list[RetrievalHit] = []
         for row in self.repository.read_all():
+            if page_types and row.get("page_type") not in page_types:
+                continue
+            searchable_text = " ".join(
+                str(row.get(field, ""))
+                for field in ("topic", "problem_cluster", "summary")
+            ).lower()
+            if required_terms and not self._might_match(searchable_text, required_terms):
+                continue
             score = self._score_row(row, terms)
             if score <= 0:
                 continue
             hits.append(RetrievalHit(wiki_id=self.wiki_id, doc_id=row["doc_id"], score=score, section="topic_index"))
         hits.sort(key=lambda hit: hit.score, reverse=True)
         return hits[:top_k]
+
+    def _filter_page_types(self, filters: dict | None) -> set[str]:
+        if not filters:
+            return set()
+        if filters.get("page_types"):
+            return {str(page_type) for page_type in filters["page_types"] if str(page_type)}
+        if filters.get("page_type"):
+            return {str(filters["page_type"])}
+        return set()
+
+    def _might_match(self, searchable_text: str, terms: list[str]) -> bool:
+        for term in terms:
+            if term in searchable_text:
+                return True
+            if len(term) >= 5 and term[:5] in searchable_text:
+                return True
+        return False
+
+    def _candidate_terms(self, terms: list[str]) -> list[str]:
+        strong = [term for term in terms if len(term) >= 4]
+        return strong or terms
 
     def _score_row(self, row: dict, terms: list[str]) -> float:
         topic_tokens = tokenize(str(row.get("topic", "")))

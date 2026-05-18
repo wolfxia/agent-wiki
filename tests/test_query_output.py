@@ -458,3 +458,42 @@ def test_query_hits_include_ranking_debug_metadata(temp_wiki_root: Path) -> None
     assert metadata["purpose_boost"] > 0
     assert "freshness" in metadata
     assert metadata["final_score"] == result.hits[0].score
+
+
+def test_query_can_filter_to_compiled_page_types(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-filter-query-1",
+            topic="deployment",
+            problem_cluster="filter-query",
+            content="# Raw filter\n\ncompiled filter target appears here repeatedly compiled filter target",
+            source_refs=[],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-filter-query-1",
+            page_type="atom",
+            topic="deployment",
+            problem_cluster="filter-query",
+            content="# Atom filter\n\ncompiled filter target",
+            source_refs=["personal-1:raw-filter-query-1"],
+        ),
+    )
+
+    result = QueryService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=QueryInput(query="compiled filter target", page_types=["atom", "synthesis"]),
+    )
+
+    assert result.hits
+    assert {hit.doc_id for hit in result.hits} == {"atom-filter-query-1"}

@@ -139,7 +139,7 @@ The following remain the active requirements baseline:
 2. Git stores the persistent authority of the workspace: pages, `purpose.md`, config, `MANIFEST.jsonl`, `retrieval_index.jsonl`, and audit/log artifacts.
 3. Workspace holds runtime, pending, proposals, indexes, and conflict state.
 4. `.agent-wiki/` holds local runtime state and is not committed.
-5. v0.2 retrieval uses FTS5+jieba in `.agent-wiki/retrieval.db` as the accelerated local index, merges structured `topic_index.md`, and keeps `retrieval_index.jsonl` as the Git-tracked JSONL lexical fallback.
+5. v0.2 retrieval uses FTS5+jieba in `.agent-wiki/retrieval.db` as the accelerated local index, merges structured `topic_index.md`, and keeps `retrieval_index.jsonl` as the Git-tracked JSONL lexical fallback. FTS ranking prioritizes topic/problem-cluster/summary over body content and supports page-type filtering.
 6. Vector retrieval remains optional.
 
 **Data flow:**
@@ -285,6 +285,8 @@ Current implementation note:
 - FTS5+jieba primary retrieval, structured `topic_index.md` merge, JSONL lexical fallback, and layered output are implemented
 - debug scoring includes lexical/structured scores plus page type, purpose, freshness, and manifest-priority boosts
 - `query_outcomes.jsonl` entries include latency, page-type distribution, top-hit score breakdown, and empty accepted/rejected doc id fields for later feedback joins
+- `aw eval-retrieval` runs JSONL retrieval evals without mutating query outcome logs and reports recall@k, precision@k, MRR, compiled hit ratio, and latency stats
+- Query filters can restrict retrieval to `page_types` such as `atom` and `synthesis`; compiled pages receive the default ranking boost in mixed retrieval
 - vector routing, load-policy execution, query budgets, and richer provider orchestration are not yet implemented
 
 ### 3.10 Feedback and weekly review loop
@@ -398,7 +400,7 @@ The following items should be treated as blockers before any stronger claim of p
 | Compilation foundation | compile-ready raw authority intake with metadata continuity | code path improved through normalization, repair, and lint; live data still needs cleanup/migration | Partial |
 | Sync | adapter-driven reverse sync and gate-to-authority path | adapter-driven markdown sync, Obsidian date sanitization, category push-view, and explicit graph export; gate-to-authority path missing | Partial |
 | Review queue | rich workflow schema | minimal queue entries | Phase 1 Simplification |
-| Query outcomes | query path logs outcomes directly | query path logs outcomes directly; feedback appends human-evaluation records | Simplified |
+| Query outcomes | query path logs outcomes directly plus offline eval | query path logs outcomes directly; feedback appends human-evaluation records; `aw eval-retrieval` reports retrieval metrics | Partial |
 | Page sensitivity | schema-backed page access policy with query filtering | basic sensitivity filtering via `QueryInput.max_sensitivity`; `access_policy` and transport-aware filtering incomplete | Partial |
 
 ---

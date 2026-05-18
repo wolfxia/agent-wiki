@@ -64,6 +64,7 @@ class QueryInput(BaseModel):
     query: str
     include_pending: bool = False
     max_sensitivity: Sensitivity | None = None
+    page_types: list[str] | None = None
 
 
 class QueryResult(BaseModel):

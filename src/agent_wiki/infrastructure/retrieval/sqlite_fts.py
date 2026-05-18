@@ -90,35 +90,42 @@ class SQLiteFTSIndexProvider:
     def search(self, query: str, top_k: int, filters: dict | None = None) -> list[RetrievalHit]:
         if not self.db_path.exists():
             return []
-        match_query = self._match_query(query)
-        if not match_query:
+        match_queries = self._match_queries(query)
+        if not match_queries:
             return []
-        params: list[object] = [match_query]
-        where = "retrieval_fts MATCH ?"
-        if filters and filters.get("page_type"):
-            where += " AND page_type = ?"
-            params.append(filters["page_type"])
-        params.append(top_k)
-        try:
-            with self._connect() as connection:
-                rows = connection.execute(
-                    f"""
-                    SELECT wiki_id, doc_id, bm25(retrieval_fts) AS rank
-                    FROM retrieval_fts
-                    WHERE {where}
-                    ORDER BY rank
-                    LIMIT ?
-                    """,
-                    params,
-                ).fetchall()
-        except sqlite3.OperationalError:
-            return []
+        rows = []
+        for match_query in match_queries:
+            params: list[object] = [match_query]
+            where = "retrieval_fts MATCH ?"
+            page_types = self._filter_page_types(filters)
+            if page_types:
+                placeholders = ",".join("?" for _ in page_types)
+                where += f" AND page_type IN ({placeholders})"
+                params.extend(page_types)
+            params.append(top_k)
+            try:
+                with self._connect() as connection:
+                    rows = connection.execute(
+                        f"""
+                        SELECT wiki_id, doc_id, bm25(retrieval_fts, 0.0, 0.0, 0.0, 8.0, 6.0, 5.0, 1.0, 3.0, 0.0, 0.0) AS rank
+                        FROM retrieval_fts
+                        WHERE {where}
+                        ORDER BY rank
+                        LIMIT ?
+                        """,
+                        params,
+                    ).fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+            if rows:
+                break
         return [
             RetrievalHit(
                 wiki_id=row["wiki_id"] or self.wiki_id,
                 doc_id=row["doc_id"],
-                score=max(0.0, -float(row["rank"])),
+                score=1.0 / (1.0 + max(float(row["rank"]), 0.0)),
                 section="fts5",
+                metadata={"fts_rank": float(row["rank"])},
             )
             for row in rows
         ]
@@ -162,12 +169,37 @@ class SQLiteFTSIndexProvider:
             "updated_at": payload.get("updated_at") or str(time()),
         }
 
-    def _match_query(self, query: str) -> str:
+    def _match_queries(self, query: str) -> list[str]:
         terms = self.tokenizer.tokenize(query)
         if not terms:
             terms = [term for term in re.split(r"\s+", query.strip()) if term]
-        sanitized = [term.replace('"', ' ') for term in terms]
-        return " ".join(f'"{term.strip()}"' for term in sanitized if term.strip())
+        sanitized = [self._sanitize_term(term) for term in terms]
+        sanitized = [term for term in sanitized if term]
+        if not sanitized:
+            return []
+        exact = " ".join(f'"{term}"' for term in sanitized)
+        prefix = " OR ".join(f"{term}*" for term in sanitized if len(term) >= 3)
+        if len(sanitized) <= 2:
+            return [exact, prefix] if prefix and prefix != exact else [exact]
+        phrase = self._sanitize_phrase(query)
+        phrase_match = f'"{phrase}"' if phrase else exact
+        token_mix = " OR ".join(f'"{term}"' for term in sanitized)
+        return [f"{phrase_match} OR ({token_mix})", exact]
+
+    def _sanitize_term(self, term: str) -> str:
+        return re.sub(r'[^\w\u4e00-\u9fff-]+', ' ', term.replace('"', ' ')).strip()
+
+    def _sanitize_phrase(self, query: str) -> str:
+        return re.sub(r'\s+', ' ', query.replace('"', ' ')).strip()
+
+    def _filter_page_types(self, filters: dict | None) -> list[str]:
+        if not filters:
+            return []
+        if filters.get("page_types"):
+            return [str(page_type) for page_type in filters["page_types"] if str(page_type)]
+        if filters.get("page_type"):
+            return [str(filters["page_type"])]
+        return []
 
     def _token_text(self, payload: dict) -> str:
         source = " ".join(

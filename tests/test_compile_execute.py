@@ -4,7 +4,7 @@ from pathlib import Path
 
 from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
 from agent_wiki.application.compile_execute import CompileExecuteInput, CompileExecuteService, CompileGeneratedInput
-from agent_wiki.application.compile_apply import CompileApplyService
+from agent_wiki.application.compile_apply import CompileApplyService, CompileStructuredOutput
 from agent_wiki.application.compile_suggest import CompileSuggestService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
@@ -263,6 +263,112 @@ def test_compile_apply_service_calls_openai_compatible_api(monkeypatch, temp_wik
     assert captured["timeout"] == 12
 
 
+def test_compile_apply_service_parses_structured_json_output(monkeypatch, temp_wiki_root: Path) -> None:
+    wiki, _actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-structured-llm")
+    wiki = wiki.model_copy(
+        update={
+            "compile": {
+                "llm": {
+                    "base_url": "https://llm.example/v1",
+                    "api_key_env": "TEST_LLM_API_KEY",
+                    "model": "test-model",
+                }
+            }
+        }
+    )
+    packet = CompileExecuteService().prepare_next(
+        wiki=wiki,
+        actor=_actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )[0]
+    captured: dict[str, object] = {}
+
+    def fake_post(url: str, *, headers: dict, json: dict, timeout: float):
+        captured["json"] = json
+
+        class Response:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict:
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json_module.dumps(
+                                    {
+                                        "content": "# Structured Atom\n\n## Claims\n- Compiled claim.",
+                                        "summary": "Structured summary for retrieval.",
+                                        "aliases": ["structured alias"],
+                                        "confidence": "medium",
+                                        "wikilinks": ["[[related-atom]]"],
+                                        "claims": ["Compiled claim."],
+                                        "open_questions": ["What changes next?"],
+                                        "evidence_coverage": "Covers three raw notes.",
+                                    }
+                                )
+                            }
+                        }
+                    ]
+                }
+
+        return Response()
+
+    json_module = json
+    monkeypatch.setenv("TEST_LLM_API_KEY", "secret-token")
+    service = CompileApplyService(http_post=fake_post)
+
+    content = service.generate(wiki, packet.prepare)
+
+    assert content == "# Structured Atom\n\n## Claims\n- Compiled claim."
+    assert service.last_structured_output is not None
+    assert service.last_structured_output.summary == "Structured summary for retrieval."
+    assert service.last_structured_output.aliases == ["structured alias"]
+    assert service.last_structured_output.confidence == "medium"
+    assert service.last_structured_output.wikilinks == ["[[related-atom]]"]
+    messages = captured["json"]["messages"]
+    assert "Return only valid JSON" in messages[0]["content"]
+    assert '"evidence_coverage"' in messages[1]["content"]
+
+
+def test_compile_apply_service_falls_back_to_plain_markdown(monkeypatch, temp_wiki_root: Path) -> None:
+    wiki, _actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-plain-llm")
+    wiki = wiki.model_copy(
+        update={
+            "compile": {
+                "llm": {
+                    "base_url": "https://llm.example/v1",
+                    "api_key_env": "TEST_LLM_API_KEY",
+                    "model": "test-model",
+                }
+            }
+        }
+    )
+    packet = CompileExecuteService().prepare_next(
+        wiki=wiki,
+        actor=_actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )[0]
+
+    def fake_post(url: str, *, headers: dict, json: dict, timeout: float):
+        class Response:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict:
+                return {"choices": [{"message": {"content": "# Plain Atom\n\nClaim: compatible."}}]}
+
+        return Response()
+
+    monkeypatch.setenv("TEST_LLM_API_KEY", "secret-token")
+    service = CompileApplyService(http_post=fake_post)
+
+    content = service.generate(wiki, packet.prepare)
+
+    assert content == "# Plain Atom\n\nClaim: compatible."
+    assert service.last_structured_output is None
+
+
 def test_compile_apply_service_defaults_timeout_to_120(monkeypatch, temp_wiki_root: Path) -> None:
     wiki, _actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-llm-default-timeout")
     wiki = wiki.model_copy(
@@ -471,6 +577,44 @@ def test_compile_execute_apply_next_generates_applies_and_resolves(temp_wiki_roo
     assert stored["content_state"]["latency_seconds"] >= 0
     assert stored["content_state"]["attempts"] == 1
     assert stored["content_state"]["error_type"] is None
+
+
+def test_compile_execute_apply_next_persists_structured_metadata(temp_wiki_root: Path) -> None:
+    wiki, actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-structured-apply")
+
+    class StructuredApplyService:
+        last_attempts = 1
+        last_usage = None
+        last_structured_output = None
+
+        def generate(self, wiki, prepare):
+            self.last_structured_output = CompileStructuredOutput(
+                content="# Structured Apply\n\nClaim: structured metadata persists.",
+                summary="Structured metadata summary.",
+                aliases=["metadata alias"],
+                confidence="high",
+                wikilinks=["[[metadata-neighbor]]"],
+                claims=["structured metadata persists"],
+                open_questions=[],
+                evidence_coverage="Three source refs covered.",
+            )
+            return self.last_structured_output.content
+
+    result = CompileExecuteService(apply_service=StructuredApplyService()).apply_next(
+        wiki=wiki,
+        actor=actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )[0]
+
+    manifest_entry = next(
+        entry for entry in (temp_wiki_root / "MANIFEST.jsonl").read_text(encoding="utf-8").splitlines()
+        if json.loads(entry).get("doc_id") == result.doc_id
+    )
+    stored = json.loads(manifest_entry)
+    assert stored["summary"] == "Structured metadata summary."
+    assert stored["aliases"] == ["metadata alias"]
+    assert stored["confidence"] == "high"
+    assert stored["wikilinks"] == ["[[metadata-neighbor]]"]
 
 
 def test_compile_execute_apply_next_records_token_usage_when_available(temp_wiki_root: Path) -> None:

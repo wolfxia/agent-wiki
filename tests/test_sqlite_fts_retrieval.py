@@ -192,3 +192,78 @@ def test_sqlite_fts_uses_pre_tokenized_text_for_chinese_terms(temp_wiki_root: Pa
     assert hits
     assert hits[0].doc_id == "raw-harmony"
     assert isinstance(JiebaTokenizer(), JiebaTokenizer)
+
+
+def test_sqlite_fts_weights_topic_and_summary_above_body_repetition(temp_wiki_root: Path) -> None:
+    provider = SQLiteFTSIndexProvider(temp_wiki_root, wiki_id="personal-1")
+    provider.batch_upsert(
+        [
+            (
+                "atom-field-weighted",
+                {
+                    "wiki_id": "personal-1",
+                    "doc_id": "atom-field-weighted",
+                    "page_type": "atom",
+                    "topic": "canary rollout",
+                    "problem_cluster": "deployment",
+                    "summary": "Canary rollout deployment strategy.",
+                    "content": "Short body.",
+                },
+            ),
+            (
+                "raw-body-repeated",
+                {
+                    "wiki_id": "personal-1",
+                    "doc_id": "raw-body-repeated",
+                    "page_type": "raw",
+                    "topic": "misc",
+                    "problem_cluster": "misc",
+                    "summary": "misc",
+                    "content": "canary rollout canary rollout canary rollout canary rollout",
+                },
+            ),
+        ]
+    )
+
+    hits = provider.search("canary rollout", top_k=5)
+
+    assert [hit.doc_id for hit in hits[:2]] == ["atom-field-weighted", "raw-body-repeated"]
+    assert hits[0].metadata["fts_rank"] < hits[1].metadata["fts_rank"]
+
+
+def test_sqlite_fts_filters_by_page_type_and_page_types(temp_wiki_root: Path) -> None:
+    provider = SQLiteFTSIndexProvider(temp_wiki_root, wiki_id="personal-1")
+    provider.batch_upsert(
+        [
+            ("raw-filtered", {"wiki_id": "personal-1", "doc_id": "raw-filtered", "page_type": "raw", "content": "filter target"}),
+            ("atom-filtered", {"wiki_id": "personal-1", "doc_id": "atom-filtered", "page_type": "atom", "content": "filter target"}),
+            ("synthesis-filtered", {"wiki_id": "personal-1", "doc_id": "synthesis-filtered", "page_type": "synthesis", "content": "filter target"}),
+        ]
+    )
+
+    atom_hits = provider.search("filter target", top_k=5, filters={"page_type": "atom"})
+    compiled_hits = provider.search("filter target", top_k=5, filters={"page_types": ["atom", "synthesis"]})
+
+    assert [hit.doc_id for hit in atom_hits] == ["atom-filtered"]
+    assert {hit.doc_id for hit in compiled_hits} == {"atom-filtered", "synthesis-filtered"}
+
+
+def test_sqlite_fts_short_query_uses_prefix_or_fallback(temp_wiki_root: Path) -> None:
+    provider = SQLiteFTSIndexProvider(temp_wiki_root, wiki_id="personal-1")
+    provider.upsert(
+        "atom-prefix",
+        {
+            "wiki_id": "personal-1",
+            "doc_id": "atom-prefix",
+            "page_type": "atom",
+            "topic": "deployment",
+            "problem_cluster": "canary-rollout",
+            "summary": "Canary rollout strategy.",
+            "content": "Use canary rollout for staged deployment.",
+        },
+    )
+
+    hits = provider.search("canar", top_k=5)
+
+    assert hits
+    assert hits[0].doc_id == "atom-prefix"

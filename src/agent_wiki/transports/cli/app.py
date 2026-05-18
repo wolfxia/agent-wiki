@@ -12,6 +12,7 @@ from agent_wiki.application.compile_prepare import CompilePrepareInput, CompileP
 from agent_wiki.application.compile_execute import CompileExecuteInput, CompileExecuteService, CompileGeneratedInput
 from agent_wiki.application.compile_update import CompileUpdateService
 from agent_wiki.application.dream_cycle import DreamCycleService
+from agent_wiki.application.eval_retrieval import EvalRetrievalService
 from agent_wiki.application.feedback import FeedbackInput, FeedbackService
 from agent_wiki.application.linting import LintService
 from agent_wiki.application.maintenance import MaintenanceService
@@ -172,6 +173,29 @@ def query(
         typer.echo(f"l1_answer={result.l1_answer}")
         for hit in result.hits:
             typer.echo(f"  hit: {hit.doc_id} score={hit.score}")
+
+    _run_cli(_command)
+
+
+@app.command("eval-retrieval")
+def eval_retrieval(
+    eval_file: Path = typer.Option(Path("eval/retrieval_queries.jsonl"), "--eval-file"),
+    k: int = typer.Option(5, "--k"),
+    page_types: list[str] = typer.Option(None, "--page-type"),
+    workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
+) -> None:
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
+        report = EvalRetrievalService().run(
+            wiki=wiki,
+            actor=_actor(),
+            eval_file=eval_file,
+            k=k,
+            page_types=page_types or None,
+        )
+        typer.echo(json.dumps(report, ensure_ascii=False, separators=(",", ":")))
 
     _run_cli(_command)
 

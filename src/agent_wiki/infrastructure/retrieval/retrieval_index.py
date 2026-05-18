@@ -82,11 +82,18 @@ class RetrievalIndexRepository:
         if not self.index_path.exists():
             return []
         terms = tokenize(query)
+        lowercase_terms = [term.lower() for term in terms if term]
         hits: list[RetrievalHit] = []
         for line in self.index_path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             card = json.loads(line)
+            searchable_text = " ".join(
+                str(card.get(field, ""))
+                for field in ("topic", "problem_cluster", "summary", "content")
+            ).lower()
+            if lowercase_terms and not self._might_match(searchable_text, lowercase_terms):
+                continue
             topic_tokens = tokenize(str(card.get("topic", "")))
             problem_cluster_tokens = tokenize(str(card.get("problem_cluster", "")))
             content_tokens = tokenize(str(card.get("content", "")))
@@ -110,12 +117,23 @@ class RetrievalIndexRepository:
                 if any(fuzzy_match(token, term) for token in content_tokens):
                     score += 0.5
             if score:
+                doc_id = card.get("doc_id")
+                if not doc_id:
+                    continue
                 hits.append(
                     RetrievalHit(
-                        wiki_id=card["wiki_id"],
-                        doc_id=card["doc_id"],
+                        wiki_id=card.get("wiki_id") or "",
+                        doc_id=doc_id,
                         score=score,
                     )
                 )
         hits.sort(key=lambda hit: hit.score, reverse=True)
         return hits
+
+    def _might_match(self, searchable_text: str, terms: list[str]) -> bool:
+        for term in terms:
+            if term in searchable_text:
+                return True
+            if len(term) >= 5 and term[:5] in searchable_text:
+                return True
+        return False

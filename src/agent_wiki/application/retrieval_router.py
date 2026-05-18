@@ -17,7 +17,7 @@ class RetrievalRouter:
         self.lexical = LexicalRetrievalProvider(RetrievalIndexRepository)
         self.wiki_root = wiki_root
 
-    def search(self, query: str, top_k: int = 10) -> list[RetrievalHit]:
+    def search(self, query: str, top_k: int = 10, filters: dict | None = None) -> list[RetrievalHit]:
         merged: dict[str, RetrievalHit] = {}
 
         for hit in self.graph.search(query, top_k=top_k):
@@ -29,7 +29,7 @@ class RetrievalRouter:
                 section="knowledge_graph",
             )
 
-        fts_hits = self.fts.search(query, top_k=top_k)
+        fts_hits = self.fts.search(query, top_k=top_k, filters=filters)
         lexical_hits = fts_hits or self.lexical.search(self.wiki_root, query)
         for hit in lexical_hits:
             existing = merged.get(hit.doc_id)
