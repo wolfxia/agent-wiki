@@ -121,6 +121,21 @@ class ReviewQueueRepository:
     def mark_failed(self, item_id: str, error: str) -> bool:
         return self._mark_terminal(item_id, "failed", "failed_at", extra={"last_error": error})
 
+    def release_assignment(self, item_id: str) -> bool:
+        items = self.read_all()
+        for index, item in enumerate(items):
+            if item.get("item_id") != item_id:
+                continue
+            updated = dict(item)
+            assigned_to = updated.pop("assigned_to", None)
+            updated.pop("claimed_at", None)
+            if assigned_to is not None:
+                updated["previous_assigned_to"] = assigned_to
+            items[index] = updated
+            self._write_all(items)
+            return True
+        return False
+
     def _mark_terminal(
         self,
         item_id: str,

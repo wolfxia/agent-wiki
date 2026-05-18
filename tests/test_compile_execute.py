@@ -466,3 +466,6 @@ def test_compile_execute_apply_next_marks_failed_and_continues(temp_wiki_root: P
     stored = ReviewQueueRepository(temp_wiki_root).find(results[0].item_id)
     assert stored["status"] == "failed"
     assert stored["last_error"] == "LLM timed out"
+    assert stored["previous_assigned_to"] == "claude-code"
+    assert "assigned_to" not in stored
+    assert "claimed_at" not in stored

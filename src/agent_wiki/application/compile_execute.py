@@ -153,6 +153,7 @@ class CompileExecuteService:
         packets = self.prepare_next(wiki=wiki, actor=actor, data=data)
         results: list[CompileExecuteResult] = []
         for packet in packets:
+            failed = False
             try:
                 content = self._apply_service.generate(wiki, packet.prepare)
                 result = self.apply_generated(
@@ -181,6 +182,7 @@ class CompileExecuteService:
             except Exception as exc:
                 queue = ReviewQueueRepository(Path(wiki.workspace_path))
                 queue.mark_failed(packet.item_id, str(exc))
+                failed = True
                 results.append(
                     CompileExecuteResult(
                         item_id=packet.item_id,
@@ -190,6 +192,9 @@ class CompileExecuteService:
                         fallback_priority=packet.fallback_priority,
                     )
                 )
+            finally:
+                if failed:
+                    ReviewQueueRepository(Path(wiki.workspace_path)).release_assignment(packet.item_id)
         return results
 
     def apply_generated(
