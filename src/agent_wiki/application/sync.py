@@ -205,8 +205,15 @@ class SyncService:
             external_path = Path(view_path)
             external_path.mkdir(exist_ok=True)
             is_obsidian = self._view_adapter(view) == "obsidian"
+            routing = self._view_push_view_routing(view) if is_obsidian else {}
             for source in self._iter_export_sources(wiki_root, doc_ids):
-                target = self._resolve_export_target(external_path, source, manifest, is_obsidian=is_obsidian)
+                target = self._resolve_export_target(
+                    external_path,
+                    source,
+                    manifest,
+                    is_obsidian=is_obsidian,
+                    routing=routing,
+                )
                 target.parent.mkdir(parents=True, exist_ok=True)
                 document: dict = {"content": source.read_text(encoding="utf-8")}
                 if target.exists():
@@ -217,15 +224,17 @@ class SyncService:
                 changed_files.append(str(target))
 
             if self._view_adapter(view) == "obsidian":
-                changed_files.append(self._write_obsidian_graph_index(wiki, external_path))
+                changed_files.append(self._write_obsidian_graph_index(wiki, external_path, routing))
 
         return SyncResult(mode="push-view", changed_files=changed_files)
 
-    def _write_obsidian_graph_index(self, wiki: WikiConfig, external_path: Path) -> str:
+    def _write_obsidian_graph_index(self, wiki: WikiConfig, external_path: Path, routing: dict) -> str:
         manifest_entries = ManifestRepository(Path(wiki.workspace_path)).read_all()
-        index_path = external_path / "04-知识图谱" / "知识图谱索引.md"
+        index_folder = routing.get("graph_index_folder", "knowledge-graph")
+        index_title = routing.get("graph_index_title", "Knowledge Graph Index")
+        index_path = external_path / index_folder / "index.md"
         index_path.parent.mkdir(parents=True, exist_ok=True)
-        content = ObsidianAdapter().render_graph_index(manifest_entries)
+        content = ObsidianAdapter().render_graph_index(manifest_entries, title=index_title)
         index_path.write_text(content, encoding="utf-8")
         return str(index_path)
 
@@ -256,14 +265,22 @@ class SyncService:
             return sorted(manifest_sources)
         return sorted(pages_root.rglob("*.md"))
 
-    def _resolve_export_target(self, external_root: Path, source: Path, manifest: ManifestRepository, *, is_obsidian: bool = False) -> Path:
+    def _resolve_export_target(
+        self,
+        external_root: Path,
+        source: Path,
+        manifest: ManifestRepository,
+        *,
+        is_obsidian: bool = False,
+        routing: dict | None = None,
+    ) -> Path:
         entry = self._manifest_entry_for_source(source, manifest)
         if entry is not None:
             relative_path = entry.get("vault_relative_path")
             if relative_path:
                 return external_root / relative_path
             if is_obsidian:
-                return external_root / self._default_obsidian_relative_path(entry, source.name)
+                return external_root / self._default_obsidian_relative_path(entry, source.name, routing=routing)
         return external_root / source.name
 
     def _manifest_entry_for_source(self, source: Path, manifest: ManifestRepository) -> dict | None:
@@ -275,39 +292,37 @@ class SyncService:
                 return candidate
         return None
 
-    # Direction-to-folder mapping for Obsidian vault organization
-    _DIRECTION_FOLDERS: dict[str, str] = {
-        "imaging-os": "imaging-os",
-        "edge-ai-imaging": "edge-ai-imaging",
-        "agent-os": "agent-os",
-        "ai-harness": "ai-harness",
-        "os-industry": "os-industry",
-        "methodology": "methodology",
-        "ppt-craft": "ppt-craft",
-        "diagram-arch": "diagram-arch",
-        "wearable-iot": "wearable-iot",
-        "sensor-ai": "sensor-ai",
-        "3dgs-mobile": "3dgs-mobile",
-        "openclaw": "openclaw",
-        "knowledge-system": "knowledge-system",
-        "learning": "learning",
-        "infrastructure": "infrastructure",
-        "weekly": "weekly",
-        "project": "project",
-    }
+    def _view_push_view_routing(self, view: object) -> dict:
+        if isinstance(view, dict):
+            return dict(view.get("push_view_routing") or {})
+        value = getattr(view, "push_view_routing", None)
+        if value is None:
+            return {}
+        if hasattr(value, "model_dump"):
+            return value.model_dump()
+        return dict(value)
 
-    def _default_obsidian_relative_path(self, entry: dict, filename: str) -> Path:
-        page_type = entry.get("page_type")
+    def _default_obsidian_relative_path(self, entry: dict, filename: str, routing: dict | None = None) -> Path:
+        routing = routing or {}
+        page_type = str(entry.get("page_type") or "").strip()
         topic = str(entry.get("topic") or "").strip()
         cluster = str(entry.get("problem_cluster") or "").strip()
-        # Route by direction: topic or cluster → dedicated folder
-        direction = self._DIRECTION_FOLDERS.get(topic) or self._DIRECTION_FOLDERS.get(cluster)
+        direction_folders = dict(routing.get("direction_folders") or {})
+        fallback_folders = dict(routing.get("fallback_folders") or {})
+        direction = direction_folders.get(topic) or direction_folders.get(cluster)
         if direction:
             return Path(direction) / filename
-        # Fallback: synthesis → 02-行业洞察, raw → 00-收件箱
-        if topic == "行业洞察" or page_type == "synthesis":
-            return Path("02-行业洞察") / (cluster or "未分类") / filename
-        return Path("00-收件箱") / filename
+        if page_type == "synthesis":
+            base = fallback_folders.get("synthesis", "synthesis")
+            return Path(base) / (cluster or "uncategorized") / filename
+        if page_type == "atom":
+            base = fallback_folders.get("atom", "atoms")
+            return Path(base) / filename
+        if page_type == "principle":
+            base = fallback_folders.get("principle", "principles")
+            return Path(base) / filename
+        base = fallback_folders.get("raw", "raw")
+        return Path(base) / filename
 
     def _rebuild_retrieval_index(self, wiki: WikiConfig) -> None:
         wiki_root = Path(wiki.workspace_path)

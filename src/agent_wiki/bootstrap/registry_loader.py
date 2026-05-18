@@ -20,10 +20,18 @@ class RetrievalConfig(BaseModel):
     route_priority: int
 
 
+class PushViewRoutingConfig(BaseModel):
+    direction_folders: dict[str, str] = Field(default_factory=dict)
+    fallback_folders: dict[str, str] = Field(default_factory=dict)
+    graph_index_folder: str = "knowledge-graph"
+    graph_index_title: str = "Knowledge Graph Index"
+
+
 class ExternalViewConfig(BaseModel):
     adapter: str
     mode: str
     path: str | None = None
+    push_view_routing: PushViewRoutingConfig = Field(default_factory=PushViewRoutingConfig)
 
 
 class WikiConfig(BaseModel):

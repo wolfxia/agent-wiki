@@ -52,14 +52,14 @@ class ObsidianAdapter:
         parts.append(document["content"])
         path.write_text("".join(parts), encoding="utf-8")
 
-    def render_graph_index(self, manifest_entries: list[dict]) -> str:
+    def render_graph_index(self, manifest_entries: list[dict], title: str = "Knowledge Graph Index") -> str:
         grouped = {"atom": [], "synthesis": [], "raw": []}
         for entry in manifest_entries:
             page_type = entry.get("page_type")
             if page_type in grouped:
                 grouped[page_type].append(entry)
 
-        lines = ["# 知识图谱索引", ""]
+        lines = [f"# {title}", ""]
         for title, key in (("Atom", "atom"), ("Synthesis", "synthesis"), ("Raw", "raw")):
             lines.append(f"## {title}")
             for entry in sorted(grouped[key], key=lambda item: item["doc_id"]):

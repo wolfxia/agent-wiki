@@ -531,7 +531,7 @@ def test_sync_push_view_rebuilds_obsidian_graph_index(temp_wiki_root: Path) -> N
 
     result = SyncService().execute(wiki, actor, SyncInput(mode="push-view"))
 
-    index_path = external_dir / "04-知识图谱" / "知识图谱索引.md"
+    index_path = external_dir / "knowledge-graph" / "index.md"
     assert index_path.exists()
     text = index_path.read_text(encoding="utf-8")
     assert "## Atom" in text
@@ -540,7 +540,7 @@ def test_sync_push_view_rebuilds_obsidian_graph_index(temp_wiki_root: Path) -> N
     assert "[[atom-graph-1]]" in text
     assert "[[synthesis-graph-1]]" in text
     assert "[[raw-graph-1]]" in text or "[[raw-graph-2]]" in text
-    assert any(path.endswith("04-知识图谱/知识图谱索引.md") for path in result.changed_files)
+    assert any(path.endswith("knowledge-graph/index.md") for path in result.changed_files)
 
 
 def test_compile_update_does_not_push_external_view(temp_wiki_root: Path) -> None:
@@ -601,7 +601,7 @@ def test_obsidian_push_view_preserves_frontmatter_and_reports_index_file(temp_wi
 
     result = SyncService().execute(wiki, actor, SyncInput(mode="push-view", doc_ids=["existing"]))
 
-    assert any(path.endswith("04-知识图谱/知识图谱索引.md") for path in result.changed_files)
+    assert any(path.endswith("knowledge-graph/index.md") for path in result.changed_files)
     assert "tags:" in (external_dir / "existing.md").read_text(encoding="utf-8")
 
 
@@ -903,12 +903,68 @@ def test_sync_push_view_recurses_workspace_pages_and_routes_to_obsidian_categori
         SyncInput(mode="push-view"),
     )
 
+    assert (external_dir / "raw" / "raw-agent.md").exists()
+    assert (external_dir / "atoms" / "atom-agent.md").exists()
+    assert (external_dir / "synthesis" / "AI基础设施" / "synthesis-industry.md").exists()
+    assert (external_dir / "knowledge-graph" / "index.md").exists()
+    assert any(path.endswith("atoms/atom-agent.md") for path in result.changed_files)
+
+
+
+def test_sync_push_view_uses_configured_obsidian_routing(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    external_dir = temp_wiki_root / "obsidian-configured-vault"
+    external_dir.mkdir(exist_ok=True)
+    pages_dir = temp_wiki_root / "pages"
+    pages_dir.mkdir(exist_ok=True)
+    (pages_dir / "raw-agent.md").write_text("# Raw Agent", encoding="utf-8")
+    (pages_dir / "atom-agent.md").write_text("# Atom Agent", encoding="utf-8")
+    (pages_dir / "synthesis-industry.md").write_text("# Synthesis Industry", encoding="utf-8")
+    (temp_wiki_root / "MANIFEST.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"wiki_id": "personal-1", "doc_id": "raw-agent", "page_type": "raw", "topic": "inbox", "problem_cluster": "capture", "canonical_uri": "pages/raw-agent.md"}, ensure_ascii=False),
+                json.dumps({"wiki_id": "personal-1", "doc_id": "atom-agent", "page_type": "atom", "topic": "edge-ai-imaging", "problem_cluster": "edge-ai-imaging", "canonical_uri": "pages/atom-agent.md"}, ensure_ascii=False),
+                json.dumps({"wiki_id": "personal-1", "doc_id": "synthesis-industry", "page_type": "synthesis", "topic": "行业洞察", "problem_cluster": "AI基础设施", "canonical_uri": "pages/synthesis-industry.md"}, ensure_ascii=False),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    wiki = wiki.model_copy(
+        update={
+            "external_views": [
+                {
+                    "adapter": "obsidian",
+                    "mode": "read_write",
+                    "path": str(external_dir),
+                    "push_view_routing": {
+                        "direction_folders": {"edge-ai-imaging": "edge-ai-imaging"},
+                        "fallback_folders": {"raw": "00-收件箱", "synthesis": "02-行业洞察", "atom": "01-学习笔记"},
+                        "graph_index_folder": "04-知识图谱",
+                        "graph_index_title": "知识图谱索引",
+                    },
+                }
+            ]
+        }
+    )
+
+    result = SyncService().execute(
+        wiki,
+        ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        SyncInput(mode="push-view"),
+    )
+
     assert (external_dir / "00-收件箱" / "raw-agent.md").exists()
     assert (external_dir / "edge-ai-imaging" / "atom-agent.md").exists()
     assert (external_dir / "02-行业洞察" / "AI基础设施" / "synthesis-industry.md").exists()
-    assert (external_dir / "04-知识图谱" / "知识图谱索引.md").exists()
+    assert (external_dir / "04-知识图谱" / "index.md").exists()
+    assert "# 知识图谱索引" in (external_dir / "04-知识图谱" / "index.md").read_text(encoding="utf-8")
     assert any(path.endswith("edge-ai-imaging/atom-agent.md") for path in result.changed_files)
-
 
 def test_sync_push_view_exports_all_manifest_pages_even_when_pages_are_nested(temp_wiki_root: Path) -> None:
     import json
@@ -947,9 +1003,9 @@ def test_sync_push_view_exports_all_manifest_pages_even_when_pages_are_nested(te
         SyncInput(mode="push-view"),
     )
 
-    exported_pages = [path for path in external_dir.rglob("*.md") if path.name != "知识图谱索引.md"]
+    exported_pages = [path for path in external_dir.rglob("*.md") if path.name != "index.md"]
     assert len(exported_pages) == 5
-    assert len([path for path in result.changed_files if not path.endswith("知识图谱索引.md")]) == 5
+    assert len([path for path in result.changed_files if not path.endswith("knowledge-graph/index.md")]) == 5
 
 
 def test_obsidian_adapter_sanitizes_yaml_dates_for_json_manifest(temp_wiki_root: Path) -> None:
