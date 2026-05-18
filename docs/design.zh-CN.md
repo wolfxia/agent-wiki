@@ -652,7 +652,7 @@ shared-wiki approval bypass 对 raw-backed provenance 的放宽应被视为临�
 
 - 当 raw 页面按 topic/problem cluster 累积时自动生成 compile suggestion
 - 由重复低价值查询触发的 fast feedback
-- 由 purpose 驱动的 ranking、compile direction 与 health evaluation
+- 由 purpose 驱动的 ranking、topic 对齐候选补种、compile direction 与 health evaluation
 - 低成本 candidate relations，尤其是 co-occurrence 与 cross-reference signals
 
 ### P2 — 必须支撑更强的治理声明

@@ -5,7 +5,9 @@ from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawServic
 from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
 from agent_wiki.application.query import QueryInput, QueryService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
-from agent_wiki.domain.contracts import ResolvedActor
+from agent_wiki.domain.contracts import ResolvedActor, RetrievalHit
+from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
+from agent_wiki.infrastructure.storage.purpose_reader import PurposeReader
 
 
 def test_query_returns_l1_l2_l3_layers_and_dispute_caveat(temp_wiki_root: Path) -> None:
@@ -315,6 +317,202 @@ def test_query_ranking_boosted_by_purpose_alignment(temp_wiki_root: Path) -> Non
     assert "atom-purpose-unaligned" in doc_ids
     # Purpose-aligned page should rank first
     assert doc_ids.index("atom-purpose-aligned") < doc_ids.index("atom-purpose-unaligned")
+
+
+def test_query_ranking_topic_alignment_boost_beats_broad_external_sync_atom(temp_wiki_root: Path) -> None:
+    """Purpose topic alignment should overcome broad external_sync base-score noise."""
+    (temp_wiki_root / "purpose.md").write_text(
+        "# Purpose\n\n## Topics\n\n- agent-os\n- ai-harness\n- imaging-os\n",
+        encoding="utf-8",
+    )
+    ManifestRepository(temp_wiki_root).batch_upsert(
+        [
+            {
+                "doc_id": "atom-agent-os-agent-os-0001",
+                "page_type": "atom",
+                "topic": "agent-os",
+                "problem_cluster": "agent-os",
+                "canonical_uri": "pages/atom-agent-os-agent-os-0001.md",
+            },
+            {
+                "doc_id": "atom-external-sync-ai-cluster-ai-0014",
+                "page_type": "atom",
+                "topic": "AI推理优化",
+                "problem_cluster": "cluster-ai",
+                "canonical_uri": "pages/atom-external-sync-ai-cluster-ai-0014.md",
+                "source": "external_sync",
+            },
+        ]
+    )
+    hits = [
+        RetrievalHit(
+            wiki_id="personal-1",
+            doc_id="atom-external-sync-ai-cluster-ai-0014",
+            score=15.0,
+            metadata={"lexical_score": 15.0},
+        ),
+        RetrievalHit(
+            wiki_id="personal-1",
+            doc_id="atom-agent-os-agent-os-0001",
+            score=12.0,
+            metadata={"lexical_score": 12.0},
+        ),
+    ]
+
+    ranked = QueryService()._apply_ranking(
+        ManifestRepository(temp_wiki_root),
+        PurposeReader(temp_wiki_root),
+        hits,
+    )
+
+    assert ranked[0].doc_id == "atom-agent-os-agent-os-0001"
+    assert ranked[0].metadata["topic_alignment_boost"] >= 5.0
+    assert ranked[1].metadata["topic_alignment_boost"] == 0.0
+
+
+def test_query_ranking_expands_candidate_pool_before_topic_rerank(temp_wiki_root: Path, monkeypatch) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    (temp_wiki_root / "purpose.md").write_text(
+        "# Purpose\n\n## Topics\n\n- agent-os\n",
+        encoding="utf-8",
+    )
+    ManifestRepository(temp_wiki_root).batch_upsert(
+        [
+            {
+                "doc_id": "atom-agent-os-agent-os-0001",
+                "wiki_id": "personal-1",
+                "page_type": "atom",
+                "topic": "agent-os",
+                "problem_cluster": "agent-os",
+                "canonical_uri": "pages/atom-agent-os-agent-os-0001.md",
+                "summary": "Agent OS aligned result.",
+            },
+            {
+                "doc_id": "raw-noise-0001",
+                "wiki_id": "personal-1",
+                "page_type": "raw",
+                "topic": "noise",
+                "problem_cluster": "noise",
+                "canonical_uri": "pages/raw-noise-0001.md",
+                "summary": "Noise result.",
+            },
+        ]
+    )
+    pages_dir = temp_wiki_root / "pages"
+    pages_dir.mkdir(exist_ok=True)
+    (pages_dir / "atom-agent-os-agent-os-0001.md").write_text(
+        "# Agent OS\n\nAligned result.",
+        encoding="utf-8",
+    )
+    (pages_dir / "raw-noise-0001.md").write_text(
+        "# Noise\n\nNoise result.",
+        encoding="utf-8",
+    )
+
+    class FakeRouter:
+        def __init__(self, wiki_root, wiki_id):
+            self.wiki_root = wiki_root
+            self.wiki_id = wiki_id
+
+        def search(self, query, top_k=10, filters=None):
+            hits = [
+                RetrievalHit(wiki_id="personal-1", doc_id=f"raw-noise-{index:04d}", score=20.0 - index)
+                for index in range(1, 11)
+            ]
+            if top_k > 10:
+                hits.append(RetrievalHit(wiki_id="personal-1", doc_id="atom-agent-os-agent-os-0001", score=9.0))
+            return hits[:top_k]
+
+    for index in range(1, 11):
+        doc_id = f"raw-noise-{index:04d}"
+        ManifestRepository(temp_wiki_root).upsert(
+            {
+                "doc_id": doc_id,
+                "wiki_id": "personal-1",
+                "page_type": "raw",
+                "topic": "noise",
+                "problem_cluster": "noise",
+                "canonical_uri": f"pages/{doc_id}.md",
+                "summary": "Noise result.",
+            }
+        )
+        (pages_dir / f"{doc_id}.md").write_text("# Noise\n\nNoise result.", encoding="utf-8")
+
+    import agent_wiki.application.query as query_module
+
+    monkeypatch.setattr(query_module, "RetrievalRouter", FakeRouter)
+
+    result = QueryService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=QueryInput(query="Agent OS App Intents MCP"),
+        write_outcome=False,
+    )
+
+    assert result.hits[0].doc_id == "atom-agent-os-agent-os-0001"
+
+
+def test_query_ranking_seeds_likely_purpose_topic_atom_candidates(temp_wiki_root: Path, monkeypatch) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    (temp_wiki_root / "purpose.md").write_text(
+        "# Purpose\n\n## Topics\n\n- agent-os\n",
+        encoding="utf-8",
+    )
+    ManifestRepository(temp_wiki_root).batch_upsert(
+        [
+            {
+                "doc_id": "atom-agent-os-agent-os-0001",
+                "wiki_id": "personal-1",
+                "page_type": "atom",
+                "topic": "agent-os",
+                "problem_cluster": "agent-os",
+                "canonical_uri": "pages/atom-agent-os-agent-os-0001.md",
+                "summary": "Agent OS aligned result.",
+            },
+            {
+                "doc_id": "raw-noise-0001",
+                "wiki_id": "personal-1",
+                "page_type": "raw",
+                "topic": "noise",
+                "problem_cluster": "noise",
+                "canonical_uri": "pages/raw-noise-0001.md",
+                "summary": "Noise result.",
+            },
+        ]
+    )
+    pages_dir = temp_wiki_root / "pages"
+    pages_dir.mkdir(exist_ok=True)
+    (pages_dir / "atom-agent-os-agent-os-0001.md").write_text("# Agent OS\n\nAligned result.", encoding="utf-8")
+    (pages_dir / "raw-noise-0001.md").write_text("# Noise\n\nNoise result.", encoding="utf-8")
+
+    class FakeRouter:
+        def __init__(self, wiki_root, wiki_id):
+            self.wiki_root = wiki_root
+            self.wiki_id = wiki_id
+
+        def search(self, query, top_k=10, filters=None):
+            return [RetrievalHit(wiki_id="personal-1", doc_id="raw-noise-0001", score=16.0)]
+
+    import agent_wiki.application.query as query_module
+
+    monkeypatch.setattr(query_module, "RetrievalRouter", FakeRouter)
+
+    result = QueryService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=QueryInput(query="Agent OS App Intents MCP"),
+        write_outcome=False,
+    )
+
+    assert result.hits[0].doc_id == "atom-agent-os-agent-os-0001"
+    assert result.hits[0].metadata["topic_alignment_boost"] == 5.0
+    assert result.hits[0].metadata["topic_seeded"] is True
 
 
 

@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import re
 import time
 import uuid
 
@@ -15,6 +16,9 @@ from agent_wiki.infrastructure.retrieval.topic_index import TopicIndexRepository
 
 
 class QueryService:
+    _RERANK_CANDIDATE_MULTIPLIER = 3
+    _TOPIC_SEED_SCORE = 8.0
+
     def __init__(self) -> None:
         self._classifier = RuleBasedQueryClassifier()
 
@@ -32,9 +36,14 @@ class QueryService:
         router = RetrievalRouter(wiki_root, wiki_id=wiki.wiki_id)
 
         filters = {"page_types": data.page_types} if data.page_types else None
-        hits = router.search(data.query, filters=filters)
+        hits = router.search(data.query, top_k=self._rerank_top_k(data), filters=filters)
         if data.include_pending:
             hits.extend(self._search_pending_truth_zone(wiki_root, wiki.wiki_id, data.query))
+        purpose_reader = PurposeReader(wiki_root)
+        hits = self._merge_hits(
+            hits,
+            self._seed_purpose_topic_hits(manifest_entries, purpose_reader, data.query, manifest_by_doc_id),
+        )
 
         filtered_hits = [
             hit for hit in hits
@@ -51,7 +60,6 @@ class QueryService:
             hit for hit in filtered_hits
             if self._sensitivity_allowed(manifest, hit.doc_id, max_sensitivity, manifest_by_doc_id)
         ]
-        purpose_reader = PurposeReader(wiki_root)
         filtered_hits = self._apply_ranking(manifest, purpose_reader, filtered_hits, manifest_by_doc_id)
         l2_context = self._build_l2_context(manifest, filtered_hits, manifest_by_doc_id)
         l3_proof = self._build_l3_proof(manifest, filtered_hits, manifest_by_doc_id)
@@ -139,6 +147,23 @@ class QueryService:
             return 1.5
         return 0.0
 
+    def _topic_alignment_boost(
+        self,
+        manifest: ManifestRepository,
+        purpose_reader: PurposeReader,
+        doc_id: str,
+        manifest_by_doc_id: dict[str, dict] | None = None,
+    ) -> float:
+        entry = (manifest_by_doc_id or {}).get(doc_id) or manifest.find(doc_id)
+        if entry is None:
+            return 0.0
+        topic = str(entry.get("topic") or "")
+        if not topic:
+            return 0.0
+        if purpose_reader.is_aligned(topic):
+            return 5.0
+        return 0.0
+
     def _apply_ranking(self, manifest: ManifestRepository, purpose_reader: PurposeReader, hits: list[RetrievalHit], manifest_by_doc_id: dict[str, dict] | None = None) -> list[RetrievalHit]:
         ranked: list[RetrievalHit] = []
         for hit in hits:
@@ -149,13 +174,15 @@ class QueryService:
             elif manifest_entry.get("page_type") == PageType.PRINCIPLE.value:
                 page_type_boost = 2.0
             purpose_boost = self._purpose_boost(manifest, purpose_reader, hit.doc_id, manifest_by_doc_id)
+            topic_alignment_boost = self._topic_alignment_boost(manifest, purpose_reader, hit.doc_id, manifest_by_doc_id)
             freshness = float(manifest_entry.get("updated_at_score") or 0.0)
             manifest_priority = float(self._manifest_priority(manifest, hit.doc_id, manifest_by_doc_id))
-            final_score = hit.score + page_type_boost + purpose_boost + freshness + manifest_priority
+            final_score = hit.score + page_type_boost + purpose_boost + topic_alignment_boost + freshness + manifest_priority
             metadata = {
                 **hit.metadata,
                 "page_type_boost": page_type_boost,
                 "purpose_boost": purpose_boost,
+                "topic_alignment_boost": topic_alignment_boost,
                 "freshness": freshness,
                 "manifest_priority": manifest_priority,
                 "final_score": final_score,
@@ -248,7 +275,7 @@ class QueryService:
             metadata = hit.metadata
             boost = sum(
                 float(metadata.get(key, 0.0) or 0.0)
-                for key in ("page_type_boost", "purpose_boost", "freshness", "manifest_priority")
+                for key in ("page_type_boost", "purpose_boost", "topic_alignment_boost", "freshness", "manifest_priority")
             )
             breakdown.append(
                 {
@@ -261,6 +288,66 @@ class QueryService:
                 }
             )
         return breakdown
+
+    def _rerank_top_k(self, data: QueryInput) -> int:
+        base = data.page_types and 20 or 30
+        return max(30, base * self._RERANK_CANDIDATE_MULTIPLIER)
+
+    def _seed_purpose_topic_hits(
+        self,
+        manifest_entries: list[dict],
+        purpose_reader: PurposeReader,
+        query: str,
+        manifest_by_doc_id: dict[str, dict],
+    ) -> list[RetrievalHit]:
+        purpose = purpose_reader.read()
+        matched_topics = [topic for topic in purpose.get("topics", []) if self._query_mentions_topic(query, str(topic))]
+        if not matched_topics:
+            return []
+        matched_keys = {self._topic_key(topic) for topic in matched_topics if self._topic_key(topic)}
+        seeded: list[RetrievalHit] = []
+        for entry in manifest_entries:
+            if entry.get("page_type") not in {PageType.ATOM.value, PageType.SYNTHESIS.value}:
+                continue
+            topic = str(entry.get("topic") or "")
+            if not topic:
+                continue
+            if self._topic_key(topic) not in matched_keys:
+                continue
+            doc_id = str(entry.get("doc_id") or "")
+            if not doc_id:
+                continue
+            if doc_id in manifest_by_doc_id and entry.get("page_type") != manifest_by_doc_id[doc_id].get("page_type"):
+                continue
+            seeded.append(
+                RetrievalHit(
+                    wiki_id=str(entry.get("wiki_id") or ""),
+                    doc_id=doc_id,
+                    score=self._TOPIC_SEED_SCORE,
+                    metadata={
+                        "lexical_score": self._TOPIC_SEED_SCORE,
+                        "structured_score": 0.0,
+                        "topic_seeded": True,
+                    },
+                )
+            )
+        return seeded
+
+    def _merge_hits(self, hits: list[RetrievalHit], seeded_hits: list[RetrievalHit]) -> list[RetrievalHit]:
+        merged: dict[str, RetrievalHit] = {hit.doc_id: hit for hit in hits}
+        for hit in seeded_hits:
+            existing = merged.get(hit.doc_id)
+            if existing is None or hit.score > existing.score:
+                merged[hit.doc_id] = hit
+        return list(merged.values())
+
+    def _query_mentions_topic(self, query: str, topic: str) -> bool:
+        query_key = self._topic_key(query)
+        topic_key = self._topic_key(topic)
+        return bool(query_key and topic_key and topic_key in query_key)
+
+    def _topic_key(self, value: str) -> str:
+        return re.sub(r"[^A-Za-z0-9\u4e00-\u9fff]+", "", value).lower()
 
     def _page_type_distribution(self, manifest: ManifestRepository, hits: list[RetrievalHit], manifest_by_doc_id: dict[str, dict] | None = None) -> dict[str, int]:
         distribution: dict[str, int] = {}

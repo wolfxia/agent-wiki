@@ -166,7 +166,7 @@ compile:
 ## What Is New In v0.2.0
 
 - FTS5 full-text search through `SQLiteFTSIndexProvider`, stored in `.agent-wiki/retrieval.db`, with topic/problem-cluster/summary weighted above body content and prefix fallback for short queries.
-- Query ranking now exposes debug scores: `page_type_boost`, `lexical_score`, `structured_score`, `purpose_boost`, and `freshness`; `QueryInput.page_types` can filter retrieval to page types such as `atom` and `synthesis`.
+- Query ranking now exposes debug scores: `page_type_boost`, `lexical_score`, `structured_score`, `purpose_boost`, `topic_alignment_boost`, and `freshness`; `QueryInput.page_types` can filter retrieval to page types such as `atom` and `synthesis`.
 - `aw eval-retrieval` runs JSONL retrieval eval sets and reports recall@k, precision@k, MRR, compiled hit ratio, and latency stats without writing query outcomes.
 - Query outcome logging records latency, page-type distribution, score breakdown, and empty feedback hooks (`accepted_doc_ids`, `rejected_doc_ids`) for later evaluation loops.
 - Index consistency health checks cover manifest, `retrieval_index.jsonl`, FTS, pages, and topic index consistency.

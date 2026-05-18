@@ -564,9 +564,10 @@ The current query baseline in `src/agent_wiki/application/query.py` implements:
 
 - heuristic query-type classification
 - retrieval through `RetrievalRouter`: FTS5+jieba primary when `.agent-wiki/retrieval.db` exists, JSONL lexical fallback when FTS returns no hits, and structured `topic_index.md` merge
+- purpose-topic candidate seeding before reranking, so queries that explicitly mention a `purpose.md` topic can surface aligned atom/synthesis pages even when coarse retrieval is noisy
 - optional pending truth-zone scan when `include_pending=True`
 - filtering via manifest/pending manifest and `QueryInput.max_sensitivity`
-- score-based ordering with `lexical_score`, `structured_score`, `page_type_boost`, `purpose_boost`, `freshness`, and `manifest_priority`
+- score-based ordering with `lexical_score`, `structured_score`, `page_type_boost`, `purpose_boost`, `topic_alignment_boost`, `freshness`, and `manifest_priority`
 - L1 answer from `topic_index.md` summary first, then manifest summary, then top page content
 - L2 context with dispute caveat when `review_status=disputed`
 - L3 proof using manifest `source_refs`
