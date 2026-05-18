@@ -28,6 +28,13 @@ def test_quality_report_returns_zeros_for_empty_wiki(temp_wiki_root: Path) -> No
     assert report["metadata_completeness"] == 0.0
     assert report["cluster_coverage"] == 0.0
     assert report["mature_cluster_coverage"] == 0.0
+    assert report["relation_stats"] == {
+        "total": 0,
+        "extracted": 0,
+        "inferred": 0,
+        "ambiguous": 0,
+        "pending_review": 0,
+    }
 
 
 def test_quality_report_computes_hit_rate(temp_wiki_root: Path) -> None:
@@ -244,3 +251,34 @@ def test_quality_report_computes_compile_observability_metrics(temp_wiki_root: P
     assert report["metadata_completeness"] == 0.5
     assert report["cluster_coverage"] == 1.0
     assert report["mature_cluster_coverage"] == 1.0
+
+
+def test_quality_report_includes_relation_confidence_stats(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    (temp_wiki_root / "knowledge_graph.jsonl").write_text(
+        "".join(
+            json.dumps(entry, ensure_ascii=False) + "\n"
+            for entry in [
+                {"subject": "A", "relation": "depends_on", "object": "B", "source_doc_id": "raw-a", "confidence_label": "EXTRACTED"},
+                {"subject": "C", "relation": "depends_on", "object": "D", "source_doc_id": "raw-c", "confidence_label": "INFERRED"},
+                {"subject": "E", "relation": "depends_on", "object": "F", "source_doc_id": "raw-e", "confidence_label": "AMBIGUOUS"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (temp_wiki_root / "review_queue.jsonl").write_text(
+        json.dumps({"item_id": "relation_review:E:F:depends_on", "item_type": "relation_review", "status": "open"}) + "\n",
+        encoding="utf-8",
+    )
+
+    report = QualityReportService().generate(wiki)
+
+    assert report["relation_stats"] == {
+        "total": 3,
+        "extracted": 1,
+        "inferred": 1,
+        "ambiguous": 1,
+        "pending_review": 1,
+    }

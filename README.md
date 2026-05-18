@@ -8,7 +8,7 @@
 
 Agent Wiki is an agent-agnostic knowledge system for long-lived AI memory. It treats the workspace as the single source of truth, exposes a real FastMCP stdio server for agents, and keeps human-facing tools such as Obsidian as read-write views over the same authority model.
 
-Current data baseline: **1472 workspace pages**, **1488 manifest entries**, **383 indexed topics**, and **319 passing tests**.
+Current data baseline: **1472 workspace pages**, **1488 manifest entries**, **383 indexed topics**, and **345 passing tests**.
 
 ## Quick Integration Guide
 
@@ -123,7 +123,7 @@ Core decisions in v0.2.0:
 - **Trusted identity resolution**: actor identity comes from MCP metadata, CLI env, token/env, or registry fallback. Callers do not set their own identity in tool payloads.
 - **Team expansion model**: the architecture supports N personal workspaces plus M team workspaces, with permission tiers per actor, wiki, operation, page type, and A/B/C gate.
 - **Compile and retrieval are one loop**: intake metadata feeds compile candidates, compiled schema feeds retrieval, query misses feed feedback and weekly review.
-- **Typed graph is configurable**: `relation_schema.yaml` defines zero-LLM relation extraction, `maintain` rebuilds `knowledge_graph.jsonl`, and query ranking uses graph hits when available.
+- **Typed graph is configurable**: `relation_schema.yaml` defines zero-LLM relation extraction, `maintain` rebuilds `knowledge_graph.jsonl`, graph relations carry `confidence_label` / `confidence_score` / `source_refs`, ambiguous relations are routed to `relation_review` items, and query ranking weights extracted vs inferred relations when graph hits are available.
 
 ### Compile Pipeline
 
@@ -192,6 +192,7 @@ compile:
 | `aw compile-execute` | Claim compile suggestions, emit JSON packets, apply generated content from `--input-file`, or run one-command LLM compile with `--apply` |
 | `aw compile-update` | Create or revise compiled truth-zone pages |
 | `aw review-queue-consume` | Assign the next open review queue item of a given type |
+| `aw review-relations` | Resolve, reject, or reclassify a typed graph relation review item |
 | `aw lint` | Run consistency checks |
 | `aw sync status` | Inspect external view sync status |
 | `aw sync pull-view` | Import external view edits into workspace |
@@ -234,7 +235,7 @@ capture_raw / pull-view
   -> feedback / weekly-review / compile backlog
 ```
 
-Retrieval currently combines typed graph hits from `knowledge_graph.jsonl`, FTS5 field-weighted matching, structured metadata from `topic_index.md`, JSONL lexical fallback, purpose-aware ranking, page type boosts, and freshness. Structured and lexical fallback paths prefilter obvious non-candidates before token/fuzzy scoring so historical large indexes remain usable. Vector search remains a plugin-level enhancement rather than the baseline. A wiki can opt into typed relation extraction by adding `relation_schema.yaml`; `templates/relation_schema.yaml` provides a configurable starting point.
+Retrieval currently combines typed graph hits from `knowledge_graph.jsonl`, FTS5 field-weighted matching, structured metadata from `topic_index.md`, JSONL lexical fallback, purpose-aware ranking, page type boosts, and freshness. Structured and lexical fallback paths prefilter obvious non-candidates before token/fuzzy scoring so historical large indexes remain usable. Typed graph hits are confidence-weighted: `EXTRACTED` is full weight, `INFERRED` is down-weighted, and `AMBIGUOUS` relations are excluded from retrieval and sent to review. Vector search remains a plugin-level enhancement rather than the baseline. A wiki can opt into typed relation extraction by adding `relation_schema.yaml`; `templates/relation_schema.yaml` provides a configurable starting point.
 
 Note: `registry.yaml` `coarse_provider` is design/configuration metadata today; it is not yet the runtime switch that selects the active retrieval provider.
 

@@ -228,11 +228,14 @@ Implemented flow:
 relation_schema.yaml
   -> regex RelationExtractor over raw pages
   -> knowledge_graph.jsonl
+  -> relation_review queue items for ambiguous relations
   -> RetrievalRouter graph hits
   -> wiki.query hybrid ranking with graph_score
 ```
 
-`relation_schema.yaml` lives in the wiki root and is intentionally user-configurable. If it is missing, maintain skips graph extraction and query falls back to existing FTS/lexical/structured retrieval. `knowledge_graph.jsonl` stores one relation per line with subject, relation, object, entity types, `source_doc_id`, confidence, and extraction timestamp. Symmetric relation types write both directions so query can traverse either side.
+`relation_schema.yaml` lives in the wiki root and is intentionally user-configurable. If it is missing, maintain skips graph extraction and query falls back to existing FTS/lexical/structured retrieval. `knowledge_graph.jsonl` stores one relation per line with subject, relation, object, entity types, `source_doc_id`, `source_refs`, `evidence`, `confidence_label`, `confidence_score`, and extraction timestamp. Deterministic regex extraction writes `EXTRACTED` relations; legacy graph entries are backfilled as `INFERRED`; future semantic extractors can write `AMBIGUOUS` when the evidence is uncertain or contradictory. Symmetric relation types write both directions so query can traverse either side.
+
+Query ranking treats relation confidence as retrieval semantics rather than presentation metadata: `EXTRACTED` relations keep full graph weight, `INFERRED` relations are down-weighted, and `AMBIGUOUS` relations are excluded from query hits until review. `maintain` creates `relation_review` queue items for ambiguous relations, and operators can use `aw review-relations` to accept, reject, or reclassify the relation. `QualityReportService` reports relation totals by confidence label plus pending open relation reviews.
 
 A template is available at `templates/relation_schema.yaml`; domains should copy and edit it rather than hardcoding personal topics or entity vocabularies in source code.
 

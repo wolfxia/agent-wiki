@@ -21,7 +21,10 @@ class MaintenanceService:
         orphan_cleanup_count = self._clean_orphan_authority_entries(wiki)
         compile_candidates = CompileSuggestService().detect_and_enqueue(wiki)
         quality_signals = FastFeedbackService().detect_and_enqueue(wiki)
-        typed_relations = KnowledgeGraphRepository(Path(wiki.workspace_path), wiki_id=wiki.wiki_id).rebuild_from_raw_pages()
+        graph_repository = KnowledgeGraphRepository(Path(wiki.workspace_path), wiki_id=wiki.wiki_id)
+        typed_relations = graph_repository.rebuild_from_raw_pages()
+        graph_repository.backfill_confidence_labels()
+        relation_reviews = graph_repository.enqueue_ambiguous_reviews(ReviewQueueRepository(Path(wiki.workspace_path)))
         relations = RelationsService()
         co_occurrences = relations.detect_and_enqueue_co_occurrences(wiki)
         cross_references = relations.detect_and_enqueue_cross_references(wiki)
@@ -58,6 +61,7 @@ class MaintenanceService:
             "queue_timeouts_recovered": queue_timeouts_recovered,
             "compile_suggestions": len(compile_suggestions),
             "typed_relations": typed_relations,
+            "relation_reviews": relation_reviews,
             "quality_signals": len(quality_signals),
             "co_occurrence_candidates": len(co_occurrences),
             "cross_reference_candidates": len(cross_references),

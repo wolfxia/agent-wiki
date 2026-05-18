@@ -218,6 +218,64 @@ def test_cli_eval_retrieval_outputs_json_report(monkeypatch, tmp_path) -> None:
     }
 
 
+def test_cli_review_relations_reclassifies_review_item(temp_wiki_root) -> None:
+    graph_path = temp_wiki_root / "knowledge_graph.jsonl"
+    graph_path.write_text(
+        json.dumps(
+            {
+                "subject": "Huawei",
+                "relation": "competes_with",
+                "object": "Apple",
+                "source_doc_id": "raw-relation-cli",
+                "confidence_label": "AMBIGUOUS",
+                "confidence_score": 0.4,
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (temp_wiki_root / "review_queue.jsonl").write_text(
+        json.dumps(
+            {
+                "item_id": "relation_review:Huawei:Apple:competes_with",
+                "item_type": "relation_review",
+                "status": "open",
+                "content_state": {"subject": "Huawei", "object": "Apple", "relation": "competes_with"},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "review-relations",
+            "--action",
+            "reclassify",
+            "--confidence",
+            "INFERRED",
+            "--item-id",
+            "relation_review:Huawei:Apple:competes_with",
+            "--workspace",
+            str(temp_wiki_root),
+            "--registry",
+            "tests/fixtures/registry.yaml",
+        ],
+        env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"},
+    )
+
+    assert result.exit_code == 0
+    assert "status=resolved" in result.stdout
+    relation = json.loads(graph_path.read_text(encoding="utf-8").strip())
+    queue_item = json.loads((temp_wiki_root / "review_queue.jsonl").read_text(encoding="utf-8").strip())
+    assert relation["confidence_label"] == "INFERRED"
+    assert relation["confidence_score"] == 0.7
+    assert queue_item["status"] == "resolved"
+
+
 def test_cli_compile_prepare_command_prints_source_refs(temp_wiki_root) -> None:
     from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
     from agent_wiki.bootstrap.registry_loader import RegistryLoader

@@ -250,11 +250,14 @@ The current `CompileUpdateService.analyze()` only distinguishes create vs revise
 - `inferred`
 - `ambiguous`
 
+`knowledge_graph.jsonl` uses the uppercase runtime labels `EXTRACTED`, `INFERRED`, and `AMBIGUOUS` for relation confidence. `EXTRACTED` means the relation is directly stated by source evidence, `INFERRED` means it is derived or legacy/backfilled, and `AMBIGUOUS` means it is uncertain or contradicted enough to require review before retrieval.
+
 ### 7.2 What must enter review queue
 - new source clearly overturns existing compiled claim
 - same concept has conflicting conclusions in different synthesis
 - principle lacks supporting page backlinks
 - same problem cluster has two mutually exclusive answers
+- `knowledge_graph.jsonl` relation with `confidence_label=AMBIGUOUS`
 
 ### 7.3 Disputed rules
 - `disputed` must include `dispute_reason`
@@ -270,6 +273,7 @@ The current `CompileUpdateService.analyze()` only distinguishes create vs revise
 Implemented today:
 - `compile_update.apply` rejects compiled writes whose `source_refs` do not resolve to existing raw manifest entries, unless a shared-wiki approval path explicitly bypasses the raw-source requirement.
 - `query` surfaces dispute caveats when manifest entries carry `review_status=disputed` and `dispute_reason`.
+- `maintain` backfills legacy graph relations as `INFERRED`, emits regex-extracted graph relations as `EXTRACTED`, and creates `relation_review` queue items for `AMBIGUOUS` graph relations.
 
 Not yet implemented:
 - richer contradiction-state transitions
@@ -300,6 +304,7 @@ Six fixed types:
 ### 8.2.1 Retrieval provider baseline
 - Retrieval is provider-based, not vector-mandatory.
 - Phase 1/v0.2 runtime uses FTS5+jieba as the primary path when `.agent-wiki/retrieval.db` exists, merges structured `topic_index.md` hits, and falls back to JSONL lexical search over `retrieval_index.jsonl`.
+- Phase 1/v0.2 runtime also merges typed graph hits from `knowledge_graph.jsonl`; `EXTRACTED` relations retain full graph weight, `INFERRED` relations are down-weighted, and `AMBIGUOUS` relations are excluded from retrieval until review.
 - Current FTS ranking weights `topic`, `problem_cluster`, and `summary` above body `content`, supports `page_type` / `page_types` filters, and uses prefix fallback for short queries.
 - Structured and JSONL fallback paths prefilter obvious non-candidates before token/fuzzy scoring to keep large local indexes usable.
 - `aw eval-retrieval` reads `eval/retrieval_queries.jsonl`-style ground-truth queries and reports recall@k, precision@k, MRR, compiled hit ratio, and latency without appending query outcomes.
@@ -333,6 +338,24 @@ CREATE VIRTUAL TABLE retrieval_fts USING fts5(
 ```
 
 The SQLite database is runtime state and must remain rebuildable from committed workspace artifacts; it is not Git authority.
+
+### 8.2.3 Current typed graph relation schema
+
+`knowledge_graph.jsonl` is a committed JSONL artifact. Each line represents one relation and should carry:
+
+- `subject`
+- `relation`
+- `object`
+- `subject_type`
+- `object_type`
+- `source_doc_id`
+- `source_refs` using `wiki_id:doc_id`
+- `evidence`
+- `confidence_label`: `EXTRACTED`, `INFERRED`, or `AMBIGUOUS`
+- `confidence_score`: default `1.0`, `0.7`, or `0.4` respectively
+- `extracted_at`
+
+Current deterministic regex extraction writes `EXTRACTED` relations with direct evidence text. Legacy relations missing confidence fields are backfilled as `INFERRED`. `AMBIGUOUS` relations are not queryable by default; they must enter review queue as `item_type=relation_review` and can be resolved through `aw review-relations` by accepting, rejecting, or reclassifying the relation.
 
 ### 8.3 Layered presentation
 - **L1** Answer layer: directly usable answer entries
@@ -408,6 +431,7 @@ Common `item_type` values:
 - `feedback_issue`
 - `principle_proposal`
 - `dispute`
+- `relation_review`
 
 ### Current implementation profile
 
@@ -416,6 +440,8 @@ The current implementation writes a **minimal** review queue shape only:
 - `doc_id`
 - `reason`
 - `status`
+
+`relation_review` items are the first richer Phase 1 queue shape. They use `item_id=relation_review:{subject}:{object}:{relation}`, `item_type=relation_review`, `status`, and `content_state` containing relation endpoints, relation type, confidence fields, evidence, and `source_refs`.
 
 This is currently produced from:
 - `src/agent_wiki/application/propagation.py`

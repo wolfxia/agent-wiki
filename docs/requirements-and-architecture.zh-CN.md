@@ -287,6 +287,7 @@ workspace → push-view → Obsidian（全量可浏览/可编辑视图）
 - `feedback.py` 会追加 `query_outcomes.jsonl` 并创建 review queue 项
 - `weekly_review.py` 目前产出最小摘要，并基于 queue reason 提供建议动作
 - `quality_report.py` 会读取 query outcomes、manifest 与 compile queue telemetry，报告 compile failure rate、failure breakdown、平均编译耗时、metadata 完整率、cluster coverage 与 mature-cluster coverage
+- `quality_report.py` 还会基于 `knowledge_graph.jsonl` 与 open `relation_review` 项报告关系置信度统计
 - 更丰富的 query-outcome policy 与 multi-signal review synthesis 仍是未来工作
 
 ### 3.11 Review queue
@@ -297,6 +298,7 @@ Review queue 在概念上仍支持 conflict、missing evidence、pending gate fi
 - 当前 queue item 形状仍然很小：`item_type`、`doc_id`、`reason`、`status`
 - 更丰富的 lifecycle、assignment、priority、`wiki_id` 与 resolution 语义仍是设计目标
 - 因此当前 queue shape 应被视为过渡态，而不是可支撑严肃多 wiki 治理的最终形态
+- `relation_review` 是首个类型化图谱 review item 形状；它会为 ambiguous 知识图谱关系创建，并通过 `aw review-relations` resolve
 
 ### 3.12 C 级确认与审计
 

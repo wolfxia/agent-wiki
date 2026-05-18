@@ -195,11 +195,14 @@ Phase 1 同时维护一个确定性的类型化知识图谱，用于提升 Agent
 relation_schema.yaml
   -> 对 raw 页面执行 regex RelationExtractor
   -> knowledge_graph.jsonl
+  -> 不确定关系进入 relation_review 队列项
   -> RetrievalRouter 图谱命中
   -> wiki.query 通过 graph_score 参与混合排序
 ```
 
-`relation_schema.yaml` 位于 wiki 根目录，并且必须由用户按知识库配置。缺失该文件时，maintain 会跳过图谱抽取，query 回退到现有 FTS / 词法 / 结构化检索。`knowledge_graph.jsonl` 每行保存一条关系，包含 subject、relation、object、实体类型、`source_doc_id`、confidence 与抽取时间。对称关系会写入双向边，便于从任一实体方向查询。
+`relation_schema.yaml` 位于 wiki 根目录，并且必须由用户按知识库配置。缺失该文件时，maintain 会跳过图谱抽取，query 回退到现有 FTS / 词法 / 结构化检索。`knowledge_graph.jsonl` 每行保存一条关系，包含 subject、relation、object、实体类型、`source_doc_id`、`source_refs`、`evidence`、`confidence_label`、`confidence_score` 与抽取时间。确定性的 regex 抽取写入 `EXTRACTED` 关系；旧图谱条目会回填为 `INFERRED`；未来语义抽取器在证据不确定或互相矛盾时可以写入 `AMBIGUOUS`。对称关系会写入双向边，便于从任一实体方向查询。
+
+Query 将关系置信度视为检索语义，而不是展示元数据：`EXTRACTED` 关系保留完整图谱权重，`INFERRED` 关系降权，`AMBIGUOUS` 关系在完成 review 前不会进入 query 命中。`maintain` 会为 ambiguous 关系创建 `relation_review` 队列项，operator 可以用 `aw review-relations` accept、reject 或 reclassify 该关系。`QualityReportService` 会按 confidence label 报告关系数量，并报告仍处于 open 状态的 relation review 数量。
 
 模板位于 `templates/relation_schema.yaml`；领域关系应复制模板后配置，而不是把个人 topic 或实体词表硬编码进源码。
 

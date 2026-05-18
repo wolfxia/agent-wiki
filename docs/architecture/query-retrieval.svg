@@ -47,8 +47,9 @@
 
   <rect x="250" y="270" width="250" height="90" rx="16" fill="#c5e1a5" stroke="#558b2f" stroke-width="2"/>
   <text x="375" y="302" text-anchor="middle" class="box-title">Coarse Retrieval</text>
-  <text x="375" y="324" text-anchor="middle" class="box-copy">FTS5 weighted · topic_index</text>
-  <text x="375" y="342" text-anchor="middle" class="box-copy">JSONL fallback · optional vector</text>
+  <text x="375" y="320" text-anchor="middle" class="box-copy">knowledge_graph confidence</text>
+  <text x="375" y="338" text-anchor="middle" class="box-copy">FTS5 weighted · topic_index</text>
+  <text x="375" y="356" text-anchor="middle" class="box-copy">JSONL fallback · optional vector</text>
 
   <rect x="250" y="400" width="250" height="66" rx="16" fill="#ffe0b2" stroke="#e65100" stroke-width="2"/>
   <text x="375" y="428" text-anchor="middle" class="box-title">Aggregate</text>
@@ -104,5 +105,5 @@
   <path d="M 770 608 V 592 H 740 V 566" fill="none" stroke="#880e4f" stroke-width="2" stroke-dasharray="7 5"/>
 
   <rect x="290" y="694" width="400" height="30" rx="15" class="frame"/>
-  <text x="490" y="714" text-anchor="middle" class="edge-label">query_outcomes / wiki.feedback -&gt; review_queue 形成后续维护闭环</text>
+  <text x="490" y="714" text-anchor="middle" class="edge-label">query_outcomes / relation_review / wiki.feedback -&gt; review_queue 形成维护闭环</text>
 </svg>

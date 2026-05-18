@@ -301,6 +301,7 @@ Current implementation note:
 - `feedback.py` appends `query_outcomes.jsonl` and creates review queue items
 - `weekly_review.py` produces a minimal summary and suggested actions from queue reasons
 - `quality_report.py` reads query outcomes, manifest entries, and compile queue telemetry to report compile failure rate, failure breakdown, average compile latency, metadata completeness, cluster coverage, and mature-cluster coverage
+- `quality_report.py` also reports relation confidence totals from `knowledge_graph.jsonl` and open `relation_review` items
 - richer query-outcome policy and multi-signal review synthesis remain future work
 
 ### 3.11 Review queue
@@ -311,6 +312,7 @@ Current implementation note:
 - the current queue item shape is minimal: `item_type`, `doc_id`, `reason`, `status`
 - richer lifecycle, assignment, priority, `wiki_id`, and resolution semantics are design targets
 - the current queue shape should be treated as transitional rather than sufficient for serious multi-wiki governance
+- `relation_review` is the first typed graph review item shape; it is created for ambiguous knowledge-graph relations and resolved through `aw review-relations`
 
 ### 3.12 C-level confirmation and audit
 

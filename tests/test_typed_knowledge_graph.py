@@ -7,6 +7,7 @@ from agent_wiki.application.query import QueryInput, QueryService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.infrastructure.retrieval.knowledge_graph import RelationExtractor, RelationTypeDefinition
+from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 
 
 def _wiki(temp_wiki_root: Path):
@@ -84,6 +85,68 @@ def test_maintain_extracts_configured_typed_relations_from_raw_pages(temp_wiki_r
     assert ("Apple", "competes_with", "Huawei") in relation_keys
     assert ("Agent Wiki", "depends_on", "SQLite") in relation_keys
     assert all(entry["source_doc_id"] == "raw-typed-graph" for entry in entries)
+    assert all(entry["confidence_label"] == "EXTRACTED" for entry in entries)
+    assert all(entry["confidence_score"] == 1.0 for entry in entries)
+    assert all(entry["evidence"] for entry in entries)
+    assert all(entry["source_refs"] == ["personal-1:raw-typed-graph"] for entry in entries)
+
+
+def test_knowledge_graph_backfills_missing_confidence_labels(temp_wiki_root: Path) -> None:
+    from agent_wiki.infrastructure.retrieval.knowledge_graph import KnowledgeGraphRepository
+
+    path = temp_wiki_root / "knowledge_graph.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "subject": "YC",
+                "relation": "invested_in",
+                "object": "OpenAI",
+                "source_doc_id": "raw-legacy-relation",
+                "confidence": 1.0,
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    changed = KnowledgeGraphRepository(temp_wiki_root, wiki_id="personal-1").backfill_confidence_labels()
+
+    entries = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert changed == 1
+    assert entries[0]["confidence_label"] == "INFERRED"
+    assert entries[0]["confidence_score"] == 0.7
+    assert entries[0]["source_refs"] == ["personal-1:raw-legacy-relation"]
+
+
+def test_maintain_routes_ambiguous_relations_to_review_queue(temp_wiki_root: Path) -> None:
+    from agent_wiki.infrastructure.retrieval.knowledge_graph import KnowledgeGraphRepository
+
+    wiki = _wiki(temp_wiki_root)
+    repository = KnowledgeGraphRepository(temp_wiki_root, wiki_id=wiki.wiki_id)
+    repository.replace_all(
+        [
+            {
+                "subject": "Huawei",
+                "relation": "competes_with",
+                "object": "Apple",
+                "source_doc_id": "raw-ambiguous-relation",
+                "confidence_label": "AMBIGUOUS",
+                "confidence_score": 0.4,
+                "evidence": "Huawei may compete with Apple in some markets.",
+                "source_refs": ["personal-1:raw-ambiguous-relation"],
+            }
+        ]
+    )
+
+    created = repository.enqueue_ambiguous_reviews(ReviewQueueRepository(temp_wiki_root))
+
+    assert created == 1
+    item = ReviewQueueRepository(temp_wiki_root).find("relation_review:Huawei:Apple:competes_with")
+    assert item is not None
+    assert item["item_type"] == "relation_review"
+    assert item["status"] == "open"
+    assert item["content_state"]["confidence_label"] == "AMBIGUOUS"
 
 
 def test_query_uses_typed_graph_hits_when_knowledge_graph_exists(temp_wiki_root: Path) -> None:
@@ -108,7 +171,8 @@ def test_query_uses_typed_graph_hits_when_knowledge_graph_exists(temp_wiki_root:
                 "subject_type": "organization",
                 "object_type": "organization",
                 "source_doc_id": "raw-graph-query",
-                "confidence": 1.0,
+                "confidence_label": "EXTRACTED",
+                "confidence_score": 1.0,
             },
             ensure_ascii=False,
         )
@@ -121,6 +185,40 @@ def test_query_uses_typed_graph_hits_when_knowledge_graph_exists(temp_wiki_root:
     assert result.hits[0].doc_id == "raw-graph-query"
     assert result.hits[0].section == "knowledge_graph"
     assert result.hits[0].metadata["graph_relation"] == "invested_in"
+    assert result.hits[0].metadata["graph_confidence_label"] == "EXTRACTED"
+
+
+def test_graph_search_weights_inferred_and_excludes_ambiguous_relations(temp_wiki_root: Path) -> None:
+    wiki = _wiki(temp_wiki_root)
+    for doc_id in ["raw-extracted", "raw-inferred", "raw-ambiguous"]:
+        CaptureRawService().execute(
+            wiki=wiki,
+            actor=_actor(),
+            data=CaptureRawInput(
+                doc_id=doc_id,
+                topic="graph",
+                problem_cluster="confidence",
+                content=f"# {doc_id}\nGraph confidence source.",
+                source_refs=[],
+            ),
+        )
+    (temp_wiki_root / "knowledge_graph.jsonl").write_text(
+        "".join(
+            json.dumps(entry, ensure_ascii=False) + "\n"
+            for entry in [
+                {"subject": "YC", "relation": "invested_in", "object": "OpenAI", "source_doc_id": "raw-extracted", "confidence_label": "EXTRACTED", "confidence_score": 1.0},
+                {"subject": "YC", "relation": "invested_in", "object": "OpenAI", "source_doc_id": "raw-inferred", "confidence_label": "INFERRED", "confidence_score": 0.7},
+                {"subject": "YC", "relation": "invested_in", "object": "OpenAI", "source_doc_id": "raw-ambiguous", "confidence_label": "AMBIGUOUS", "confidence_score": 0.3},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = QueryService().execute(wiki=wiki, actor=_actor(), data=QueryInput(query="YC invested in OpenAI"))
+    doc_ids = [hit.doc_id for hit in result.hits]
+
+    assert doc_ids.index("raw-extracted") < doc_ids.index("raw-inferred")
+    assert "raw-ambiguous" not in doc_ids
 
 
 def test_query_can_use_each_configured_relation_type(temp_wiki_root: Path) -> None:

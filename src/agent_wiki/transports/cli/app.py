@@ -27,6 +27,7 @@ from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import CaptureRawInput, CompileUpdateInput, IdentityContext, ProposalInput, QueryInput
 from agent_wiki.infrastructure.identity.resolver import IdentityResolver
 from agent_wiki.infrastructure.retrieval.index_consistency import IndexConsistencyChecker
+from agent_wiki.infrastructure.retrieval.knowledge_graph import KnowledgeGraphRepository
 from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 from agent_wiki.settings import DEFAULT_REGISTRY_PATH
 from agent_wiki.transports.errors import map_exception
@@ -469,6 +470,45 @@ def feedback(
             ),
         )
         typer.echo(f"created_review_item={result.created_review_item}")
+
+    _run_cli(_command)
+
+
+@app.command("review-relations")
+def review_relations(
+    action: str = typer.Option(..., "--action", help="accept, reject, or reclassify"),
+    item_id: str = typer.Option(..., "--item-id"),
+    confidence: str | None = typer.Option(None, "--confidence"),
+    workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
+) -> None:
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
+        normalized_action = action.lower()
+        if normalized_action not in {"accept", "reject", "reclassify"}:
+            raise typer.BadParameter("--action must be accept, reject, or reclassify")
+
+        repository = KnowledgeGraphRepository(Path(wiki.workspace_path), wiki_id=wiki.wiki_id)
+        queue = ReviewQueueRepository(Path(wiki.workspace_path))
+
+        if normalized_action == "reject":
+            changed = repository.remove_relation(item_id)
+        else:
+            target_confidence = confidence or "EXTRACTED"
+            changed = repository.update_relation_confidence(item_id, target_confidence)
+
+        if not changed:
+            raise ValueError(f"relation review item not found in knowledge graph: {item_id}")
+        queue.mark_resolved(
+            item_id,
+            {
+                "relation_review_action": normalized_action,
+                "confidence_label": confidence or ("REJECTED" if normalized_action == "reject" else "EXTRACTED"),
+            },
+        )
+        status = (queue.find(item_id) or {}).get("status", "resolved")
+        typer.echo(f"status={status} item_id={item_id} action={normalized_action}")
 
     _run_cli(_command)
 

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.enums import PageType
+from agent_wiki.infrastructure.retrieval.knowledge_graph import CONFIDENCE_AMBIGUOUS, CONFIDENCE_EXTRACTED, CONFIDENCE_INFERRED
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 
 _COMPILED_PAGE_TYPES = {PageType.ATOM.value, PageType.SYNTHESIS.value, PageType.PRINCIPLE.value}
@@ -22,6 +23,7 @@ class QualityReportService:
         compile_failure_rate, compile_failure_breakdown, avg_compile_latency_seconds = self._compile_attempt_metrics(wiki_root)
         metadata_completeness = self._metadata_completeness(entries)
         cluster_coverage, mature_cluster_coverage = self._cluster_coverage(entries)
+        relation_stats = self._relation_stats(wiki_root)
 
         return {
             "query_count": query_count,
@@ -36,6 +38,7 @@ class QualityReportService:
             "metadata_completeness": metadata_completeness,
             "cluster_coverage": cluster_coverage,
             "mature_cluster_coverage": mature_cluster_coverage,
+            "relation_stats": relation_stats,
         }
 
     def _query_metrics(self, wiki_root: Path) -> tuple[int, float]:
@@ -145,3 +148,35 @@ class QualityReportService:
         mature_covered = sum(1 for key in mature_clusters if key in compiled_clusters)
         mature_coverage = (mature_covered / len(mature_clusters)) if mature_clusters else 0.0
         return covered_clusters / len(raw_clusters), mature_coverage
+
+    def _relation_stats(self, wiki_root: Path) -> dict[str, int]:
+        graph_path = wiki_root / "knowledge_graph.jsonl"
+        queue_path = wiki_root / "review_queue.jsonl"
+        stats = {
+            "total": 0,
+            "extracted": 0,
+            "inferred": 0,
+            "ambiguous": 0,
+            "pending_review": 0,
+        }
+        if graph_path.exists():
+            for line in graph_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                entry = json.loads(line)
+                stats["total"] += 1
+                label = str(entry.get("confidence_label") or CONFIDENCE_INFERRED).upper()
+                if label == CONFIDENCE_EXTRACTED:
+                    stats["extracted"] += 1
+                elif label == CONFIDENCE_AMBIGUOUS:
+                    stats["ambiguous"] += 1
+                else:
+                    stats["inferred"] += 1
+        if queue_path.exists():
+            for line in queue_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                item = json.loads(line)
+                if item.get("item_type") == "relation_review" and item.get("status", "open") == "open":
+                    stats["pending_review"] += 1
+        return stats
