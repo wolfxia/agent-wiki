@@ -34,6 +34,18 @@ class ExternalViewConfig(BaseModel):
     push_view_routing: PushViewRoutingConfig = Field(default_factory=PushViewRoutingConfig)
 
 
+class LLMConfig(BaseModel):
+    base_url: str
+    api_key_env: str
+    model: str
+    max_tokens: int = 4096
+    timeout_seconds: int = 30
+
+
+class CompileConfig(BaseModel):
+    llm: LLMConfig | None = None
+
+
 class WikiConfig(BaseModel):
     wiki_id: str
     type: str
@@ -44,6 +56,7 @@ class WikiConfig(BaseModel):
     external_views: list[ExternalViewConfig] = Field(default_factory=list)
     pending_query_policy: dict[str, str] = Field(default_factory=dict)
     retrieval: RetrievalConfig
+    compile: CompileConfig = Field(default_factory=CompileConfig)
     permissions: list[PermissionConfig] = Field(default_factory=list)
 
 

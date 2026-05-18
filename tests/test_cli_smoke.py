@@ -753,3 +753,61 @@ def test_cli_compile_execute_applies_input_file_and_resolves_queue_item(temp_wik
     assert "status=committed" in result.stdout
     assert "queue_status=resolved" in result.stdout
     assert (temp_wiki_root / "pages" / f"{payload['doc_id']}.md").exists()
+
+
+def test_cli_compile_execute_apply_runs_single_command_pipeline(monkeypatch, temp_wiki_root) -> None:
+    from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+    from agent_wiki.application.compile_suggest import CompileSuggestService
+    from agent_wiki.bootstrap.registry_loader import RegistryLoader
+    from agent_wiki.domain.contracts import ResolvedActor
+    from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    (temp_wiki_root / "purpose.md").write_text("# Purpose\n\n## Topics\n\n- imaging-os\n", encoding="utf-8")
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    for index in range(3):
+        CaptureRawService().execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-cli-apply-{index}",
+                topic="imaging-os",
+                problem_cluster="cli-apply",
+                content=f"# Raw CLI Apply {index}\n\nClaim: apply {index}.",
+                source_refs=[],
+            ),
+        )
+    CompileSuggestService().detect_and_enqueue(wiki)
+
+    class FakeApplyService:
+        def generate(self, wiki, prepare):
+            return "# CLI Generated Atom\n\nClaim: generated through --apply."
+
+    monkeypatch.setattr("agent_wiki.application.compile_execute.CompileApplyService", lambda: FakeApplyService())
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "compile-execute",
+            "--apply",
+            "--limit",
+            "1",
+            "--priority-filter",
+            "P0",
+            "--workspace",
+            str(temp_wiki_root),
+            "--registry",
+            "tests/fixtures/registry.yaml",
+        ],
+        env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"},
+    )
+
+    assert result.exit_code == 0
+    assert "status=committed" in result.stdout
+    assert "queue_status=resolved" in result.stdout
+    assert "doc_id=atom-imaging-os-cli-apply-0001" in result.stdout
+    item = ReviewQueueRepository(temp_wiki_root).find("compile_suggestion:imaging-os:cli-apply:0001")
+    assert item["status"] == "resolved"
+    assert (temp_wiki_root / "pages" / "atom-imaging-os-cli-apply-0001.md").read_text(encoding="utf-8").startswith("# CLI Generated Atom")

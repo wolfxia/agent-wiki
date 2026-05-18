@@ -55,3 +55,44 @@ wikis:
         assert "wrong_type" in message or "invalid_mode" in message or "robot" in message or "Z" in message
     else:
         raise AssertionError("expected invalid enum registry validation failure")
+
+
+def test_registry_loader_reads_compile_llm_config(tmp_path: Path) -> None:
+    registry_path = tmp_path / "registry-llm.yaml"
+    registry_path.write_text(
+        """
+version: 1
+default_route_policy: purpose_then_topic
+wikis:
+  - wiki_id: personal-1
+    type: personal
+    workspace_path: ./tmp
+    purpose_path: purpose.md
+    config_path: config.yaml
+    allowed_page_types: [raw, atom, synthesis]
+    external_views: []
+    pending_query_policy: {}
+    retrieval:
+      coarse_provider: lexical
+      optional_providers: []
+      route_priority: 80
+    compile:
+      llm:
+        base_url: https://openrouter.ai/api/v1
+        api_key_env: OPENROUTER_API_KEY
+        model: deepseek/deepseek-chat-v3-0324
+        max_tokens: 2048
+        timeout_seconds: 20
+    permissions: []
+""",
+        encoding="utf-8",
+    )
+
+    wiki = RegistryLoader().load(registry_path).wikis[0]
+
+    assert wiki.compile.llm is not None
+    assert wiki.compile.llm.base_url == "https://openrouter.ai/api/v1"
+    assert wiki.compile.llm.api_key_env == "OPENROUTER_API_KEY"
+    assert wiki.compile.llm.model == "deepseek/deepseek-chat-v3-0324"
+    assert wiki.compile.llm.max_tokens == 2048
+    assert wiki.compile.llm.timeout_seconds == 20

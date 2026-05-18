@@ -265,6 +265,7 @@ def compile_execute(
     limit: int = typer.Option(1, "--limit"),
     priority_filter: str | None = typer.Option(None, "--priority-filter"),
     input_file: Path | None = typer.Option(None, "--input-file"),
+    apply: bool = typer.Option(False, "--apply"),
     workspace: str | None = typer.Option(None, "--workspace"),
     registry: str | None = typer.Option(None, "--registry"),
     wiki_id: str | None = typer.Option(None, "--wiki-id"),
@@ -283,6 +284,25 @@ def compile_execute(
             queue_item = ReviewQueueRepository(Path(wiki.workspace_path)).find(str(payload.get("item_id")))
             typer.echo(f"status={result.status} doc_id={result.doc_id}")
             typer.echo(f"queue_status={queue_item.get('status') if queue_item else 'missing'}")
+            return
+
+        if apply:
+            results = service.apply_next(
+                wiki=wiki,
+                actor=actor,
+                data=CompileExecuteInput(limit=limit, priority_filter=priority_filter),
+            )
+            for result in results:
+                parts = [
+                    f"item_id={result.item_id}",
+                    f"status={result.status}",
+                    f"queue_status={result.queue_status}",
+                ]
+                if result.doc_id:
+                    parts.append(f"doc_id={result.doc_id}")
+                if result.error:
+                    parts.append(f"error={result.error}")
+                typer.echo(" ".join(parts))
             return
 
         packets = service.prepare_next(

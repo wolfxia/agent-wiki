@@ -3,6 +3,7 @@ from pathlib import Path
 
 from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
 from agent_wiki.application.compile_execute import CompileExecuteInput, CompileExecuteService, CompileGeneratedInput
+from agent_wiki.application.compile_apply import CompileApplyService
 from agent_wiki.application.compile_suggest import CompileSuggestService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
@@ -117,3 +118,100 @@ def test_compile_execute_apply_generated_marks_suggestion_failed_on_error(temp_w
     stored = ReviewQueueRepository(temp_wiki_root).find(packet.item_id)
     assert stored["status"] == "failed"
     assert "Invalid Doc Id" in stored["last_error"]
+
+
+def test_compile_apply_service_calls_openai_compatible_api(monkeypatch, temp_wiki_root: Path) -> None:
+    wiki, _actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-llm")
+    wiki = wiki.model_copy(
+        update={
+            "compile": {
+                "llm": {
+                    "base_url": "https://llm.example/v1",
+                    "api_key_env": "TEST_LLM_API_KEY",
+                    "model": "test-model",
+                    "max_tokens": 1234,
+                    "timeout_seconds": 12,
+                }
+            }
+        }
+    )
+    packet = CompileExecuteService().prepare_next(
+        wiki=wiki,
+        actor=_actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )[0]
+    captured: dict[str, object] = {}
+
+    def fake_post(url: str, *, headers: dict, json: dict, timeout: float):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        captured["timeout"] = timeout
+
+        class Response:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict:
+                return {"choices": [{"message": {"content": "# Generated Atom\n\nClaim: compiled."}}]}
+
+        return Response()
+
+    monkeypatch.setenv("TEST_LLM_API_KEY", "secret-token")
+
+    content = CompileApplyService(http_post=fake_post).generate(wiki, packet.prepare)
+
+    assert content == "# Generated Atom\n\nClaim: compiled."
+    assert captured["url"] == "https://llm.example/v1/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer secret-token"
+    assert captured["json"]["model"] == "test-model"
+    assert captured["json"]["max_tokens"] == 1234
+    assert "create_retrieval_ready_atom" in captured["json"]["messages"][1]["content"]
+    assert captured["timeout"] == 12
+
+
+def test_compile_execute_apply_next_generates_applies_and_resolves(temp_wiki_root: Path) -> None:
+    wiki, actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-apply-next")
+
+    class FakeApplyService:
+        def generate(self, wiki, prepare):
+            assert prepare.proposed_doc_id == "atom-imaging-os-cluster-apply-next-0001"
+            return "# Generated Apply Next\n\nClaim: single command compile."
+
+    results = CompileExecuteService(apply_service=FakeApplyService()).apply_next(
+        wiki=wiki,
+        actor=actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )
+
+    assert len(results) == 1
+    result = results[0]
+    assert result.item_id == "compile_suggestion:imaging-os:cluster-apply-next:0001"
+    assert result.status == "committed"
+    assert result.queue_status == "resolved"
+    assert result.doc_id == "atom-imaging-os-cluster-apply-next-0001"
+    assert (temp_wiki_root / "pages" / "atom-imaging-os-cluster-apply-next-0001.md").read_text(encoding="utf-8").startswith("# Generated Apply Next")
+    stored = ReviewQueueRepository(temp_wiki_root).find(result.item_id)
+    assert stored["status"] == "resolved"
+    assert stored["content_state"]["compiled_doc_id"] == result.doc_id
+
+
+def test_compile_execute_apply_next_marks_failed_and_continues(temp_wiki_root: Path) -> None:
+    wiki, actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-apply-fail")
+
+    class FailingApplyService:
+        def generate(self, wiki, prepare):
+            raise RuntimeError("LLM timed out")
+
+    results = CompileExecuteService(apply_service=FailingApplyService()).apply_next(
+        wiki=wiki,
+        actor=actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )
+
+    assert len(results) == 1
+    assert results[0].status == "failed"
+    assert results[0].queue_status == "failed"
+    stored = ReviewQueueRepository(temp_wiki_root).find(results[0].item_id)
+    assert stored["status"] == "failed"
+    assert stored["last_error"] == "LLM timed out"

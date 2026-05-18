@@ -3,6 +3,7 @@ from pydantic import BaseModel
 
 from agent_wiki.application.compile_prepare import CompilePrepareInput, CompilePrepareResult, CompilePrepareService
 from agent_wiki.application.compile_update import CompileUpdateService
+from agent_wiki.application.compile_apply import CompileApplyService
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import CompileResult, CompileUpdateInput
@@ -37,7 +38,18 @@ class CompileGeneratedInput(BaseModel):
     sensitivity: str | None = None
 
 
+class CompileExecuteResult(BaseModel):
+    item_id: str
+    status: str
+    queue_status: str
+    doc_id: str | None = None
+    error: str | None = None
+
+
 class CompileExecuteService:
+    def __init__(self, apply_service: CompileApplyService | None = None) -> None:
+        self._apply_service = apply_service or CompileApplyService()
+
     def prepare_next(
         self,
         wiki: WikiConfig,
@@ -75,6 +87,53 @@ class CompileExecuteService:
                 )
             )
         return packets
+
+
+    def apply_next(
+        self,
+        wiki: WikiConfig,
+        actor: ResolvedActor,
+        data: CompileExecuteInput,
+    ) -> list[CompileExecuteResult]:
+        packets = self.prepare_next(wiki=wiki, actor=actor, data=data)
+        results: list[CompileExecuteResult] = []
+        for packet in packets:
+            try:
+                content = self._apply_service.generate(wiki, packet.prepare)
+                result = self.apply_generated(
+                    wiki=wiki,
+                    actor=actor,
+                    data=CompileGeneratedInput(
+                        item_id=packet.item_id,
+                        doc_id=packet.prepare.proposed_doc_id,
+                        page_type=packet.prepare.proposed_page_type,
+                        topic=packet.prepare.topic,
+                        problem_cluster=packet.prepare.problem_cluster,
+                        content=content,
+                        source_refs=packet.prepare.source_refs,
+                    ),
+                )
+                queue_status = ReviewQueueRepository(Path(wiki.workspace_path)).find(packet.item_id).get("status", "unknown")
+                results.append(
+                    CompileExecuteResult(
+                        item_id=packet.item_id,
+                        status=result.status,
+                        queue_status=queue_status,
+                        doc_id=result.doc_id,
+                    )
+                )
+            except Exception as exc:
+                queue = ReviewQueueRepository(Path(wiki.workspace_path))
+                queue.mark_failed(packet.item_id, str(exc))
+                results.append(
+                    CompileExecuteResult(
+                        item_id=packet.item_id,
+                        status="failed",
+                        queue_status="failed",
+                        error=str(exc),
+                    )
+                )
+        return results
 
     def apply_generated(
         self,

@@ -142,7 +142,19 @@ raw intake
        -> better query answers and second-order curation
 ```
 
-`wiki.compile_prepare` is read-only. It prepares bounded raw batches and traceable source refs, but it does not generate truth-zone prose inside Agent Wiki. `aw compile-execute` is the CLI bridge for external cron workers: without `--input-file` it claims suggestions and prints evidence packets as JSON; with `--input-file` it applies generated content through `compile_update` and resolves or fails the queue item. The LLM call remains outside Agent Wiki.
+`wiki.compile_prepare` is read-only. It prepares bounded raw batches and traceable source refs, but it does not generate truth-zone prose inside Agent Wiki. `aw compile-execute` is the CLI bridge for cron workers: without `--input-file` or `--apply` it claims suggestions and prints evidence packets as JSON; with `--input-file` it applies generated content through `compile_update`; with `--apply` it runs the full loop in one command: prepare, call an OpenAI-compatible chat completions API, apply the generated atom page, and resolve or fail the queue item.
+
+`--apply` requires per-wiki registry config:
+
+```yaml
+compile:
+  llm:
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    model: deepseek/deepseek-chat-v3-0324
+    max_tokens: 4096
+    timeout_seconds: 30
+```
 
 ## What Is New In v0.2.0
 
@@ -167,7 +179,7 @@ raw intake
 | `aw query` | Query the knowledge base |
 | `aw capture-raw` | Capture raw source or learning note |
 | `aw compile-prepare` | Prepare agent-facing raw evidence packets for compilation |
-| `aw compile-execute` | Claim compile suggestions, emit JSON packets, or apply generated content from `--input-file` |
+| `aw compile-execute` | Claim compile suggestions, emit JSON packets, apply generated content from `--input-file`, or run one-command LLM compile with `--apply` |
 | `aw compile-update` | Create or revise compiled truth-zone pages |
 | `aw review-queue-consume` | Assign the next open review queue item of a given type |
 | `aw lint` | Run consistency checks |

@@ -43,7 +43,7 @@ capture_raw → compile_update → query → lint → sync → weekly-review
 
 ![编译管道](docs/architecture/compile-pipeline.svg)
 
-编译管道把 raw 证据转换为 Agent 工作记忆。主目标是提升 Agent 的检索、推理与二阶整理质量；给人阅读只是次级收益。完整路径是：raw intake → review queue → `aw compile-execute` 输出 `compile_prepare` JSON → 外部 Agent/LLM 生成内容 → `aw compile-execute --input-file` 调用 `compile_update` → truth zone → 更好的 retrieval。
+编译管道把 raw 证据转换为 Agent 工作记忆。主目标是提升 Agent 的检索、推理与二阶整理质量；给人阅读只是次级收益。完整路径是：raw intake → review queue → `aw compile-execute` 输出 `compile_prepare` JSON → 外部 Agent/LLM 生成内容 → `aw compile-execute --input-file` 调用 `compile_update` → truth zone → 更好的 retrieval。也可以使用 `aw compile-execute --apply` 单命令闭环：prepare → OpenAI-compatible API 生成 atom Markdown → compile_update → mark_resolved。该模式需要在 registry 的 wiki 下配置 `compile.llm.base_url`、`api_key_env`、`model`、`max_tokens` 与 `timeout_seconds`。
 
 > 说明：以上图表位于仓库 `docs/architecture/` 下，反映当前 Phase 1 实现方向；部分未来的 MCP/REST 与更丰富的传播行为仍以设计目标形式记录。
 
@@ -104,7 +104,7 @@ Hermes 等 Agent 的首选集成路径仍是 MCP stdio；CLI 和 REST 主要服�
 | `aw query` | Implemented | 查询知识库 |
 | `aw capture-raw` | Implemented | 捕获 raw source 或学习笔记 |
 | `aw compile-prepare` | Implemented | 生成面向 Agent 的编译 evidence packet |
-| `aw compile-execute` | Implemented | 分配 compile suggestion，输出 JSON evidence packet，或从 `--input-file` 应用外部生成内容 |
+| `aw compile-execute` | Implemented | 分配 compile suggestion，输出 JSON evidence packet，从 `--input-file` 应用外部生成内容，或用 `--apply` 单命令完成 LLM 生成与写入 |
 | `aw compile-update` | Implemented | 写入或修订 atom / synthesis truth-zone 页面 |
 | `aw review-queue-consume` | Implemented | 分配指定类型的下一个 open review queue item |
 | `aw lint` | Implemented | 运行 manifest、index 与页面一致性检查 |
