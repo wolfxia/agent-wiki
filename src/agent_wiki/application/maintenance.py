@@ -9,11 +9,13 @@ from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRe
 from agent_wiki.infrastructure.retrieval.sqlite_fts import SQLiteFTSIndexProvider
 from agent_wiki.infrastructure.retrieval.topic_index import TopicIndexRepository
 from agent_wiki.infrastructure.runtime.operation_log import OperationLogRepository
+from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 
 
 class MaintenanceService:
     def run(self, wiki: WikiConfig) -> dict:
+        queue_timeouts_recovered = ReviewQueueRepository(Path(wiki.workspace_path)).recover_assigned_timeouts()
         repair_summary = RawMetadataRepairService().repair(wiki)
         orphan_cleanup_count = self._clean_orphan_authority_entries(wiki)
         compile_candidates = CompileSuggestService().detect_and_enqueue(wiki)
@@ -51,6 +53,7 @@ class MaintenanceService:
         return {
             "metadata_repair_candidates": total_repair_candidates,
             "orphan_cleanup_count": orphan_cleanup_count,
+            "queue_timeouts_recovered": queue_timeouts_recovered,
             "compile_suggestions": len(compile_suggestions),
             "quality_signals": len(quality_signals),
             "co_occurrence_candidates": len(co_occurrences),

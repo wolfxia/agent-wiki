@@ -267,3 +267,42 @@ def test_review_queue_can_mark_item_failed(temp_wiki_root: Path) -> None:
     assert stored["status"] == "failed"
     assert stored["last_error"] == "LLM output missing content"
     assert stored["failed_at"]
+
+
+def test_review_queue_recovers_assigned_items_after_timeout(temp_wiki_root: Path) -> None:
+    queue = ReviewQueueRepository(temp_wiki_root)
+    queue.append({
+        "item_id": "compile_suggestion:stale",
+        "item_type": "compile_suggestion",
+        "status": "assigned",
+        "assigned_to": "hermes",
+        "claimed_at": "2026-05-18T09:00:00Z",
+    })
+    queue.append({
+        "item_id": "compile_suggestion:fresh",
+        "item_type": "compile_suggestion",
+        "status": "assigned",
+        "assigned_to": "hermes",
+        "claimed_at": "2026-05-18T09:45:00Z",
+    })
+    queue.append({
+        "item_id": "compile_suggestion:progress",
+        "item_type": "compile_suggestion",
+        "status": "in_progress",
+        "assigned_to": "hermes",
+        "claimed_at": "2026-05-18T09:00:00Z",
+    })
+
+    recovered = queue.recover_assigned_timeouts(now="2026-05-18T10:00:00Z", timeout_minutes=30)
+
+    assert recovered == 1
+    stale = queue.find("compile_suggestion:stale")
+    fresh = queue.find("compile_suggestion:fresh")
+    progress = queue.find("compile_suggestion:progress")
+    assert stale["status"] == "open"
+    assert stale["previous_assigned_to"] == "hermes"
+    assert stale["timeout_recovered_at"] == "2026-05-18T10:00:00Z"
+    assert "assigned_to" not in stale
+    assert "claimed_at" not in stale
+    assert fresh["status"] == "assigned"
+    assert progress["status"] == "in_progress"

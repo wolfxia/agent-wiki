@@ -286,3 +286,29 @@ def test_maintenance_cleans_orphan_manifest_and_indexes(temp_wiki_root: Path) ->
     assert "raw-keep" in topic_index
     assert "raw-orphan" not in topic_index
     assert any(entry.get("operation") == "orphan_cleanup" and entry.get("doc_id") == "raw-orphan" for entry in operations)
+
+
+def test_maintenance_recovers_timed_out_assigned_queue_items(temp_wiki_root: Path) -> None:
+    import json
+
+    from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    queue = ReviewQueueRepository(temp_wiki_root)
+    queue.append({
+        "item_id": "compile_suggestion:maint-stale",
+        "item_type": "compile_suggestion",
+        "status": "assigned",
+        "assigned_to": "hermes",
+        "claimed_at": "2000-01-01T00:00:00Z",
+    })
+
+    summary = MaintenanceService().run(wiki)
+
+    assert summary["queue_timeouts_recovered"] == 1
+    items = [json.loads(line) for line in (temp_wiki_root / "review_queue.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    item = next(entry for entry in items if entry["item_id"] == "compile_suggestion:maint-stale")
+    assert item["status"] == "open"
+    assert item["previous_assigned_to"] == "hermes"
