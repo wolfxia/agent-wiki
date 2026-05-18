@@ -79,7 +79,7 @@ The current runtime now exposes a real FastMCP stdio server and workflow-complet
 - `aw serve` as the primary stdio service entrypoint
 - `aw-agent` as an alias for the same service identity
 - a real FastMCP stdio server named `agent-wiki`
-- a five-tool MCP surface: `wiki.query`, `wiki.capture_raw`, `wiki.compile_update`, `wiki.lint`, `wiki.sync`
+- a six-tool MCP surface: `wiki.query`, `wiki.capture_raw`, `wiki.compile_prepare`, `wiki.compile_update`, `wiki.lint`, `wiki.sync`
 - workflow-complete CLI and REST surfaces over the same shared core
 - explicit `sync` separation so `compile_update` still writes only internal authority/workspace state
 
@@ -196,17 +196,17 @@ These are **not contradictions**; they are Phase 1 simplifications of the fuller
 
 ### 2.5 Compile pipeline from raw to truth zone
 
-The compile pipeline is the Phase 1 path from accumulated raw evidence into maintainable `atom` and `synthesis` truth-zone pages. The runtime must not treat a large raw cluster as a single prompt-sized unit, and it must not embed an LLM inside the core service.
+The compile pipeline is the Phase 1 path from accumulated raw evidence into maintainable `atom` and `synthesis` truth-zone pages. The primary consumer is the next AI agent, not a human reader. Humans can read the compiled artifacts, but their main value is improving agent retrieval, reasoning, and second-order curation. The runtime must not treat a large raw cluster as a single prompt-sized unit, and it must not embed an LLM inside the core service.
 
 Chosen Phase 1 combination:
 
 - **Granularity: sub-cluster first.** A large `(topic, problem_cluster)` is split into deterministic sub-clusters. Each sub-cluster is prepared as an `atom` candidate; atoms can later support a synthesis for the broader cluster.
 - **Trigger: maintain prepares and queues.** `maintain` detects compile-ready clusters and writes review queue work items that contain enough raw doc ids for an agent to act. It does not directly create truth-zone pages.
-- **Content generation: agent-driven.** `wiki.compile_prepare` returns bounded raw evidence, summaries, source refs, and proposed output metadata. Hermes, Claude Code, or another agent writes the actual compiled content and calls `wiki.compile_update`.
+- **Content generation: agent-driven.** `wiki.compile_prepare` returns an agent-facing evidence packet: bounded raw evidence, extracted claim candidates, relationship hints, contradiction markers, source refs, and proposed output metadata. Hermes, Claude Code, or another agent writes the actual compiled content and calls `wiki.compile_update`.
 - **Incremental strategy: delta atom plus later synthesis revision.** New raw evidence creates additional atom candidates. Synthesis revision remains a separate B-level compile update, not an automatic side effect.
 - **Source refs: automatic from prepared raw pages.** Prepared items expose `wiki_id:doc_id` refs, and compile suggestions carry the same doc ids so compiled pages stay traceable to Git-tracked raw pages.
 
-This design answers the current backlog problem without making `maintain` fabricate truth-zone content. `maintain` remains a deterministic queue producer; agents remain responsible for semantic synthesis.
+This design answers the current backlog problem without making `maintain` fabricate truth-zone content. `maintain` remains a deterministic queue producer; agents remain responsible for semantic synthesis. Compiled output should read like working memory: concise claims, applicability boundaries, evidence links, conflicts, and retrieval cues, not a blog post.
 
 Implementation boundaries for Phase 1:
 

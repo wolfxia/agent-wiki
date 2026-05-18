@@ -34,6 +34,7 @@ def test_mcp_tool_surface_matches_documented_phase1_workflow() -> None:
     assert [tool["name"] for tool in tools] == [
         "wiki.query",
         "wiki.capture_raw",
+        "wiki.compile_prepare",
         "wiki.compile_update",
         "wiki.lint",
         "wiki.sync",
@@ -82,6 +83,7 @@ def test_docs_alignment_keeps_key_claims_in_sync() -> None:
     assert [tool["name"] for tool in MCPServer().list_tools()] == [
         "wiki.query",
         "wiki.capture_raw",
+        "wiki.compile_prepare",
         "wiki.compile_update",
         "wiki.lint",
         "wiki.sync",

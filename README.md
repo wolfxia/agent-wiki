@@ -37,6 +37,7 @@ Available MCP tools:
 |---|---|
 | `wiki.query` | Query the knowledge base with layered results and debug scores |
 | `wiki.capture_raw` | Capture raw source or learning notes |
+| `wiki.compile_prepare` | Prepare agent-facing raw evidence packets for compilation |
 | `wiki.compile_update` | Create or revise `atom` / `synthesis` pages |
 | `wiki.lint` | Check manifest, retrieval index, FTS, and consistency health |
 | `wiki.sync` | Run explicit `status`, `pull-view`, or `push-view` sync |
@@ -104,6 +105,25 @@ Core decisions in v0.2.0:
 - **Team expansion model**: the architecture supports N personal workspaces plus M team workspaces, with permission tiers per actor, wiki, operation, page type, and A/B/C gate.
 - **Compile and retrieval are one loop**: intake metadata feeds compile candidates, compiled schema feeds retrieval, query misses feed feedback and weekly review.
 
+### Compile Pipeline
+
+The compile pipeline turns raw evidence into agent working memory. Its primary goal is better agent retrieval and reasoning; human-readable presentation is a secondary benefit.
+
+```text
+raw intake
+  -> compile_prepare
+       -> agent-facing evidence packet
+          claims, relationship hints, contradiction markers, source_refs
+  -> review_queue compile_suggestion
+       -> open -> assigned -> in_progress -> resolved -> archived
+  -> agent-authored compile_update
+       -> atom / synthesis truth zone
+  -> retrieval indexes
+       -> better query answers and second-order curation
+```
+
+`wiki.compile_prepare` is read-only. It prepares bounded raw batches and traceable source refs, but it does not generate truth-zone prose inside Agent Wiki. Agents such as Hermes or Claude Code consume the packet, write the semantic synthesis, and call `wiki.compile_update`.
+
 ## What Is New In v0.2.0
 
 - FTS5 full-text search through `SQLiteFTSIndexProvider`, stored in `.agent-wiki/retrieval.db`.
@@ -146,6 +166,7 @@ The primary agent path is MCP stdio through `aw serve`. The MCP surface intentio
 ```text
 wiki.query
 wiki.capture_raw
+wiki.compile_prepare
 wiki.compile_update
 wiki.lint
 wiki.sync

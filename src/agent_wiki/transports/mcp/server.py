@@ -28,6 +28,21 @@ class MutationToolResult(BaseModel):
     error: ToolErrorResult | None = None
 
 
+class CompilePrepareToolResult(BaseModel):
+    topic: str | None = None
+    problem_cluster: str | None = None
+    sub_cluster_id: str | None = None
+    proposed_page_type: str | None = None
+    proposed_doc_id: str | None = None
+    agent_objective: str | None = None
+    total_raw_count: int = 0
+    source_refs: list[str] = Field(default_factory=list)
+    relationship_hints: list[dict] = Field(default_factory=list)
+    contradiction_markers: list[dict] = Field(default_factory=list)
+    items: list[dict] = Field(default_factory=list)
+    error: ToolErrorResult | None = None
+
+
 class LintToolResult(BaseModel):
     ok: bool | None = None
     issues: list[str] = Field(default_factory=list)
@@ -158,6 +173,31 @@ def build_fastmcp_server(registry_path: str | None = None) -> FastMCP:
             )
         )
 
+    @server.tool(name="wiki.compile_prepare", structured_output=True)
+    def compile_prepare_tool(
+        wiki_id: str,
+        topic: str,
+        problem_cluster: str,
+        doc_ids: list[str] | None = None,
+        max_items: int = 8,
+        sub_cluster_index: int = 1,
+        ctx: Context | None = None,
+    ) -> CompilePrepareToolResult:
+        return CompilePrepareToolResult.model_validate(
+            dispatcher.dispatch(
+                tool_name="wiki.compile_prepare",
+                params={
+                    "wiki_id": wiki_id,
+                    "topic": topic,
+                    "problem_cluster": problem_cluster,
+                    "doc_ids": doc_ids,
+                    "max_items": max_items,
+                    "sub_cluster_index": sub_cluster_index,
+                },
+                session_metadata=_metadata_from_context(ctx),
+            )
+        )
+
     @server.tool(name="wiki.lint", structured_output=True)
     def lint_tool(wiki_id: str, ctx: Context | None = None) -> LintToolResult:
         return LintToolResult.model_validate(
@@ -198,6 +238,7 @@ class MCPServer:
         return [
             {"name": "wiki.query", "description": "Query the agent wiki"},
             {"name": "wiki.capture_raw", "description": "Capture a raw page"},
+            {"name": "wiki.compile_prepare", "description": "Prepare raw evidence for agent-driven compilation"},
             {"name": "wiki.compile_update", "description": "Compile a truth-zone page"},
             {"name": "wiki.lint", "description": "Lint wiki state and indexes"},
             {"name": "wiki.sync", "description": "Run explicit wiki sync operations"},

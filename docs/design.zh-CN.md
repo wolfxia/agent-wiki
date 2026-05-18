@@ -164,17 +164,17 @@ approve
 
 ### 2.5 从 raw 到 truth zone 的编译管道
 
-编译管道是 Phase 1 中把累积 raw 证据转化为可维护 `atom` 与 `synthesis` truth-zone 页的路径。运行时不应把一个大型 raw cluster 当成单次 prompt 的输入，也不应在核心服务内嵌 LLM。
+编译管道是 Phase 1 中把累积 raw 证据转化为可维护 `atom` 与 `synthesis` truth-zone 页的路径。主要消费者是下一个 AI Agent，而不是人类读者。人可以阅读编译产物，但主要价值是提升 Agent 的检索、推理和二阶整理质量。运行时不应把一个大型 raw cluster 当成单次 prompt 的输入，也不应在核心服务内嵌 LLM。
 
 Phase 1 采用的组合是：
 
 - **粒度：先做 sub-cluster。** 大型 `(topic, problem_cluster)` 会被确定性地拆成 sub-cluster。每个 sub-cluster 先准备为一个 `atom` 候选；同 cluster 下的 atoms 后续再支撑 synthesis。
 - **触发：maintain 负责准备与入队。** `maintain` 检测可编译 cluster，并写入带有 raw doc ids 的 review queue 工作项。它不会直接创建 truth-zone 页面。
-- **内容生成：Agent 驱动。** `wiki.compile_prepare` 返回有界 raw 证据、摘要、source refs 与建议输出元数据。Hermes、Claude Code 或其他 Agent 负责写实际编译内容，并调用 `wiki.compile_update`。
+- **内容生成：Agent 驱动。** `wiki.compile_prepare` 返回面向 Agent 的 evidence packet：有界 raw 证据、候选 claims、关系提示、矛盾标记、source refs 与建议输出元数据。Hermes、Claude Code 或其他 Agent 负责写实际编译内容，并调用 `wiki.compile_update`。
 - **增量策略：delta atom，后续再修订 synthesis。** 新 raw 证据产生新的 atom 候选。synthesis 修订仍是独立的 B 级 compile update，不是自动副作用。
 - **source refs：由准备阶段自动收集。** prepare 输出 `wiki_id:doc_id` 引用，compile suggestion 也携带同一组 doc ids，保证编译页可追踪到 Git 中的 raw 页。
 
-这个设计解决当前 raw backlog 问题，但不会让 `maintain` 伪造 truth-zone 内容。`maintain` 仍然是确定性的 queue producer；语义综合仍由 Agent 完成。
+这个设计解决当前 raw backlog 问题，但不会让 `maintain` 伪造 truth-zone 内容。`maintain` 仍然是确定性的 queue producer；语义综合仍由 Agent 完成。编译产物应像工作记忆：短 claims、适用边界、证据链接、冲突与检索线索，而不是博客文章。
 
 Phase 1 实现边界：
 

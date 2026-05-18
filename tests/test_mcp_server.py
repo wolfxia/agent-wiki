@@ -14,10 +14,44 @@ def test_mcp_server_lists_expected_tools() -> None:
     assert tool_names == {
         "wiki.query",
         "wiki.capture_raw",
+        "wiki.compile_prepare",
         "wiki.compile_update",
         "wiki.lint",
         "wiki.sync",
     }
+
+
+def test_mcp_compile_prepare_tool_returns_raw_batch(temp_wiki_root: Path) -> None:
+    from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="mcp")
+    for index in range(2):
+        CaptureRawService().execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-mcp-prepare-{index}",
+                topic="compile",
+                problem_cluster="prepare",
+                content=f"# MCP Prepare {index}",
+                source_refs=[],
+            ),
+        )
+
+    result = MCPServer(registry_path="tests/fixtures/registry.yaml").invoke(
+        "wiki.compile_prepare",
+        {"wiki_id": "personal-1", "topic": "compile", "problem_cluster": "prepare"},
+        session_metadata={"actor_type": "agent", "actor_id": "claude-code"},
+        wiki_workspace_overrides={"personal-1": str(temp_wiki_root)},
+    )
+
+    assert result["topic"] == "compile"
+    assert result["problem_cluster"] == "prepare"
+    assert result["source_refs"] == ["personal-1:raw-mcp-prepare-0", "personal-1:raw-mcp-prepare-1"]
+    assert result["items"][0]["doc_id"] == "raw-mcp-prepare-0"
 
 
 def test_mcp_query_tool_delegates_to_query_service(temp_wiki_root: Path) -> None:

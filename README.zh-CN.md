@@ -39,6 +39,12 @@ capture_raw → compile_update → query → lint → sync → weekly-review
 
 ![查询与检索流程](docs/architecture/query-retrieval.png)
 
+### Compile pipeline
+
+![编译管道](docs/architecture/compile-pipeline.svg)
+
+编译管道把 raw 证据转换为 Agent 工作记忆。主目标是提升 Agent 的检索、推理与二阶整理质量；给人阅读只是次级收益。完整路径是：raw intake → `compile_prepare` → review queue → Agent 生成并调用 `compile_update` → truth zone → 更好的 retrieval。
+
 > 说明：以上图表位于仓库 `docs/architecture/` 下，反映当前 Phase 1 实现方向；部分未来的 MCP/REST 与更丰富的传播行为仍以设计目标形式记录。
 
 ## What Agent Wiki does
