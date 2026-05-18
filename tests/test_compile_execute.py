@@ -120,6 +120,39 @@ def test_compile_execute_priority_filter_p0_returns_empty_when_p0_and_p1_empty(t
     assert results == []
 
 
+def test_compile_execute_parses_legacy_item_id_with_colons_in_problem_cluster(temp_wiki_root: Path) -> None:
+    wiki, actor = _seed_cluster(
+        temp_wiki_root,
+        topic="external_sync",
+        problem_cluster="AI:cluster:AI",
+        raw_doc_prefix="raw-external-sync-ai",
+    )
+    queue_path = temp_wiki_root / "review_queue.jsonl"
+    queue_path.write_text(
+        json.dumps(
+            {
+                "item_id": "compile_suggestion:external_sync:AI:cluster:AI:0010",
+                "item_type": "compile_suggestion",
+                "raw_doc_ids": ["raw-external-sync-ai-0", "raw-external-sync-ai-1", "raw-external-sync-ai-2"],
+                "status": "open",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    packet = CompileExecuteService().prepare_next(
+        wiki=wiki,
+        actor=actor,
+        data=CompileExecuteInput(limit=1),
+    )[0]
+
+    assert packet.prepare.topic == "external_sync"
+    assert packet.prepare.problem_cluster == "AI:cluster:AI"
+    assert packet.prepare.proposed_doc_id == "atom-external_sync-AI-cluster-AI-0010"
+
+
 def test_compile_execute_apply_generated_content_resolves_suggestion(temp_wiki_root: Path) -> None:
     wiki, actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-apply")
     packet = CompileExecuteService().prepare_next(

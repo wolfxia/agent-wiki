@@ -64,16 +64,16 @@ class CompileExecuteService:
             item, fallback_priority = self._consume_compile_suggestion(queue, actor, data.priority_filter)
             if item is None:
                 break
-            prepare_params = item.get("prepare_params") or {}
+            prepare_params = self._prepare_params_from_item(item)
             prepare = CompilePrepareService().prepare(
                 wiki=wiki,
                 actor=actor,
                 data=CompilePrepareInput(
-                    topic=prepare_params.get("topic") or item.get("topic") or "",
-                    problem_cluster=prepare_params.get("problem_cluster") or item.get("problem_cluster") or "",
-                    doc_ids=prepare_params.get("doc_ids") or item.get("raw_doc_ids") or None,
+                    topic=prepare_params["topic"],
+                    problem_cluster=prepare_params["problem_cluster"],
+                    doc_ids=prepare_params["doc_ids"],
                     max_items=prepare_params.get("max_items", 8),
-                    sub_cluster_index=prepare_params.get("sub_cluster_index") or item.get("sub_cluster_index") or 1,
+                    sub_cluster_index=prepare_params["sub_cluster_index"],
                 ),
             )
             packets.append(
@@ -86,6 +86,38 @@ class CompileExecuteService:
                 )
             )
         return packets
+
+    def _prepare_params_from_item(self, item: dict) -> dict:
+        prepare_params = dict(item.get("prepare_params") or {})
+        topic, problem_cluster, sub_cluster_index = self._parse_compile_suggestion_item_id(
+            str(item.get("item_id") or "")
+        )
+        return {
+            "topic": prepare_params.get("topic") or item.get("topic") or topic,
+            "problem_cluster": prepare_params.get("problem_cluster") or item.get("problem_cluster") or problem_cluster,
+            "doc_ids": prepare_params.get("doc_ids") or item.get("raw_doc_ids") or None,
+            "max_items": prepare_params.get("max_items", 8),
+            "sub_cluster_index": (
+                prepare_params.get("sub_cluster_index")
+                or item.get("sub_cluster_index")
+                or sub_cluster_index
+            ),
+        }
+
+    def _parse_compile_suggestion_item_id(self, item_id: str) -> tuple[str, str, int]:
+        parts = item_id.split(":")
+        if len(parts) < 3 or parts[0] != "compile_suggestion":
+            return "", "", 1
+
+        index = 1
+        cluster_parts = parts[2:]
+        if len(parts) >= 4:
+            try:
+                index = int(parts[-1])
+                cluster_parts = parts[2:-1]
+            except ValueError:
+                index = 1
+        return parts[1], ":".join(cluster_parts), index
 
     def _consume_compile_suggestion(
         self,
