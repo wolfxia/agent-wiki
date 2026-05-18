@@ -77,6 +77,51 @@ def test_raw_metadata_repair_batches_manifest_updates(temp_wiki_root: Path, monk
     assert upsert_calls == []
 
 
+def test_raw_metadata_repair_batches_runtime_index_updates(temp_wiki_root: Path, monkeypatch) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    pages_root = temp_wiki_root / "pages"
+    pages_root.mkdir(exist_ok=True)
+    pending_root = temp_wiki_root / ".agent-wiki"
+    pending_root.mkdir(exist_ok=True)
+    pending_entries = []
+    for index in range(3):
+        doc_id = f"pending-runtime-{index}"
+        (pages_root / f"{doc_id}.md").write_text(f"# Pending Runtime {index}\n\nBody.", encoding="utf-8")
+        pending_entries.append({"doc_id": doc_id, "page_type": "raw"})
+    (pending_root / "pending_manifest.jsonl").write_text(
+        "\n".join(json.dumps(entry) for entry in pending_entries) + "\n",
+        encoding="utf-8",
+    )
+
+    retrieval_batch_sizes: list[int] = []
+    fts_batch_sizes: list[int] = []
+
+    def fake_append_raw_cards(self, wiki_id, cards):
+        retrieval_batch_sizes.append(len(cards))
+
+    def fake_append_raw_card(self, wiki_id, data):
+        raise AssertionError("repair should batch retrieval index writes")
+
+    def fake_batch_upsert(self, items):
+        fts_batch_sizes.append(len(items))
+
+    def fake_fts_upsert(self, doc_id, payload):
+        raise AssertionError("repair should batch FTS writes")
+
+    monkeypatch.setattr("agent_wiki.infrastructure.retrieval.retrieval_index.RetrievalIndexRepository.append_raw_cards", fake_append_raw_cards)
+    monkeypatch.setattr("agent_wiki.infrastructure.retrieval.retrieval_index.RetrievalIndexRepository.append_raw_card", fake_append_raw_card)
+    monkeypatch.setattr("agent_wiki.infrastructure.retrieval.sqlite_fts.SQLiteFTSIndexProvider.batch_upsert", fake_batch_upsert)
+    monkeypatch.setattr("agent_wiki.infrastructure.retrieval.sqlite_fts.SQLiteFTSIndexProvider.upsert", fake_fts_upsert)
+
+    result = RawMetadataRepairService().repair(wiki)
+
+    assert result["repaired_count"] == 3
+    assert retrieval_batch_sizes == [3]
+    assert fts_batch_sizes == [3]
+
+
 def test_raw_metadata_repair_skips_corrupt_pending_entries(temp_wiki_root: Path, caplog) -> None:
     pending_path = temp_wiki_root / ".agent-wiki" / "pending_manifest.jsonl"
     pending_path.parent.mkdir(exist_ok=True)

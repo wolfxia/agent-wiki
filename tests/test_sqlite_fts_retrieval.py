@@ -52,6 +52,58 @@ def test_sqlite_fts_upsert_is_idempotent(temp_wiki_root: Path) -> None:
     assert [hit.doc_id for hit in hits] == ["raw-fts-1"]
 
 
+def test_sqlite_fts_batch_upsert_reuses_schema_and_connection(temp_wiki_root: Path, monkeypatch) -> None:
+    provider = SQLiteFTSIndexProvider(temp_wiki_root, wiki_id="personal-1")
+    ensure_calls = 0
+    connect_calls = 0
+    original_ensure_schema = provider._ensure_schema
+    original_connect = provider._connect
+
+    def counting_ensure_schema() -> None:
+        nonlocal ensure_calls
+        ensure_calls += 1
+        original_ensure_schema()
+
+    def counting_connect():
+        nonlocal connect_calls
+        connect_calls += 1
+        return original_connect()
+
+    monkeypatch.setattr(provider, "_ensure_schema", counting_ensure_schema)
+    monkeypatch.setattr(provider, "_connect", counting_connect)
+
+    provider.batch_upsert(
+        [
+            (
+                "raw-batch-1",
+                {
+                    "wiki_id": "personal-1",
+                    "doc_id": "raw-batch-1",
+                    "page_type": "raw",
+                    "topic": "ops",
+                    "problem_cluster": "batch",
+                    "content": "first batch searchable",
+                },
+            ),
+            (
+                "raw-batch-2",
+                {
+                    "wiki_id": "personal-1",
+                    "doc_id": "raw-batch-2",
+                    "page_type": "raw",
+                    "topic": "ops",
+                    "problem_cluster": "batch",
+                    "content": "second batch searchable",
+                },
+            ),
+        ]
+    )
+
+    assert ensure_calls == 1
+    assert connect_calls == 2
+    assert {hit.doc_id for hit in provider.search("batch searchable", top_k=10)} == {"raw-batch-1", "raw-batch-2"}
+
+
 def test_sqlite_fts_rebuilds_from_manifest_pages(temp_wiki_root: Path) -> None:
     pages = temp_wiki_root / "pages"
     pages.mkdir(exist_ok=True)

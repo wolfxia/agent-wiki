@@ -23,6 +23,16 @@ class RetrievalIndexRepository:
         self.index_path = wiki_root / "retrieval_index.jsonl"
 
     def append_raw_card(self, wiki_id: str, data: CompileUpdateInput | object) -> None:
+        self.append_raw_cards(wiki_id, [data])
+
+    def append_raw_cards(self, wiki_id: str, items: list[CompileUpdateInput | object]) -> None:
+        if not items:
+            return
+        with self.index_path.open("a", encoding="utf-8") as handle:
+            for data in items:
+                handle.write(json.dumps(self._raw_card(wiki_id, data), ensure_ascii=False) + "\n")
+
+    def _raw_card(self, wiki_id: str, data: CompileUpdateInput | object) -> dict:
         card = {
             "wiki_id": wiki_id,
             "doc_id": data.doc_id,
@@ -31,8 +41,7 @@ class RetrievalIndexRepository:
             "problem_cluster": data.problem_cluster,
             "content": data.content,
         }
-        with self.index_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(card, ensure_ascii=False) + "\n")
+        return card
 
     def append_compiled_card(self, wiki_id: str, data: CompileUpdateInput) -> None:
         card = {

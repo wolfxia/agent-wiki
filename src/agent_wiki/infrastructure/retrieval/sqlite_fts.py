@@ -17,28 +17,44 @@ class SQLiteFTSIndexProvider:
         self.tokenizer = tokenizer or JiebaTokenizer()
 
     def upsert(self, doc_id: str, payload: dict) -> None:
+        self.batch_upsert([(doc_id, payload)])
+
+    def batch_upsert(self, items: list[tuple[str, dict]]) -> None:
+        if not items:
+            return
         self._ensure_schema()
-        normalized = self._normalize_payload(doc_id, payload)
+        normalized_items = [self._normalize_payload(doc_id, payload) for doc_id, payload in items]
+        self._write_normalized(normalized_items)
+
+    def _write_normalized(self, normalized_items: list[dict]) -> None:
+        if not normalized_items:
+            return
         with self._connect() as connection:
-            connection.execute("DELETE FROM retrieval_fts WHERE doc_id = ?", (doc_id,))
-            connection.execute(
+            connection.executemany(
+                "DELETE FROM retrieval_fts WHERE doc_id = ?",
+                [(item["doc_id"],) for item in normalized_items],
+            )
+            connection.executemany(
                 """
                 INSERT INTO retrieval_fts(
                     doc_id, wiki_id, page_type, topic, problem_cluster, summary, content, tokens, sensitivity, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    normalized["doc_id"],
-                    normalized["wiki_id"],
-                    normalized["page_type"],
-                    normalized["topic"],
-                    normalized["problem_cluster"],
-                    normalized["summary"],
-                    normalized["content"],
-                    normalized["tokens"],
-                    normalized["sensitivity"],
-                    normalized["updated_at"],
-                ),
+                [
+                    (
+                        normalized["doc_id"],
+                        normalized["wiki_id"],
+                        normalized["page_type"],
+                        normalized["topic"],
+                        normalized["problem_cluster"],
+                        normalized["summary"],
+                        normalized["content"],
+                        normalized["tokens"],
+                        normalized["sensitivity"],
+                        normalized["updated_at"],
+                    )
+                    for normalized in normalized_items
+                ],
             )
 
     def delete(self, doc_id: str) -> None:
@@ -51,6 +67,7 @@ class SQLiteFTSIndexProvider:
         self._ensure_schema()
         with self._connect() as connection:
             connection.execute("DELETE FROM retrieval_fts")
+        upserts: list[tuple[str, dict]] = []
         for entry in manifest_entries:
             canonical_uri = entry.get("canonical_uri")
             if not canonical_uri:
@@ -58,13 +75,16 @@ class SQLiteFTSIndexProvider:
             page_path = self.wiki_root / str(canonical_uri)
             if not page_path.exists() or not page_path.is_file():
                 continue
-            self.upsert(
-                str(entry.get("doc_id", "")),
-                {
+            upserts.append(
+                (
+                    str(entry.get("doc_id", "")),
+                    {
                     **entry,
                     "content": page_path.read_text(encoding="utf-8"),
-                },
+                    },
+                )
             )
+        self._write_normalized([self._normalize_payload(doc_id, payload) for doc_id, payload in upserts])
 
     def search(self, query: str, top_k: int, filters: dict | None = None) -> list[RetrievalHit]:
         if not self.db_path.exists():

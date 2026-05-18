@@ -26,6 +26,8 @@ class RawMetadataRepairService:
         repaired_count = 0
         unresolved: list[str] = []
         manifest_entries: list[dict] = []
+        retrieval_cards: list[object] = []
+        fts_entries: list[tuple[str, dict]] = []
 
         pending_entries = self._read_pending_entries(pending.pending_manifest_path)
         kept_entries: list[dict] = []
@@ -42,11 +44,12 @@ class RawMetadataRepairService:
                 unresolved.append(doc_id)
                 kept_entries.append(entry)
                 continue
+            content = page_path.read_text(encoding="utf-8")
 
             intake = normalize_raw_intake(
                 {
                     "doc_id": doc_id,
-                    "content": page_path.read_text(encoding="utf-8"),
+                    "content": content,
                     "topic": entry.get("topic"),
                     "problem_cluster": entry.get("problem_cluster"),
                     "summary": entry.get("summary"),
@@ -76,9 +79,7 @@ class RawMetadataRepairService:
                     "adapter_metadata": intake["adapter_metadata"],
                 }
             manifest_entries.append(manifest_entry)
-            content = page_path.read_text(encoding="utf-8")
-            retrieval_index.append_raw_card(
-                wiki.wiki_id,
+            retrieval_cards.append(
                 type("RepairedRawCard", (), {
                     "doc_id": doc_id,
                     "topic": intake["topic"],
@@ -86,10 +87,12 @@ class RawMetadataRepairService:
                     "content": content,
                 })(),
             )
-            fts_index.upsert(doc_id, {**manifest_entry, "content": content})
+            fts_entries.append((doc_id, {**manifest_entry, "content": content}))
             repaired_count += 1
 
         manifest.batch_upsert(manifest_entries)
+        retrieval_index.append_raw_cards(wiki.wiki_id, retrieval_cards)
+        fts_index.batch_upsert(fts_entries)
         self._write_pending_entries(pending.pending_manifest_path, kept_entries)
         return {
             "repaired_count": repaired_count,
