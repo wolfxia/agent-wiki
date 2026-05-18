@@ -114,6 +114,88 @@ def test_cross_reference_detects_relation_candidates(temp_wiki_root: Path) -> No
     assert pair["shared_refs"]
 
 
+def test_cross_reference_limits_candidates_to_same_topic_cluster_bucket(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    capture_service.execute(
+        wiki=wiki, actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-xbucket-1", topic="auth", problem_cluster="sessions",
+            content="# Raw xbucket", source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki, actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-xbucket-1", page_type="atom", topic="auth",
+            problem_cluster="sessions", content="# Auth Sessions",
+            source_refs=["personal-1:raw-xbucket-1"],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki, actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-xbucket-2", page_type="atom", topic="auth",
+            problem_cluster="sessions", content="# Auth Sessions Two",
+            source_refs=["personal-1:raw-xbucket-1"],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki, actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-xbucket-other", page_type="atom", topic="billing",
+            problem_cluster="invoices", content="# Billing Invoices",
+            source_refs=["personal-1:raw-xbucket-1"],
+        ),
+    )
+
+    candidates = RelationsService().detect_cross_references(wiki)
+    pairs = {tuple(candidate["doc_ids"]) for candidate in candidates}
+
+    assert ("atom-xbucket-1", "atom-xbucket-2") in pairs
+    assert all("atom-xbucket-other" not in pair for pair in pairs)
+
+
+def test_co_occurrence_limits_candidates_to_same_topic_cluster_bucket(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    manifest_path = temp_wiki_root / "MANIFEST.jsonl"
+    manifest_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"wiki_id": "personal-1", "doc_id": "atom-co-bucket-1", "page_type": "atom", "topic": "infra", "problem_cluster": "scaling"}),
+                json.dumps({"wiki_id": "personal-1", "doc_id": "atom-co-bucket-2", "page_type": "atom", "topic": "infra", "problem_cluster": "scaling"}),
+                json.dumps({"wiki_id": "personal-1", "doc_id": "atom-co-bucket-other", "page_type": "atom", "topic": "sales", "problem_cluster": "pipeline"}),
+            ]
+        ) + "\n",
+        encoding="utf-8",
+    )
+    (temp_wiki_root / "query_hits.jsonl").write_text(
+        "\n".join(
+            json.dumps({"query_id": query_id, "doc_id": doc_id})
+            for query_id in ["q1", "q2"]
+            for doc_id in ["atom-co-bucket-1", "atom-co-bucket-2", "atom-co-bucket-other"]
+        ) + "\n",
+        encoding="utf-8",
+    )
+    (temp_wiki_root / "query_outcomes.jsonl").write_text(
+        json.dumps({"query_id": "q1"}) + "\n" + json.dumps({"query_id": "q2"}) + "\n",
+        encoding="utf-8",
+    )
+
+    candidates = RelationsService().detect_co_occurrences(wiki, threshold=2)
+    pairs = {tuple(candidate["doc_ids"]) for candidate in candidates}
+
+    assert ("atom-co-bucket-1", "atom-co-bucket-2") in pairs
+    assert all("atom-co-bucket-other" not in pair for pair in pairs)
+
+
 def test_co_occurrence_enqueues_signal_candidates(temp_wiki_root: Path) -> None:
     wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
         update={"workspace_path": str(temp_wiki_root)}

@@ -1,4 +1,5 @@
 from pathlib import Path
+import logging
 
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
@@ -88,3 +89,43 @@ def test_manifest_repository_batch_upserts_entries(temp_wiki_root: Path) -> None
     assert repository.find("raw-1")["topic"] == "new"
     assert repository.find("raw-2")["topic"] == "second"
     assert len(repository.read_all()) == 2
+
+
+def test_manifest_repository_skips_corrupt_lines_with_warning(temp_wiki_root: Path, caplog) -> None:
+    manifest_path = temp_wiki_root / "MANIFEST.jsonl"
+    manifest_path.write_bytes(
+        b'{"wiki_id":"personal-1","doc_id":"raw-good","page_type":"raw"}\n'
+        b'\x00\x00\x00\n'
+        b'{"wiki_id":"personal-1","doc_id":"raw-after","page_type":"raw"}\n'
+    )
+
+    with caplog.at_level(logging.WARNING):
+        entries = ManifestRepository(temp_wiki_root).read_all()
+
+    assert [entry["doc_id"] for entry in entries] == ["raw-good", "raw-after"]
+    assert "Skipping corrupt manifest line" in caplog.text
+
+
+def test_manifest_repository_upsert_replaces_file_atomically(temp_wiki_root: Path, monkeypatch) -> None:
+    repository = ManifestRepository(temp_wiki_root)
+    replaced: list[tuple[Path, Path]] = []
+
+    def fake_replace(source, target) -> None:
+        replaced.append((Path(source), Path(target)))
+        Path(target).write_text(Path(source).read_text(encoding="utf-8"), encoding="utf-8")
+
+    monkeypatch.setattr("agent_wiki.infrastructure.storage.manifest_repo.os.replace", fake_replace)
+
+    repository.upsert(
+        {
+            "wiki_id": "personal-1",
+            "doc_id": "raw-atomic",
+            "page_type": "raw",
+            "canonical_uri": "pages/raw-atomic.md",
+        }
+    )
+
+    assert replaced
+    assert replaced[0][0].parent == temp_wiki_root
+    assert replaced[0][1] == temp_wiki_root / "MANIFEST.jsonl"
+    assert repository.find("raw-atomic") is not None

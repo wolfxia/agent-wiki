@@ -19,6 +19,7 @@ class RelationsService:
         if not hits_path.exists():
             return []
 
+        doc_buckets = self._doc_buckets(wiki_root)
         query_hits: dict[str, list[str]] = {}
         for line in hits_path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
@@ -29,9 +30,17 @@ class RelationsService:
 
         pair_counts: dict[tuple[str, str], int] = defaultdict(int)
         for doc_ids in query_hits.values():
-            unique = sorted(set(doc_ids))
-            for a, b in combinations(unique, 2):
-                pair_counts[(a, b)] += 1
+            bucketed_doc_ids: dict[tuple[str, str], set[str]] = defaultdict(set)
+            for doc_id in doc_ids:
+                bucket = doc_buckets.get(doc_id)
+                if bucket is None:
+                    if doc_buckets:
+                        continue
+                    bucket = ("", "")
+                bucketed_doc_ids[bucket].add(doc_id)
+            for bucket_doc_ids in bucketed_doc_ids.values():
+                for a, b in combinations(sorted(bucket_doc_ids), 2):
+                    pair_counts[(a, b)] += 1
 
         candidates = []
         for (a, b), count in pair_counts.items():
@@ -48,32 +57,50 @@ class RelationsService:
         wiki_root = Path(wiki.workspace_path)
         manifest = ManifestRepository(wiki_root)
         entries = manifest.read_all()
+        doc_buckets = self._doc_buckets_from_entries(entries)
 
-        ref_to_docs: dict[str, list[str]] = defaultdict(list)
+        ref_to_bucket_docs: dict[tuple[str, tuple[str, str]], set[str]] = defaultdict(set)
         for entry in entries:
             if entry.get("page_type") == "raw":
                 continue
+            doc_id = str(entry["doc_id"])
+            bucket = doc_buckets.get(doc_id)
+            if bucket is None:
+                continue
             for ref in entry.get("source_refs", []):
-                ref_to_docs[ref].append(entry["doc_id"])
+                ref_to_bucket_docs[(str(ref), bucket)].add(doc_id)
 
-        candidates = []
-        seen: set[tuple[str, ...]] = set()
-        for ref, doc_ids in ref_to_docs.items():
+        pair_to_refs: dict[tuple[str, str], list[str]] = defaultdict(list)
+        for (ref, _bucket), doc_ids in ref_to_bucket_docs.items():
             if len(doc_ids) < 2:
                 continue
             for a, b in combinations(sorted(doc_ids), 2):
-                key = (a, b)
-                if key in seen:
-                    continue
-                seen.add(key)
-                shared = [r for r, docs in ref_to_docs.items() if a in docs and b in docs]
-                candidates.append({
-                    "doc_ids": [a, b],
-                    "shared_refs": shared,
-                })
+                pair_to_refs[(a, b)].append(ref)
+
+        candidates = []
+        for (a, b), shared_refs in pair_to_refs.items():
+            candidates.append({
+                "doc_ids": [a, b],
+                "shared_refs": sorted(shared_refs),
+            })
 
         candidates.sort(key=lambda c: len(c["shared_refs"]), reverse=True)
         return candidates
+
+    def _doc_buckets(self, wiki_root: Path) -> dict[str, tuple[str, str]]:
+        return self._doc_buckets_from_entries(ManifestRepository(wiki_root).read_all())
+
+    def _doc_buckets_from_entries(self, entries: list[dict]) -> dict[str, tuple[str, str]]:
+        buckets: dict[str, tuple[str, str]] = {}
+        for entry in entries:
+            doc_id = entry.get("doc_id")
+            if not doc_id:
+                continue
+            buckets[str(doc_id)] = (
+                str(entry.get("topic") or ""),
+                str(entry.get("problem_cluster") or ""),
+            )
+        return buckets
 
     def detect_and_enqueue_co_occurrences(self, wiki: WikiConfig, threshold: int = 2) -> list[dict]:
         candidates = self.detect_co_occurrences(wiki, threshold)
