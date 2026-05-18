@@ -46,6 +46,24 @@ class ReviewQueueRepository:
                 return True
         return False
 
+    def consume(self, item_type: str, actor_id: str) -> dict | None:
+        items = self.read_all()
+        for index, item in enumerate(items):
+            if item.get("item_type") != item_type:
+                continue
+            if item.get("status", "open") != "open":
+                continue
+            updated = {
+                **item,
+                "status": "assigned",
+                "assigned_to": actor_id,
+                "claimed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            }
+            items[index] = updated
+            self._write_all(items)
+            return updated
+        return None
+
     def _normalize_entry(self, entry: dict) -> dict:
         item_type = entry.get("item_type", "task")
         doc_id = entry.get("doc_id", "unknown")

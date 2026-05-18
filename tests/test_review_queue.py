@@ -94,6 +94,28 @@ def test_review_queue_invalid_transition_rejected(temp_wiki_root: Path) -> None:
     assert queue.find("rq-003")["status"] == "open"
 
 
+def test_review_queue_consume_assigns_open_item_to_actor(temp_wiki_root: Path) -> None:
+    queue = ReviewQueueRepository(temp_wiki_root)
+    queue.append({"item_id": "compile_suggestion:agents:memory:0001", "item_type": "compile_suggestion", "status": "open"})
+
+    item = queue.consume("compile_suggestion", actor_id="claude-code")
+
+    assert item is not None
+    assert item["item_id"] == "compile_suggestion:agents:memory:0001"
+    stored = queue.find("compile_suggestion:agents:memory:0001")
+    assert stored["status"] == "assigned"
+    assert stored["assigned_to"] == "claude-code"
+    assert stored["claimed_at"]
+
+
+def test_review_queue_consume_skips_nonmatching_items(temp_wiki_root: Path) -> None:
+    queue = ReviewQueueRepository(temp_wiki_root)
+    queue.append({"item_id": "quality_signal:q1", "item_type": "quality_signal", "status": "open"})
+
+    assert queue.consume("compile_suggestion", actor_id="claude-code") is None
+    assert queue.find("quality_signal:q1")["status"] == "open"
+
+
 
 def test_queue_producers_write_item_ids_for_detected_signals(temp_wiki_root: Path) -> None:
     import json

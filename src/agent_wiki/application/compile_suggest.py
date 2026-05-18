@@ -2,12 +2,14 @@ from collections import defaultdict
 from pathlib import Path
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
+from agent_wiki.infrastructure.doc_id import slugify_doc_id
 from agent_wiki.infrastructure.runtime.pending_state import PendingStateRepository
 from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 from agent_wiki.infrastructure.storage.purpose_reader import PurposeReader
 
 RAW_ACCUMULATION_THRESHOLD = 3
+SUB_CLUSTER_SIZE = 3
 
 
 class CompileSuggestService:
@@ -21,7 +23,7 @@ class CompileSuggestService:
         candidates: list[dict] = []
         candidates.extend(self._metadata_repair_candidates(entries, pending))
 
-        raw_cluster_counts: dict[tuple[str, str], int] = defaultdict(int)
+        raw_cluster_entries: dict[tuple[str, str], list[dict]] = defaultdict(list)
         compiled_cluster_counts: dict[tuple[str, str], int] = defaultdict(int)
         for entry in entries:
             page_type = entry.get("page_type")
@@ -29,23 +31,31 @@ class CompileSuggestService:
             problem_cluster = entry.get("problem_cluster") or ""
             if page_type == "raw":
                 if topic and problem_cluster:
-                    raw_cluster_counts[(topic, problem_cluster)] += 1
+                    raw_cluster_entries[(topic, problem_cluster)].append(entry)
                 continue
             if topic and problem_cluster:
                 compiled_cluster_counts[(topic, problem_cluster)] += 1
 
-        for (topic, problem_cluster), count in raw_cluster_counts.items():
+        for (topic, problem_cluster), raw_entries in raw_cluster_entries.items():
+            raw_entries.sort(key=lambda entry: str(entry.get("doc_id") or ""))
+            count = len(raw_entries)
             if count < threshold:
                 continue
             compiled_count = compiled_cluster_counts.get((topic, problem_cluster), 0)
-            candidates.append({
-                "kind": "undercompiled_cluster" if compiled_count == 0 else "ready_to_compile",
-                "topic": topic,
-                "problem_cluster": problem_cluster,
-                "raw_count": count,
-                "compiled_count": compiled_count,
-                "purpose_aligned": purpose_reader.is_aligned(topic),
-            })
+            for sub_cluster_index, group in enumerate(self._chunks(raw_entries, SUB_CLUSTER_SIZE), start=1):
+                raw_doc_ids = [str(entry.get("doc_id")) for entry in group if entry.get("doc_id")]
+                candidates.append({
+                    "kind": "undercompiled_cluster" if compiled_count == 0 else "ready_to_compile",
+                    "topic": topic,
+                    "problem_cluster": problem_cluster,
+                    "raw_count": len(raw_doc_ids),
+                    "cluster_raw_count": count,
+                    "compiled_count": compiled_count,
+                    "sub_cluster_index": sub_cluster_index,
+                    "sub_cluster_id": self._sub_cluster_id(topic, problem_cluster, sub_cluster_index),
+                    "raw_doc_ids": raw_doc_ids,
+                    "purpose_aligned": purpose_reader.is_aligned(topic),
+                })
 
         candidates.sort(
             key=lambda c: (
@@ -81,10 +91,26 @@ class CompileSuggestService:
                 "topic": candidate["topic"],
                 "problem_cluster": candidate["problem_cluster"],
                 "raw_count": candidate["raw_count"],
+                "cluster_raw_count": candidate.get("cluster_raw_count", candidate["raw_count"]),
                 "kind": candidate["kind"],
+                "sub_cluster_index": candidate.get("sub_cluster_index", 1),
+                "sub_cluster_id": candidate.get("sub_cluster_id"),
+                "raw_doc_ids": candidate.get("raw_doc_ids", []),
+                "prepare_params": {
+                    "topic": candidate["topic"],
+                    "problem_cluster": candidate["problem_cluster"],
+                    "doc_ids": candidate.get("raw_doc_ids", []),
+                    "sub_cluster_index": candidate.get("sub_cluster_index", 1),
+                },
                 "status": "open",
             })
         return candidates
+
+    def _chunks(self, entries: list[dict], size: int) -> list[list[dict]]:
+        return [entries[index:index + size] for index in range(0, len(entries), size)]
+
+    def _sub_cluster_id(self, topic: str, problem_cluster: str, index: int) -> str:
+        return f"{slugify_doc_id(topic)}_{slugify_doc_id(problem_cluster)}_{index:04d}"
 
     def _metadata_repair_candidates(self, manifest_entries: list[dict], pending: PendingStateRepository) -> list[dict]:
         candidates: list[dict] = []

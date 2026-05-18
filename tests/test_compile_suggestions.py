@@ -186,3 +186,70 @@ def test_compile_suggest_detects_metadata_repair_and_undercompiled_clusters(temp
 
     assert any(candidate["kind"] == "needs_metadata_repair" for candidate in candidates)
     assert any(candidate["kind"] == "undercompiled_cluster" for candidate in candidates)
+
+
+def test_compile_suggest_groups_large_cluster_into_subclusters(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    for index in range(7):
+        CaptureRawService().execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-subcluster-{index}",
+                topic="edge-ai",
+                problem_cluster="imaging",
+                content=f"# Raw Subcluster {index}",
+                source_refs=[],
+            ),
+        )
+
+    candidates = CompileSuggestService().detect(wiki, threshold=3)
+    subclusters = [candidate for candidate in candidates if candidate.get("topic") == "edge-ai"]
+
+    assert [candidate["sub_cluster_id"] for candidate in subclusters] == [
+        "edge-ai_imaging_0001",
+        "edge-ai_imaging_0002",
+        "edge-ai_imaging_0003",
+    ]
+    assert [candidate["raw_doc_ids"] for candidate in subclusters] == [
+        ["raw-subcluster-0", "raw-subcluster-1", "raw-subcluster-2"],
+        ["raw-subcluster-3", "raw-subcluster-4", "raw-subcluster-5"],
+        ["raw-subcluster-6"],
+    ]
+
+
+def test_compile_suggestions_queue_contains_prepare_payload(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    for index in range(3):
+        CaptureRawService().execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-prepare-queue-{index}",
+                topic="agents",
+                problem_cluster="working-memory",
+                content=f"# Raw Prepare Queue {index}",
+                source_refs=[],
+            ),
+        )
+
+    CompileSuggestService().detect_and_enqueue(wiki)
+
+    entries = [json.loads(line) for line in (temp_wiki_root / "review_queue.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    suggestion = next(entry for entry in entries if entry.get("item_type") == "compile_suggestion")
+    assert suggestion["sub_cluster_id"] == "agents_working-memory_0001"
+    assert suggestion["raw_doc_ids"] == ["raw-prepare-queue-0", "raw-prepare-queue-1", "raw-prepare-queue-2"]
+    assert suggestion["prepare_params"] == {
+        "topic": "agents",
+        "problem_cluster": "working-memory",
+        "doc_ids": ["raw-prepare-queue-0", "raw-prepare-queue-1", "raw-prepare-queue-2"],
+        "sub_cluster_index": 1,
+    }
