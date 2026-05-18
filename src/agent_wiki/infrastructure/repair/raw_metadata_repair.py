@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
@@ -9,6 +10,9 @@ from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRe
 from agent_wiki.infrastructure.retrieval.sqlite_fts import SQLiteFTSIndexProvider
 from agent_wiki.infrastructure.runtime.pending_state import PendingStateRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
+
+
+logger = logging.getLogger(__name__)
 
 
 class RawMetadataRepairService:
@@ -21,6 +25,7 @@ class RawMetadataRepairService:
         pages_root = wiki_root / "pages"
         repaired_count = 0
         unresolved: list[str] = []
+        manifest_entries: list[dict] = []
 
         pending_entries = self._read_pending_entries(pending.pending_manifest_path)
         kept_entries: list[dict] = []
@@ -70,7 +75,7 @@ class RawMetadataRepairService:
                     "vault_relative_path": entry.get("vault_relative_path"),
                     "adapter_metadata": intake["adapter_metadata"],
                 }
-            manifest.upsert(manifest_entry)
+            manifest_entries.append(manifest_entry)
             content = page_path.read_text(encoding="utf-8")
             retrieval_index.append_raw_card(
                 wiki.wiki_id,
@@ -84,6 +89,7 @@ class RawMetadataRepairService:
             fts_index.upsert(doc_id, {**manifest_entry, "content": content})
             repaired_count += 1
 
+        manifest.batch_upsert(manifest_entries)
         self._write_pending_entries(pending.pending_manifest_path, kept_entries)
         return {
             "repaired_count": repaired_count,
@@ -94,7 +100,30 @@ class RawMetadataRepairService:
     def _read_pending_entries(self, path: Path) -> list[dict]:
         if not path.exists():
             return []
-        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        entries: list[dict] = []
+        with path.open("r", encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError as error:
+                    logger.warning(
+                        "Skipping corrupt pending manifest line %s in %s: %s",
+                        line_number,
+                        path,
+                        error,
+                    )
+                    continue
+                if not isinstance(entry, dict):
+                    logger.warning(
+                        "Skipping non-object pending manifest line %s in %s",
+                        line_number,
+                        path,
+                    )
+                    continue
+                entries.append(entry)
+        return entries
 
     def _write_pending_entries(self, path: Path, entries: list[dict]) -> None:
         if not entries:
