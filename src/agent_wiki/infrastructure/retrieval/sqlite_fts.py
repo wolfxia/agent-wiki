@@ -30,6 +30,7 @@ class SQLiteFTSIndexProvider:
         if not normalized_items:
             return
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             connection.executemany(
                 "DELETE FROM retrieval_fts WHERE doc_id = ?",
                 [(item["doc_id"],) for item in normalized_items],

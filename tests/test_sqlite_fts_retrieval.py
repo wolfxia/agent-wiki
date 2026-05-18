@@ -104,6 +104,45 @@ def test_sqlite_fts_batch_upsert_reuses_schema_and_connection(temp_wiki_root: Pa
     assert {hit.doc_id for hit in provider.search("batch searchable", top_k=10)} == {"raw-batch-1", "raw-batch-2"}
 
 
+def test_sqlite_fts_write_normalized_uses_explicit_transaction(temp_wiki_root: Path, monkeypatch) -> None:
+    provider = SQLiteFTSIndexProvider(temp_wiki_root, wiki_id="personal-1")
+    calls: list[str] = []
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def execute(self, statement, params=None):
+            calls.append(statement)
+
+        def executemany(self, statement, params):
+            calls.append(statement)
+
+    monkeypatch.setattr(provider, "_connect", lambda: FakeConnection())
+
+    provider._write_normalized(
+        [
+            {
+                "doc_id": "raw-explicit-txn",
+                "wiki_id": "personal-1",
+                "page_type": "raw",
+                "topic": "ops",
+                "problem_cluster": "txn",
+                "summary": "",
+                "content": "transaction content",
+                "tokens": "transaction content",
+                "sensitivity": "",
+                "updated_at": "1",
+            }
+        ]
+    )
+
+    assert calls[0] == "BEGIN IMMEDIATE"
+
+
 def test_sqlite_fts_rebuilds_from_manifest_pages(temp_wiki_root: Path) -> None:
     pages = temp_wiki_root / "pages"
     pages.mkdir(exist_ok=True)
