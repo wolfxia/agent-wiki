@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1100" height="520" viewBox="0 0 1100 520" role="img" aria-labelledby="title desc">
   <title id="title">Agent-Wiki Compile Pipeline</title>
-  <desc id="desc">Flow from raw intake through compile_prepare, review queue, compile_update, truth zone, and improved retrieval.</desc>
+  <desc id="desc">Flow from raw intake through compile_prepare, review queue, concurrent LLM generation, serialized compile_update, telemetry, truth zone, and improved retrieval.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"/>
@@ -39,13 +39,13 @@
 
   <rect x="738" y="146" width="145" height="78" rx="12" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
   <text x="810" y="169" text-anchor="middle" class="box-title">Agent compile</text>
-  <text x="810" y="187" text-anchor="middle" class="box-copy">semantic synthesis</text>
-  <text x="810" y="205" text-anchor="middle" class="box-copy">outside core LLM</text>
+  <text x="810" y="187" text-anchor="middle" class="box-copy">parallel LLM generate</text>
+  <text x="810" y="205" text-anchor="middle" class="box-copy">retry + token usage</text>
 
   <rect x="926" y="146" width="98" height="78" rx="12" fill="#f3e8ff" stroke="#9333ea" stroke-width="2"/>
   <text x="975" y="169" text-anchor="middle" class="box-title">compile</text>
   <text x="975" y="187" text-anchor="middle" class="box-title">update</text>
-  <text x="975" y="205" text-anchor="middle" class="box-copy">B gate</text>
+  <text x="975" y="205" text-anchor="middle" class="box-copy">serial B gate</text>
 
   <path d="M 221 185 H 275" fill="none" stroke="#2563eb" stroke-width="3" marker-end="url(#arrow)"/>
   <path d="M 453 185 H 506" fill="none" stroke="#2563eb" stroke-width="3" marker-end="url(#arrow)"/>
@@ -72,5 +72,5 @@
   <path d="M 580 359 H 680" fill="none" stroke="#16a34a" stroke-width="3" marker-end="url(#arrow)"/>
   <path d="M 780 330 C 780 260 380 260 364 224" fill="none" stroke="#0284c7" stroke-width="2.5" stroke-dasharray="8 6" marker-end="url(#arrow)"/>
 
-  <text x="550" y="456" text-anchor="middle" class="small">Loop: improved retrieval exposes gaps → maintain queues compile_suggestion → agents consume evidence packets → truth-zone memory improves.</text>
+  <text x="550" y="456" text-anchor="middle" class="small">Loop: improved retrieval exposes gaps → maintain queues compile_suggestion → agents generate concurrently → serialized writes update truth-zone memory and queue telemetry.</text>
 </svg>

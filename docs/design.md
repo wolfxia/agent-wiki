@@ -202,7 +202,8 @@ Chosen Phase 1 combination:
 
 - **Granularity: sub-cluster first.** A large `(topic, problem_cluster)` is split into deterministic sub-clusters. Each sub-cluster is prepared as an `atom` candidate; atoms can later support a synthesis for the broader cluster.
 - **Trigger: maintain prepares and queues.** `maintain` detects compile-ready clusters and writes review queue work items that contain enough raw doc ids for an agent to act. It does not directly create truth-zone pages.
-- **Content generation: agent-driven or CLI-applied.** `wiki.compile_prepare` returns an agent-facing evidence packet: bounded raw evidence, extracted claim candidates, relationship hints, contradiction markers, source refs, and proposed output metadata. `aw compile-execute` bridges the queue to cron workers: it can emit JSON packets, accept generated content through `--input-file`, or run `--apply` to call an OpenAI-compatible chat completions API and apply the generated atom page in one command. The core service still has no OpenAI SDK dependency; `--apply` uses registry-provided `compile.llm` settings and `httpx`.
+- **Content generation: agent-driven or CLI-applied.** `wiki.compile_prepare` returns an agent-facing evidence packet: bounded raw evidence, extracted claim candidates, relationship hints, contradiction markers, source refs, and proposed output metadata. `aw compile-execute` bridges the queue to cron workers: it can emit JSON packets, accept generated content through `--input-file`, or run `--apply` to call an OpenAI-compatible chat completions API and apply the generated atom page in one command. `--apply --concurrency N` parallelizes only LLM generation; apply/write steps remain serialized so `review_queue.jsonl`, `MANIFEST.jsonl`, FTS, and `topic_index.md` are updated through the normal propagation path. The core service still has no OpenAI SDK dependency; `--apply` uses registry-provided `compile.llm` settings and `httpx`, including timeout, retry, retry-delay, and default concurrency settings.
+- **Compile observability: queue-local attempt telemetry.** `compile-execute` records `latency_seconds`, `attempts`, `error_type`, and provider `token_usage` when available into the consumed `compile_suggestion` item's `content_state`. Timeout and 5xx failures remain retryable; 4xx/auth, invalid output, doc-id, and write errors are classified so later maintenance can distinguish configuration, model-output, code, and storage failures.
 - **Incremental strategy: delta atom plus later synthesis revision.** New raw evidence creates additional atom candidates. Synthesis revision remains a separate B-level compile update, not an automatic side effect.
 - **Source refs: automatic from prepared raw pages.** Prepared items expose `wiki_id:doc_id` refs, and compile suggestions carry the same doc ids so compiled pages stay traceable to Git-tracked raw pages.
 
@@ -212,6 +213,7 @@ Implementation boundaries for Phase 1:
 
 - `wiki.compile_prepare` is a read-only MCP tool over the shared service layer.
 - `aw compile-execute` is a CLI-only executor bridge for cron workers; it does not contain an LLM dependency.
+- `aw compile-execute --apply --concurrency N` is bounded at the generation layer; the current Phase 1 executor does not make authority writes concurrently.
 - CLI/REST may expose the same service for operator and dashboard use, but MCP is the primary agent interface.
 - Review queue consumption changes state (`open -> assigned -> in_progress -> resolved -> archived`) and records the consumer; it does not execute compile content generation by itself.
 - `compile_update.analyze()` stays a baseline revise/create heuristic. Automatic compile preparation should pass explicit proposed doc ids and source refs rather than relying on analyze alone for batching decisions.
@@ -571,7 +573,7 @@ Not yet implemented in the current runtime:
 - explicit load-policy execution
 - query budget enforcement
 
-Query outcomes are now recorded directly by `QueryService`, while feedback appends additional human-evaluation records into the same `query_outcomes.jsonl` stream.
+Query outcomes are now recorded directly by `QueryService`, while feedback appends additional human-evaluation records into the same `query_outcomes.jsonl` stream. Query outcome entries include latency, page-type distribution, top-hit score breakdown, and empty `accepted_doc_ids` / `rejected_doc_ids` fields reserved for later feedback joins.
 
 ---
 
@@ -631,6 +633,9 @@ Feedback and weekly review are currently implemented as simple JSONL flows:
   - reads `review_queue.jsonl` and `query_outcomes.jsonl`
   - summarizes queue count and feedback count
   - emits suggested actions from queue reasons
+- `src/agent_wiki/application/quality_report.py`
+  - reports query count and hit rate
+  - reports raw/compiled counts, compile rate, orphan count, compile failure rate, failure breakdown, average compile latency, metadata completeness, cluster coverage, and mature-cluster coverage
 
 ### Phase 1 simplification
 
@@ -683,7 +688,7 @@ The shared-wiki approval bypass for raw-backed provenance should be treated as a
 | Retrieval runtime | provider-pluggable, load-policy aware | FTS5+jieba primary, structured `topic_index.md` merge, JSONL lexical fallback, layered output | Partial |
 | Sync | explicit adapter-driven sync boundary with view-specific artifacts | adapter-driven sync with explicit Obsidian graph index export; no authority-promotion orchestrator yet | Partial |
 | Review queue | rich workflow schema | minimal append-only queue items | Phase 1 Simplification |
-| Query outcome loop | query service logs outcomes directly | query service appends `query_outcomes.jsonl` and `query_hits.jsonl`; feedback adds human-evaluation records | Implemented baseline |
+| Query outcome loop | query service logs outcomes directly | query service appends `query_outcomes.jsonl` and `query_hits.jsonl` with latency, page-type distribution, and score breakdown; feedback adds human-evaluation records | Implemented baseline |
 | Page sensitivity | schema-backed page access policy with query filtering | basic sensitivity filtering via `QueryInput.max_sensitivity` and manifest filter; `access_policy` incomplete | Partial |
 
 ---

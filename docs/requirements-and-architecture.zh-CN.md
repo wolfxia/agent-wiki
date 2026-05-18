@@ -214,6 +214,10 @@ workspace → push-view → Obsidian（全量可浏览/可编辑视图）
 当前实现说明：
 - `capture_raw` 已实现
 - `compile_update` 的 analyze/apply 已以简化形式实现
+- `aw compile-execute` 可以 claim compile suggestion、输出 evidence packet、从 input file 应用外部生成内容，或通过 OpenAI-compatible chat completions endpoint 执行 `--apply`
+- `aw compile-execute --apply --concurrency N` 只并发 LLM 生成；apply/write propagation 仍通过正常服务路径串行执行
+- compile LLM 配置支持 `timeout_seconds`、`max_retries`、`retry_delays` 与默认 `concurrency`
+- 已消费的 compile suggestion 会在 `review_queue.jsonl` 的 `content_state` 中记录 `latency_seconds`、`attempts`、`error_type`，以及 provider 返回时的 `token_usage`
 - principle 写入当前走本地 proposal/approval smoke path
 - analyze 当前仍是启发式，而不是完整的 evidence-planning engine
 
@@ -266,6 +270,7 @@ workspace → push-view → Obsidian（全量可浏览/可编辑视图）
 
 当前实现说明：
 - 词法基线与分层输出已实现
+- `query_outcomes.jsonl` 条目包含 latency、page_type 分布、top-hit score breakdown，以及为后续 feedback join 预留的 accepted/rejected doc id 字段
 - 向量路由、load budget 与更丰富的 provider orchestration 尚未实现
 
 ### 3.10 反馈与 weekly review 闭环
@@ -279,6 +284,7 @@ workspace → push-view → Obsidian（全量可浏览/可编辑视图）
 当前实现说明：
 - `feedback.py` 会追加 `query_outcomes.jsonl` 并创建 review queue 项
 - `weekly_review.py` 目前产出最小摘要，并基于 queue reason 提供建议动作
+- `quality_report.py` 会读取 query outcomes、manifest 与 compile queue telemetry，报告 compile failure rate、failure breakdown、平均编译耗时、metadata 完整率、cluster coverage 与 mature-cluster coverage
 - 更丰富的 query-outcome policy 与 multi-signal review synthesis 仍是未来工作
 
 ### 3.11 Review queue

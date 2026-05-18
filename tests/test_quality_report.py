@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
 from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
@@ -21,6 +22,12 @@ def test_quality_report_returns_zeros_for_empty_wiki(temp_wiki_root: Path) -> No
     assert report["compiled_count"] == 0
     assert report["compile_rate"] == 0.0
     assert report["orphan_count"] == 0
+    assert report["compile_failure_rate"] == 0.0
+    assert report["compile_failure_breakdown"] == {}
+    assert report["avg_compile_latency_seconds"] == 0.0
+    assert report["metadata_completeness"] == 0.0
+    assert report["cluster_coverage"] == 0.0
+    assert report["mature_cluster_coverage"] == 0.0
 
 
 def test_quality_report_computes_hit_rate(temp_wiki_root: Path) -> None:
@@ -141,3 +148,99 @@ def test_quality_report_counts_orphans(temp_wiki_root: Path) -> None:
     report = QualityReportService().generate(wiki)
 
     assert report["orphan_count"] >= 1
+
+
+def test_quality_report_computes_compile_observability_metrics(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    for index in range(3):
+        capture_service.execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-complete-{index}",
+                topic="observability",
+                problem_cluster="complete",
+                content=f"# Raw complete {index}",
+                source_refs=[],
+            ),
+        )
+    capture_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-incomplete-1",
+            topic="observability",
+            problem_cluster="incomplete",
+            content="# Raw incomplete",
+            source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-complete-1",
+            page_type="atom",
+            topic="observability",
+            problem_cluster="complete",
+            summary="Complete metadata",
+            aliases=["complete"],
+            confidence="high",
+            wikilinks=["raw-complete-0"],
+            content="# Complete atom",
+            source_refs=["personal-1:raw-complete-0"],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-incomplete-1",
+            page_type="atom",
+            topic="observability",
+            problem_cluster="incomplete",
+            content="# Incomplete atom",
+            source_refs=["personal-1:raw-incomplete-1"],
+        ),
+    )
+    (temp_wiki_root / "review_queue.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({
+                    "item_id": "compile_suggestion:one",
+                    "item_type": "compile_suggestion",
+                    "status": "resolved",
+                    "content_state": {"latency_seconds": 10.0},
+                }),
+                json.dumps({
+                    "item_id": "compile_suggestion:two",
+                    "item_type": "compile_suggestion",
+                    "status": "failed",
+                    "content_state": {"latency_seconds": 20.0, "error_type": "timeout"},
+                }),
+                json.dumps({
+                    "item_id": "compile_suggestion:three",
+                    "item_type": "compile_suggestion",
+                    "status": "failed",
+                    "content_state": {"error_type": "doc_id_error"},
+                }),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = QualityReportService().generate(wiki)
+
+    assert abs(report["compile_failure_rate"] - (2 / 3)) < 0.01
+    assert report["compile_failure_breakdown"] == {"timeout": 1, "doc_id_error": 1}
+    assert report["avg_compile_latency_seconds"] == 15.0
+    assert report["metadata_completeness"] == 0.5
+    assert report["cluster_coverage"] == 1.0
+    assert report["mature_cluster_coverage"] == 1.0

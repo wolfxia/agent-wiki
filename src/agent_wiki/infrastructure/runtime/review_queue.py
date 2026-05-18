@@ -118,8 +118,14 @@ class ReviewQueueRepository:
     def mark_resolved(self, item_id: str, content_state: dict | None = None) -> bool:
         return self._mark_terminal(item_id, "resolved", "resolved_at", content_state=content_state)
 
-    def mark_failed(self, item_id: str, error: str) -> bool:
-        return self._mark_terminal(item_id, "failed", "failed_at", extra={"last_error": error})
+    def mark_failed(self, item_id: str, error: str, content_state: dict | None = None) -> bool:
+        return self._mark_terminal(
+            item_id,
+            "failed",
+            "failed_at",
+            content_state=content_state,
+            extra={"last_error": error},
+        )
 
     def release_assignment(self, item_id: str) -> bool:
         items = self.read_all()

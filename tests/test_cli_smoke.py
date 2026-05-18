@@ -31,6 +31,7 @@ def test_cli_compile_execute_apply_increases_timeout_from_limit(monkeypatch) -> 
     class FakeService:
         def apply_next(self, wiki, actor, data):
             assert data.limit == 3
+            assert data.concurrency == 1
             return []
 
     def fake_alarm(seconds: int) -> int:
@@ -57,6 +58,41 @@ def test_cli_compile_execute_apply_increases_timeout_from_limit(monkeypatch) -> 
 
     assert result.exit_code == 0
     assert alarms == [420]
+
+
+def test_cli_compile_execute_apply_forwards_concurrency(monkeypatch) -> None:
+    import agent_wiki.transports.cli.app as cli_app
+
+    captured: dict[str, int] = {}
+
+    class FakeService:
+        def apply_next(self, wiki, actor, data):
+            captured["limit"] = data.limit
+            captured["concurrency"] = data.concurrency
+            return []
+
+    monkeypatch.setattr(cli_app.signal, "alarm", lambda seconds: 0)
+    monkeypatch.setattr(cli_app, "CompileExecuteService", lambda: FakeService())
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "compile-execute",
+            "--apply",
+            "--limit",
+            "3",
+            "--concurrency",
+            "2",
+            "--workspace",
+            "/tmp",
+            "--registry",
+            "tests/fixtures/registry.yaml",
+        ],
+        env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"},
+    )
+
+    assert result.exit_code == 0
+    assert captured == {"limit": 3, "concurrency": 2}
 
 
 def test_cli_help_renders() -> None:

@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
-from agent_wiki.infrastructure.doc_id import slugify_doc_id
+from agent_wiki.infrastructure.doc_id import normalize_doc_id, slugify_doc_id
 from agent_wiki.infrastructure.identity.permissions import PermissionService
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 
@@ -71,7 +71,7 @@ class CompilePrepareService:
             problem_cluster=data.problem_cluster,
             sub_cluster_id=sub_cluster_id,
             proposed_page_type="atom",
-            proposed_doc_id=f"atom-{slugify_doc_id(data.topic)}-{slugify_doc_id(data.problem_cluster)}-{data.sub_cluster_index:04d}",
+            proposed_doc_id=f"atom-{normalize_doc_id(data.topic)}-{normalize_doc_id(data.problem_cluster)}-{data.sub_cluster_index:04d}",
             agent_objective="create_retrieval_ready_atom",
             total_raw_count=total_raw_count,
             source_refs=[item.source_ref for item in items],

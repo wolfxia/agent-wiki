@@ -170,7 +170,8 @@ Phase 1 采用的组合是：
 
 - **粒度：先做 sub-cluster。** 大型 `(topic, problem_cluster)` 会被确定性地拆成 sub-cluster。每个 sub-cluster 先准备为一个 `atom` 候选；同 cluster 下的 atoms 后续再支撑 synthesis。
 - **触发：maintain 负责准备与入队。** `maintain` 检测可编译 cluster，并写入带有 raw doc ids 的 review queue 工作项。它不会直接创建 truth-zone 页面。
-- **内容生成：Agent 驱动或 CLI apply。** `wiki.compile_prepare` 返回面向 Agent 的 evidence packet：有界 raw 证据、候选 claims、关系提示、矛盾标记、source refs 与建议输出元数据。`aw compile-execute` 作为 queue 与 cron worker 之间的 CLI 桥接：它可以输出 JSON packet，也可以通过 `--input-file` 接收外部生成内容，还可以用 `--apply` 调 OpenAI-compatible chat completions API 并在一次命令内写入生成的 atom 页。核心服务仍不依赖 OpenAI SDK；`--apply` 使用 registry 中的 `compile.llm` 配置和 `httpx`。
+- **内容生成：Agent 驱动或 CLI apply。** `wiki.compile_prepare` 返回面向 Agent 的 evidence packet：有界 raw 证据、候选 claims、关系提示、矛盾标记、source refs 与建议输出元数据。`aw compile-execute` 作为 queue 与 cron worker 之间的 CLI 桥接：它可以输出 JSON packet，也可以通过 `--input-file` 接收外部生成内容，还可以用 `--apply` 调 OpenAI-compatible chat completions API 并在一次命令内写入生成的 atom 页。`--apply --concurrency N` 只并发 LLM 生成；apply/write 阶段仍串行执行，保证 `review_queue.jsonl`、`MANIFEST.jsonl`、FTS 与 `topic_index.md` 继续通过正常传播路径更新。核心服务仍不依赖 OpenAI SDK；`--apply` 使用 registry 中的 `compile.llm` 配置和 `httpx`，包括 timeout、retry、retry delay 与默认 concurrency。
+- **编译可观测性：写入 queue-local attempt telemetry。** `compile-execute` 会把 `latency_seconds`、`attempts`、`error_type` 与 provider 返回时的 `token_usage` 写入对应 `compile_suggestion` 的 `content_state`。timeout 与 5xx 仍可重试；4xx/auth、invalid output、doc-id 与 write error 会被分类，方便后续维护区分配置、模型输出、代码与存储问题。
 - **增量策略：delta atom，后续再修订 synthesis。** 新 raw 证据产生新的 atom 候选。synthesis 修订仍是独立的 B 级 compile update，不是自动副作用。
 - **source refs：由准备阶段自动收集。** prepare 输出 `wiki_id:doc_id` 引用，compile suggestion 也携带同一组 doc ids，保证编译页可追踪到 Git 中的 raw 页。
 
@@ -180,6 +181,7 @@ Phase 1 实现边界：
 
 - `wiki.compile_prepare` 是共享服务层上的只读 MCP 工具。
 - `aw compile-execute` 是面向 cron worker 的 CLI-only executor bridge；它不引入 LLM 依赖。
+- `aw compile-execute --apply --concurrency N` 的并发边界只在生成阶段；当前 Phase 1 executor 不并发执行 authority 写入。
 - CLI/REST 可以暴露同一服务给 operator 和 dashboard 使用，但 MCP 仍是主要 Agent 接口。
 - review queue consume 只改变状态（`open -> assigned -> in_progress -> resolved -> archived`）并记录 consumer；它不会自己生成编译内容。
 - `compile_update.analyze()` 保持基础 create/revise 启发式。自动编译准备应传递明确的建议 doc id 与 source refs，而不是只依赖 analyze 来决定批处理边界。

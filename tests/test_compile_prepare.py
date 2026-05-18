@@ -4,6 +4,7 @@ from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawServic
 from agent_wiki.application.compile_prepare import CompilePrepareInput, CompilePrepareService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
+from agent_wiki.domain.validators import validate_doc_id
 
 
 def test_compile_prepare_returns_cluster_raw_sources_with_source_refs(temp_wiki_root: Path) -> None:
@@ -104,3 +105,30 @@ def test_compile_prepare_accepts_explicit_doc_ids(temp_wiki_root: Path) -> None:
 
     assert [item.doc_id for item in result.items] == ["raw-explicit-2", "raw-explicit-0"]
     assert result.source_refs == ["personal-1:raw-explicit-2", "personal-1:raw-explicit-0"]
+
+
+def test_compile_prepare_proposes_valid_normalized_doc_id_for_mixed_case_cluster(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="mcp")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-external-sync-ai-1",
+            topic="external_sync",
+            problem_cluster="AI:cluster:AI",
+            content="# External Sync AI\n\nClaim: Mixed case clusters should compile.",
+            source_refs=[],
+        ),
+    )
+
+    result = CompilePrepareService().prepare(
+        wiki,
+        actor,
+        CompilePrepareInput(topic="external_sync", problem_cluster="AI:cluster:AI", sub_cluster_index=17),
+    )
+
+    assert result.proposed_doc_id == "atom-external-sync-ai-cluster-ai-0017"
+    validate_doc_id(result.proposed_doc_id)

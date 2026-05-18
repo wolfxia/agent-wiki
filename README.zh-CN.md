@@ -43,7 +43,9 @@ capture_raw → compile_update → query → lint → sync → weekly-review
 
 ![编译管道](docs/architecture/compile-pipeline.svg)
 
-编译管道把 raw 证据转换为 Agent 工作记忆。主目标是提升 Agent 的检索、推理与二阶整理质量；给人阅读只是次级收益。完整路径是：raw intake → review queue → `aw compile-execute` 输出 `compile_prepare` JSON → 外部 Agent/LLM 生成内容 → `aw compile-execute --input-file` 调用 `compile_update` → truth zone → 更好的 retrieval。也可以使用 `aw compile-execute --apply` 单命令闭环：prepare → OpenAI-compatible API 生成 atom Markdown → compile_update → mark_resolved。该模式需要在 registry 的 wiki 下配置 `compile.llm.base_url`、`api_key_env`、`model`、`max_tokens` 与 `timeout_seconds`。
+编译管道把 raw 证据转换为 Agent 工作记忆。主目标是提升 Agent 的检索、推理与二阶整理质量；给人阅读只是次级收益。完整路径是：raw intake → review queue → `aw compile-execute` 输出 `compile_prepare` JSON → 外部 Agent/LLM 生成内容 → `aw compile-execute --input-file` 调用 `compile_update` → truth zone → 更好的 retrieval。也可以使用 `aw compile-execute --apply` 单命令闭环：prepare → OpenAI-compatible API 生成 atom Markdown → compile_update → mark_resolved。`--apply --concurrency N` 只并发 LLM 生成，page、`MANIFEST.jsonl`、`review_queue.jsonl`、FTS 与 `topic_index.md` 写入仍串行执行。该模式需要在 registry 的 wiki 下配置 `compile.llm.base_url`、`api_key_env`、`model`、`max_tokens`、`timeout_seconds`、`max_retries`、`retry_delays` 与 `concurrency`。
+
+每次 compile attempt 会在对应 `compile_suggestion` 的 `content_state` 中记录 `latency_seconds`、`attempts`、`error_type`，以及 provider 返回时的 `token_usage`。`QualityReportService` 会基于这些字段报告失败率、失败类型分布、平均编译耗时、metadata 完整率与 cluster coverage。
 
 > 说明：以上图表位于仓库 `docs/architecture/` 下，反映当前 Phase 1 实现方向；部分未来的 MCP/REST 与更丰富的传播行为仍以设计目标形式记录。
 

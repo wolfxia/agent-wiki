@@ -102,6 +102,13 @@ def test_query_execution_appends_query_outcome(temp_wiki_root: Path) -> None:
     assert entries[0]["query"] == "outcome logging"
     assert entries[0]["hit_count"] == len(result.hits)
     assert entries[0]["actor_id"] == "claude-code"
+    assert entries[0]["latency_ms"] >= 0
+    assert entries[0]["accepted_doc_ids"] == []
+    assert entries[0]["rejected_doc_ids"] == []
+    assert entries[0]["page_types"]["atom"] >= 1
+    assert entries[0]["score_breakdown"]
+    first_breakdown = entries[0]["score_breakdown"][0]
+    assert {"doc_id", "fts_score", "structured_score", "graph_score", "boost"}.issubset(first_breakdown)
 
 
 def test_query_result_includes_hit_count_and_miss_signal(temp_wiki_root: Path) -> None:

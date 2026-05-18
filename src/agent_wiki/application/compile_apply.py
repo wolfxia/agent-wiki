@@ -17,13 +17,16 @@ class CompileApplyService:
         self,
         http_post: Callable[..., Any] | None = None,
         sleep: Callable[[int], Any] | None = None,
-        max_retries: int = 3,
+        max_retries: int | None = None,
         retry_delays: list[int] | None = None,
     ) -> None:
         self._http_post = http_post or httpx.post
         self._sleep = sleep or time.sleep
-        self._max_retries = max_retries
-        self._retry_delays = retry_delays or [10, 30, 60]
+        self._max_retries_override = max_retries
+        self._retry_delays_override = retry_delays
+        self.last_attempts = 0
+        self.last_usage: dict | None = None
+        self.last_error_type: str | None = None
 
     def generate(self, wiki: WikiConfig, prepare_result: CompilePrepareResult) -> str:
         llm = self._llm_config(wiki)
@@ -34,7 +37,11 @@ class CompileApplyService:
         if not api_key:
             raise ValueError(f"missing LLM API key environment variable: {api_key_env}")
 
+        max_retries = self._retry_config_value(llm, "max_retries", 3)
+        retry_delays = self._retry_config_value(llm, "retry_delays", [10, 30, 60])
         prompt = self._build_prompt(prepare_result)
+        self.last_usage = None
+        self.last_error_type = None
         response = self._post_with_retries(
             self._chat_completions_url(str(self._config_value(llm, "base_url"))),
             headers={
@@ -57,35 +64,53 @@ class CompileApplyService:
                 "temperature": 0.2,
             },
             timeout=self._config_value(llm, "timeout_seconds", 120),
+            max_retries=max_retries,
+            retry_delays=retry_delays,
         )
         response.raise_for_status()
-        return self._extract_content(response.json())
+        response_payload = response.json()
+        usage = response_payload.get("usage") if isinstance(response_payload, dict) else None
+        self.last_usage = usage if isinstance(usage, dict) else None
+        return self._extract_content(response_payload)
 
 
-    def _post_with_retries(self, url: str, **kwargs: Any) -> Any:
+    def _post_with_retries(
+        self,
+        url: str,
+        *,
+        max_retries: int | None = None,
+        retry_delays: list[int] | None = None,
+        **kwargs: Any,
+    ) -> Any:
         attempt = 0
+        self.last_attempts = 0
+        effective_max_retries = 3 if max_retries is None else max_retries
+        effective_retry_delays = retry_delays or [10, 30, 60]
         while True:
             try:
+                self.last_attempts = attempt + 1
                 response = self._http_post(url, **kwargs)
                 response.raise_for_status()
                 return response
             except (httpx.TimeoutException, TimeoutError) as exc:
-                if not self._should_retry(attempt):
+                self.last_error_type = "timeout"
+                if not self._should_retry(attempt, effective_max_retries):
                     raise
-                self._sleep_before_retry(attempt)
+                self._sleep_before_retry(attempt, effective_retry_delays)
                 attempt += 1
             except httpx.HTTPStatusError as exc:
                 status_code = exc.response.status_code
-                if status_code < 500 or not self._should_retry(attempt):
+                self.last_error_type = "5xx" if status_code >= 500 else "4xx_auth"
+                if status_code < 500 or not self._should_retry(attempt, effective_max_retries):
                     raise
-                self._sleep_before_retry(attempt)
+                self._sleep_before_retry(attempt, effective_retry_delays)
                 attempt += 1
 
-    def _should_retry(self, attempt: int) -> bool:
-        return attempt < self._max_retries
+    def _should_retry(self, attempt: int, max_retries: int) -> bool:
+        return attempt < max_retries
 
-    def _sleep_before_retry(self, attempt: int) -> None:
-        delay = self._retry_delays[min(attempt, len(self._retry_delays) - 1)]
+    def _sleep_before_retry(self, attempt: int, retry_delays: list[int]) -> None:
+        delay = retry_delays[min(attempt, len(retry_delays) - 1)]
         self._sleep(delay)
 
 
@@ -101,6 +126,12 @@ class CompileApplyService:
         if isinstance(config, dict):
             return config.get(key, default)
         return getattr(config, key, default)
+
+    def _retry_config_value(self, config: Any, key: str, default: Any) -> Any:
+        override = self._max_retries_override if key == "max_retries" else self._retry_delays_override
+        if override is not None:
+            return override
+        return self._config_value(config, key, default)
 
     def _chat_completions_url(self, base_url: str) -> str:
         return base_url.rstrip("/") + "/chat/completions"
@@ -125,6 +156,7 @@ class CompileApplyService:
         if content.startswith("```"):
             content = self._strip_code_fence(content)
         if not content:
+            self.last_error_type = "invalid_output"
             raise ValueError("LLM returned empty content")
         return content
 

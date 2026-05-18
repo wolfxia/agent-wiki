@@ -142,7 +142,9 @@ raw intake
        -> better query answers and second-order curation
 ```
 
-`wiki.compile_prepare` is read-only. It prepares bounded raw batches and traceable source refs, but it does not generate truth-zone prose inside Agent Wiki. `aw compile-execute` is the CLI bridge for cron workers: without `--input-file` or `--apply` it claims suggestions and prints evidence packets as JSON; with `--input-file` it applies generated content through `compile_update`; with `--apply` it runs the full loop in one command: prepare, call an OpenAI-compatible chat completions API, apply the generated atom page, and resolve or fail the queue item.
+`wiki.compile_prepare` is read-only. It prepares bounded raw batches and traceable source refs, but it does not generate truth-zone prose inside Agent Wiki. `aw compile-execute` is the CLI bridge for cron workers: without `--input-file` or `--apply` it claims suggestions and prints evidence packets as JSON; with `--input-file` it applies generated content through `compile_update`; with `--apply` it runs the full loop in one command: prepare, call an OpenAI-compatible chat completions API, apply the generated atom page, and resolve or fail the queue item. `--apply --concurrency N` parallelizes only LLM generation; authority writes to pages, `MANIFEST.jsonl`, `review_queue.jsonl`, FTS, and `topic_index.md` remain serialized by the executor.
+
+Each compile attempt records operational telemetry in the related `review_queue` item's `content_state`: `latency_seconds`, `attempts`, `error_type`, and `token_usage` when the provider returns usage data. This lets `aw maintain` and `QualityReportService` report failure rate, failure breakdown, average compile latency, metadata completeness, and raw-cluster coverage without changing the authority model.
 
 `--apply` requires per-wiki registry config:
 
@@ -154,12 +156,16 @@ compile:
     model: deepseek/deepseek-chat-v3-0324
     max_tokens: 4096
     timeout_seconds: 30
+    max_retries: 3
+    retry_delays: [10, 30, 60]
+    concurrency: 1
 ```
 
 ## What Is New In v0.2.0
 
 - FTS5 full-text search through `SQLiteFTSIndexProvider`, stored in `.agent-wiki/retrieval.db`.
 - Query ranking now exposes debug scores: `page_type_boost`, `lexical_score`, `structured_score`, `purpose_boost`, and `freshness`.
+- Query outcome logging records latency, page-type distribution, score breakdown, and empty feedback hooks (`accepted_doc_ids`, `rejected_doc_ids`) for later evaluation loops.
 - Index consistency health checks cover manifest, `retrieval_index.jsonl`, FTS, pages, and topic index consistency.
 - `aw migrate --normalize-doc-ids` lowercases and hyphenates old `doc_id`s, renames page files, updates source refs, and backs up `MANIFEST.jsonl`.
 - Obsidian `push-view` exports workspace pages with configurable `push_view_routing`; generic defaults are `raw`, `atoms`, `synthesis`, `principles`, and `knowledge-graph`.

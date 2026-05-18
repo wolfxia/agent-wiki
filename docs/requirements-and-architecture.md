@@ -222,6 +222,10 @@ Still required:
 Current implementation note:
 - `capture_raw` is implemented
 - `compile_update` analyze/apply is implemented in a simplified form
+- `aw compile-execute` can claim compile suggestions, print evidence packets, apply generated content from an input file, or run `--apply` through an OpenAI-compatible chat completions endpoint
+- `aw compile-execute --apply --concurrency N` parallelizes LLM generation only; apply/write propagation remains serialized through the normal service path
+- compile LLM config supports `timeout_seconds`, `max_retries`, `retry_delays`, and default `concurrency`
+- consumed compile suggestions record `latency_seconds`, `attempts`, `error_type`, and provider `token_usage` when available in `review_queue.jsonl` `content_state`
 - principle writes currently use a local proposal/approval smoke path
 - analyze is currently heuristic, not a full evidence-planning engine
 - intake code path has improved through `normalize_raw_intake`, Obsidian frontmatter handling, raw metadata repair, and lint checks for missing raw metadata; live data still needs cleanup/migration where old imports remain weak or pending-heavy
@@ -280,6 +284,7 @@ Still required:
 Current implementation note:
 - FTS5+jieba primary retrieval, structured `topic_index.md` merge, JSONL lexical fallback, and layered output are implemented
 - debug scoring includes lexical/structured scores plus page type, purpose, freshness, and manifest-priority boosts
+- `query_outcomes.jsonl` entries include latency, page-type distribution, top-hit score breakdown, and empty accepted/rejected doc id fields for later feedback joins
 - vector routing, load-policy execution, query budgets, and richer provider orchestration are not yet implemented
 
 ### 3.10 Feedback and weekly review loop
@@ -293,6 +298,7 @@ Still required:
 Current implementation note:
 - `feedback.py` appends `query_outcomes.jsonl` and creates review queue items
 - `weekly_review.py` produces a minimal summary and suggested actions from queue reasons
+- `quality_report.py` reads query outcomes, manifest entries, and compile queue telemetry to report compile failure rate, failure breakdown, average compile latency, metadata completeness, cluster coverage, and mature-cluster coverage
 - richer query-outcome policy and multi-signal review synthesis remain future work
 
 ### 3.11 Review queue

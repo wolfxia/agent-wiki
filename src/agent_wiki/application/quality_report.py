@@ -1,4 +1,5 @@
 import json
+from collections import Counter
 from pathlib import Path
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
@@ -18,6 +19,9 @@ class QualityReportService:
         raw_count, compiled_count = self._page_counts(entries)
         compile_rate = (compiled_count / raw_count) if raw_count else 0.0
         orphan_count = self._orphan_count(entries)
+        compile_failure_rate, compile_failure_breakdown, avg_compile_latency_seconds = self._compile_attempt_metrics(wiki_root)
+        metadata_completeness = self._metadata_completeness(entries)
+        cluster_coverage, mature_cluster_coverage = self._cluster_coverage(entries)
 
         return {
             "query_count": query_count,
@@ -26,6 +30,12 @@ class QualityReportService:
             "compiled_count": compiled_count,
             "compile_rate": compile_rate,
             "orphan_count": orphan_count,
+            "compile_failure_rate": compile_failure_rate,
+            "compile_failure_breakdown": compile_failure_breakdown,
+            "avg_compile_latency_seconds": avg_compile_latency_seconds,
+            "metadata_completeness": metadata_completeness,
+            "cluster_coverage": cluster_coverage,
+            "mature_cluster_coverage": mature_cluster_coverage,
         }
 
     def _query_metrics(self, wiki_root: Path) -> tuple[int, float]:
@@ -71,3 +81,67 @@ class QualityReportService:
             if doc_id not in referenced:
                 orphans += 1
         return orphans
+
+    def _compile_attempt_metrics(self, wiki_root: Path) -> tuple[float, dict[str, int], float]:
+        queue_path = wiki_root / "review_queue.jsonl"
+        if not queue_path.exists():
+            return 0.0, {}, 0.0
+        resolved = 0
+        failed = 0
+        failure_breakdown: Counter[str] = Counter()
+        latencies: list[float] = []
+        for line in queue_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            item = json.loads(line)
+            if item.get("item_type") != "compile_suggestion":
+                continue
+            status = item.get("status")
+            if status == "resolved":
+                resolved += 1
+            elif status == "failed":
+                failed += 1
+                error_type = (item.get("content_state") or {}).get("error_type") or "unknown"
+                failure_breakdown[str(error_type)] += 1
+            else:
+                continue
+            latency = (item.get("content_state") or {}).get("latency_seconds")
+            if isinstance(latency, int | float):
+                latencies.append(float(latency))
+        attempted = resolved + failed
+        failure_rate = (failed / attempted) if attempted else 0.0
+        avg_latency = (sum(latencies) / len(latencies)) if latencies else 0.0
+        return failure_rate, dict(failure_breakdown), avg_latency
+
+    def _metadata_completeness(self, entries: list[dict]) -> float:
+        compiled_entries = [entry for entry in entries if entry.get("page_type") in _COMPILED_PAGE_TYPES]
+        if not compiled_entries:
+            return 0.0
+        complete = 0
+        required_fields = ("summary", "aliases", "confidence", "wikilinks")
+        for entry in compiled_entries:
+            if all(bool(entry.get(field)) for field in required_fields):
+                complete += 1
+        return complete / len(compiled_entries)
+
+    def _cluster_coverage(self, entries: list[dict]) -> tuple[float, float]:
+        raw_clusters: Counter[tuple[str, str]] = Counter()
+        compiled_clusters: set[tuple[str, str]] = set()
+        for entry in entries:
+            topic = str(entry.get("topic") or "")
+            problem_cluster = str(entry.get("problem_cluster") or "")
+            if not topic or not problem_cluster:
+                continue
+            key = (topic, problem_cluster)
+            if entry.get("page_type") == PageType.RAW.value:
+                raw_clusters[key] += 1
+            elif entry.get("page_type") in _COMPILED_PAGE_TYPES:
+                compiled_clusters.add(key)
+
+        if not raw_clusters:
+            return 0.0, 0.0
+        covered_clusters = sum(1 for key in raw_clusters if key in compiled_clusters)
+        mature_clusters = [key for key, count in raw_clusters.items() if count >= 3]
+        mature_covered = sum(1 for key in mature_clusters if key in compiled_clusters)
+        mature_coverage = (mature_covered / len(mature_clusters)) if mature_clusters else 0.0
+        return covered_clusters / len(raw_clusters), mature_coverage

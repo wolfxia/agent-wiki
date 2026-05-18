@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 
 from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
@@ -150,7 +151,7 @@ def test_compile_execute_parses_legacy_item_id_with_colons_in_problem_cluster(te
 
     assert packet.prepare.topic == "external_sync"
     assert packet.prepare.problem_cluster == "AI:cluster:AI"
-    assert packet.prepare.proposed_doc_id == "atom-external_sync-AI-cluster-AI-0010"
+    assert packet.prepare.proposed_doc_id == "atom-external-sync-ai-cluster-ai-0010"
 
 
 def test_compile_execute_apply_generated_content_resolves_suggestion(temp_wiki_root: Path) -> None:
@@ -347,6 +348,51 @@ def test_compile_apply_service_retries_timeout_then_succeeds(monkeypatch, temp_w
     assert slept == [10, 30]
 
 
+def test_compile_apply_service_uses_registry_retry_configuration(monkeypatch, temp_wiki_root: Path) -> None:
+    wiki, _actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-llm-configured-retry")
+    wiki = wiki.model_copy(
+        update={
+            "compile": {
+                "llm": {
+                    "base_url": "https://llm.example/v1",
+                    "api_key_env": "TEST_LLM_API_KEY",
+                    "model": "test-model",
+                    "timeout_seconds": 7,
+                    "max_retries": 1,
+                    "retry_delays": [4],
+                }
+            }
+        }
+    )
+    packet = CompileExecuteService().prepare_next(
+        wiki=wiki,
+        actor=_actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )[0]
+    attempts = 0
+    slept: list[int] = []
+    timeouts: list[float] = []
+
+    def fake_post(url: str, *, headers: dict, json: dict, timeout: float):
+        nonlocal attempts
+        attempts += 1
+        timeouts.append(timeout)
+        raise TimeoutError("request timed out")
+
+    monkeypatch.setenv("TEST_LLM_API_KEY", "secret-token")
+
+    try:
+        CompileApplyService(http_post=fake_post, sleep=slept.append).generate(wiki, packet.prepare)
+    except TimeoutError:
+        pass
+    else:
+        raise AssertionError("expected configured retry exhaustion")
+
+    assert attempts == 2
+    assert slept == [4]
+    assert timeouts == [7, 7]
+
+
 def test_compile_apply_service_retries_5xx_but_not_4xx(monkeypatch, temp_wiki_root: Path) -> None:
     import httpx
 
@@ -422,6 +468,34 @@ def test_compile_execute_apply_next_generates_applies_and_resolves(temp_wiki_roo
     stored = ReviewQueueRepository(temp_wiki_root).find(result.item_id)
     assert stored["status"] == "resolved"
     assert stored["content_state"]["compiled_doc_id"] == result.doc_id
+    assert stored["content_state"]["latency_seconds"] >= 0
+    assert stored["content_state"]["attempts"] == 1
+    assert stored["content_state"]["error_type"] is None
+
+
+def test_compile_execute_apply_next_records_token_usage_when_available(temp_wiki_root: Path) -> None:
+    wiki, actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-token-usage")
+
+    class FakeApplyService:
+        last_usage = {"prompt_tokens": 17, "completion_tokens": 23, "total_tokens": 40}
+        last_attempts = 2
+
+        def generate(self, wiki, prepare):
+            return "# Generated Token Usage\n\nClaim: token usage is observable."
+
+    result = CompileExecuteService(apply_service=FakeApplyService()).apply_next(
+        wiki=wiki,
+        actor=actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )[0]
+
+    stored = ReviewQueueRepository(temp_wiki_root).find(result.item_id)
+    assert stored["content_state"]["token_usage"] == {
+        "prompt_tokens": 17,
+        "completion_tokens": 23,
+        "total_tokens": 40,
+    }
+    assert stored["content_state"]["attempts"] == 2
 
 
 def test_compile_execute_apply_next_reports_fallback_priority(temp_wiki_root: Path) -> None:
@@ -466,6 +540,56 @@ def test_compile_execute_apply_next_marks_failed_and_continues(temp_wiki_root: P
     stored = ReviewQueueRepository(temp_wiki_root).find(results[0].item_id)
     assert stored["status"] == "failed"
     assert stored["last_error"] == "LLM timed out"
+    assert stored["content_state"]["latency_seconds"] >= 0
+    assert stored["content_state"]["attempts"] == 1
+    assert stored["content_state"]["error_type"] == "timeout"
     assert stored["previous_assigned_to"] == "claude-code"
     assert "assigned_to" not in stored
     assert "claimed_at" not in stored
+
+
+def test_compile_execute_apply_next_generates_concurrently_but_applies_serially(temp_wiki_root: Path) -> None:
+    wiki, actor = _seed_cluster(
+        temp_wiki_root,
+        topic="imaging-os",
+        problem_cluster="cluster-concurrent-a",
+        raw_doc_prefix="raw-concurrent-a",
+    )
+    _seed_cluster(
+        temp_wiki_root,
+        topic="agent-os",
+        problem_cluster="cluster-concurrent-b",
+        raw_doc_prefix="raw-concurrent-b",
+    )
+    generate_windows: list[tuple[str, float, float]] = []
+    apply_order: list[str] = []
+
+    class SlowApplyService:
+        def generate(self, wiki, prepare):
+            start = time.monotonic()
+            time.sleep(0.05)
+            end = time.monotonic()
+            generate_windows.append((prepare.proposed_doc_id, start, end))
+            return f"# {prepare.proposed_doc_id}\n\nClaim: concurrent generation."
+
+    service = CompileExecuteService(apply_service=SlowApplyService())
+    original_apply_generated = service.apply_generated
+
+    def tracking_apply_generated(*args, **kwargs):
+        data = kwargs["data"]
+        apply_order.append(data.doc_id)
+        return original_apply_generated(*args, **kwargs)
+
+    service.apply_generated = tracking_apply_generated
+
+    results = service.apply_next(
+        wiki=wiki,
+        actor=actor,
+        data=CompileExecuteInput(limit=2, priority_filter="P0", concurrency=2),
+    )
+
+    assert [result.status for result in results] == ["committed", "committed"]
+    assert len(generate_windows) == 2
+    first, second = generate_windows
+    assert first[1] < second[2] and second[1] < first[2]
+    assert apply_order == [result.doc_id for result in results]

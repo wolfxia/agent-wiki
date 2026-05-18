@@ -276,6 +276,7 @@ def compile_prepare(
 def compile_execute(
     limit: int = typer.Option(1, "--limit"),
     priority_filter: str | None = typer.Option(None, "--priority-filter"),
+    concurrency: int = typer.Option(1, "--concurrency"),
     input_file: Path | None = typer.Option(None, "--input-file"),
     apply: bool = typer.Option(False, "--apply"),
     workspace: str | None = typer.Option(None, "--workspace"),
@@ -303,7 +304,7 @@ def compile_execute(
             results = service.apply_next(
                 wiki=wiki,
                 actor=actor,
-                data=CompileExecuteInput(limit=limit, priority_filter=priority_filter),
+                data=CompileExecuteInput(limit=limit, priority_filter=priority_filter, concurrency=concurrency),
             )
             for result in results:
                 parts = [
@@ -323,7 +324,7 @@ def compile_execute(
         packets = service.prepare_next(
             wiki=wiki,
             actor=actor,
-            data=CompileExecuteInput(limit=limit, priority_filter=priority_filter),
+            data=CompileExecuteInput(limit=limit, priority_filter=priority_filter, concurrency=concurrency),
         )
         for packet in packets:
             typer.echo(json.dumps(packet.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")))

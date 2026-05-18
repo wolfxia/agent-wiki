@@ -40,6 +40,9 @@ class LLMConfig(BaseModel):
     model: str
     max_tokens: int = 4096
     timeout_seconds: int = 120
+    max_retries: int = 3
+    retry_delays: list[int] = Field(default_factory=lambda: [10, 30, 60])
+    concurrency: int = 1
 
 
 class CompileConfig(BaseModel):

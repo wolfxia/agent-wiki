@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import time
 import uuid
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
@@ -18,6 +19,7 @@ class QueryService:
         self._classifier = RuleBasedQueryClassifier()
 
     def execute(self, wiki: WikiConfig, actor: ResolvedActor, data: QueryInput, *, write_outcome: bool = True) -> QueryResult:
+        start_time = time.monotonic()
         query_type = self._classifier.classify(data.query)
         wiki_root = Path(wiki.workspace_path)
         manifest = ManifestRepository(wiki_root)
@@ -36,7 +38,14 @@ class QueryService:
         l3_proof = self._build_l3_proof(manifest, filtered_hits)
         l1_answer = self._build_l1_answer(filtered_hits, wiki_root, manifest)
         if write_outcome:
-            self._append_query_outcome(wiki_root, actor, data, filtered_hits)
+            self._append_query_outcome(
+                wiki_root,
+                actor,
+                data,
+                filtered_hits,
+                manifest,
+                latency_ms=round(max(time.monotonic() - start_time, 0.0) * 1000, 3),
+            )
 
         return QueryResult(
             query_type=query_type,
@@ -182,6 +191,8 @@ class QueryService:
         actor: ResolvedActor,
         data: QueryInput,
         hits: list[RetrievalHit],
+        manifest: ManifestRepository,
+        latency_ms: float,
     ) -> None:
         path = wiki_root / "query_outcomes.jsonl"
         query_id = str(uuid.uuid4())
@@ -190,6 +201,11 @@ class QueryService:
             "query": data.query,
             "hit_count": len(hits),
             "actor_id": actor.actor_id,
+            "latency_ms": latency_ms,
+            "score_breakdown": self._score_breakdown(hits),
+            "page_types": self._page_type_distribution(manifest, hits),
+            "accepted_doc_ids": [],
+            "rejected_doc_ids": [],
         }
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -198,6 +214,34 @@ class QueryService:
         with hits_path.open("a", encoding="utf-8") as handle:
             for hit in hits:
                 handle.write(json.dumps({"query_id": query_id, "doc_id": hit.doc_id}, ensure_ascii=False) + "\n")
+
+    def _score_breakdown(self, hits: list[RetrievalHit], top_k: int = 10) -> list[dict]:
+        breakdown = []
+        for hit in hits[:top_k]:
+            metadata = hit.metadata
+            boost = sum(
+                float(metadata.get(key, 0.0) or 0.0)
+                for key in ("page_type_boost", "purpose_boost", "freshness", "manifest_priority")
+            )
+            breakdown.append(
+                {
+                    "doc_id": hit.doc_id,
+                    "score": hit.score,
+                    "fts_score": float(metadata.get("lexical_score", 0.0) or 0.0),
+                    "structured_score": float(metadata.get("structured_score", 0.0) or 0.0),
+                    "graph_score": float(metadata.get("graph_score", 0.0) or 0.0),
+                    "boost": boost,
+                }
+            )
+        return breakdown
+
+    def _page_type_distribution(self, manifest: ManifestRepository, hits: list[RetrievalHit]) -> dict[str, int]:
+        distribution: dict[str, int] = {}
+        for hit in hits:
+            entry = manifest.find(hit.doc_id) or {}
+            page_type = str(entry.get("page_type") or "unknown")
+            distribution[page_type] = distribution.get(page_type, 0) + 1
+        return distribution
 
 
 class CrossWikiQueryService:
