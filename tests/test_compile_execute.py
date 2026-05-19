@@ -319,6 +319,76 @@ def test_compile_execute_apply_next_marks_generation_failures_as_transport_retry
     assert stored["content_state"]["retry_stage"] == "transport_retry"
 
 
+def test_compile_execute_apply_next_retries_invalid_output_with_output_repair_path(temp_wiki_root: Path) -> None:
+    wiki, actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-output-repair")
+
+    class RepairApplyService:
+        last_structured_output = None
+        last_usage = None
+        last_attempts = 1
+        calls = 0
+
+        def generate(self, wiki, prepare):
+            self.calls += 1
+            if self.calls == 1:
+                self.last_error_type = "invalid_output"
+                raise ValueError("model returned invalid output")
+            self.last_structured_output = CompileStructuredOutput(
+                content="# Output Repair\n\n## Claims\n- raw-service-execute-0\n- raw-service-execute-1\n- raw-service-execute-2\n\n## Evidence\n- repaired output.",
+                summary="Output repaired.",
+                confidence="medium",
+            )
+            return self.last_structured_output.content
+
+    result = CompileExecuteService(apply_service=RepairApplyService()).apply_next(
+        wiki=wiki,
+        actor=actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )[0]
+
+    assert result.status == "committed"
+    stored = ReviewQueueRepository(temp_wiki_root).find(result.item_id)
+    assert stored["status"] == "resolved"
+    assert stored["content_state"]["repair_strategy"] == "output_repair_retry"
+
+
+def test_compile_execute_apply_next_retries_quality_rejection_with_quality_rewrite_path(temp_wiki_root: Path) -> None:
+    wiki, actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-quality-rewrite")
+
+    class RewriteApplyService:
+        last_structured_output = None
+        last_usage = None
+        last_attempts = 1
+        calls = 0
+
+        def generate(self, wiki, prepare):
+            self.calls += 1
+            if self.calls == 1:
+                self.last_structured_output = CompileStructuredOutput(
+                    content="# Weak\n\n## Claims\n- unrelated statement\n\n## Evidence\n- thin evidence",
+                    summary="Weak draft.",
+                    confidence="low",
+                )
+                return self.last_structured_output.content
+            self.last_structured_output = CompileStructuredOutput(
+                content="# Rewritten\n\n## Claims\n- raw-service-execute-0\n- raw-service-execute-1\n- raw-service-execute-2\n\n## Evidence\n- rewritten for coverage.",
+                summary="Rewritten draft.",
+                confidence="medium",
+            )
+            return self.last_structured_output.content
+
+    result = CompileExecuteService(apply_service=RewriteApplyService()).apply_next(
+        wiki=wiki,
+        actor=actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )[0]
+
+    assert result.status == "committed"
+    stored = ReviewQueueRepository(temp_wiki_root).find(result.item_id)
+    assert stored["status"] == "resolved"
+    assert stored["content_state"]["repair_strategy"] == "quality_rewrite_retry"
+
+
 def test_compile_execute_apply_generated_marks_suggestion_failed_on_error(temp_wiki_root: Path) -> None:
     wiki, actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-fail")
     packet = CompileExecuteService().prepare_next(

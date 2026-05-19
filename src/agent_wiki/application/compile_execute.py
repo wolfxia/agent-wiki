@@ -2,13 +2,12 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
-import re
-from datetime import UTC, datetime
 from pydantic import BaseModel
 
 from agent_wiki.application.compile_prepare import CompilePrepareInput, CompilePrepareResult, CompilePrepareService
 from agent_wiki.application.compile_update import CompileUpdateService
 from agent_wiki.application.compile_apply import CompileApplyService, CompileStructuredOutput
+from agent_wiki.application.compile_quality_gate import CompileQualityGate
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import CompileResult, CompileUpdateInput
@@ -62,6 +61,7 @@ class GeneratedCompilePacket(BaseModel):
 class CompileExecuteService:
     def __init__(self, apply_service: CompileApplyService | None = None) -> None:
         self._apply_service = apply_service or CompileApplyService()
+        self._quality_gate_service = CompileQualityGate()
         self._write_lock = threading.Lock()
 
     def prepare_next(
@@ -170,19 +170,10 @@ class CompileExecuteService:
             failed = False
             start_time = time.monotonic()
             try:
-                content = self._apply_service.generate(wiki, packet.prepare)
-                telemetry = self._attempt_telemetry(start_time, error_type=None)
-                result = self.apply_generated(
+                result = self._run_packet_with_repairs(
                     wiki=wiki,
                     actor=actor,
-                    data=self._generated_input_from_packet(
-                        packet=packet,
-                        generated=GeneratedCompilePacket(
-                            content=content,
-                            structured_output=getattr(self._apply_service, "last_structured_output", None),
-                        ),
-                    ),
-                    telemetry=telemetry,
+                    packet=packet,
                     start_time=start_time,
                 )
                 queue_status = ReviewQueueRepository(Path(wiki.workspace_path)).find(packet.item_id).get("status", "unknown")
@@ -220,6 +211,43 @@ class CompileExecuteService:
                 if failed:
                     ReviewQueueRepository(Path(wiki.workspace_path)).release_assignment(packet.item_id)
         return results
+
+    def _run_packet_with_repairs(
+        self,
+        wiki: WikiConfig,
+        actor: ResolvedActor,
+        packet: CompileExecutePacket,
+        start_time: float,
+    ) -> CompileResult:
+        repair_strategy: str | None = None
+        while True:
+            try:
+                content = self._apply_service.generate(wiki, packet.prepare)
+                telemetry = self._attempt_telemetry(start_time, error_type=None)
+                if repair_strategy:
+                    telemetry["repair_strategy"] = repair_strategy
+                return self.apply_generated(
+                    wiki=wiki,
+                    actor=actor,
+                    data=self._generated_input_from_packet(
+                        packet=packet,
+                        generated=GeneratedCompilePacket(
+                            content=content,
+                            structured_output=getattr(self._apply_service, "last_structured_output", None),
+                        ),
+                    ),
+                    telemetry=telemetry,
+                    start_time=start_time,
+                )
+            except Exception as exc:
+                error_type = self._classify_error(exc)
+                if error_type == "invalid_output" and repair_strategy is None:
+                    repair_strategy = "output_repair_retry"
+                    continue
+                if error_type == "quality_rejected" and repair_strategy is None:
+                    repair_strategy = "quality_rewrite_retry"
+                    continue
+                raise
 
     def _apply_next_concurrent(
         self,
@@ -339,7 +367,7 @@ class CompileExecuteService:
         queue = ReviewQueueRepository(Path(wiki.workspace_path))
         started_at = start_time or time.monotonic()
         try:
-            quality = self._quality_gate(data)
+            quality = self._quality_gate_service.evaluate(data)
             with self._write_lock:
                 result = CompileUpdateService().apply(
                     wiki=wiki,
@@ -397,6 +425,7 @@ class CompileExecuteService:
                     "quality_gate": quality,
                     "error_type": "quality_warning_committed" if quality_status == "warning" else None,
                     "retry_stage": "human_review" if quality_status == "warning" else None,
+                    "repair_strategy": telemetry.get("repair_strategy") if telemetry else None,
                 },
             )
         return result
@@ -438,60 +467,6 @@ class CompileExecuteService:
                 return "quality_rejected"
             return "invalid_output"
         return "write_error"
-
-    def _quality_gate(self, data: CompileGeneratedInput) -> dict:
-        summary_ok = bool((data.summary or "").strip())
-        confidence_ok = bool((data.confidence or "").strip())
-        content_ok = bool((data.content or "").strip())
-        if not (summary_ok and confidence_ok and content_ok):
-            raise ValueError("quality gate failed: summary/confidence/content required")
-
-        lowered = data.content.lower()
-        has_claims = "claims" in lowered
-        has_evidence = "evidence" in lowered
-        if not (has_claims and has_evidence):
-            raise ValueError("quality gate failed: Claims + Evidence sections required")
-
-        source_ref_coverage = 1.0 if data.source_refs else 0.0
-        critical_fact_coverage = self._critical_fact_coverage(data)
-        if source_ref_coverage < 1.0 or critical_fact_coverage < 0.6:
-            raise ValueError(
-                f"quality gate failed: critical_fact_coverage={critical_fact_coverage:.3f}, source_ref_coverage={source_ref_coverage:.3f}"
-            )
-
-        increment_warning = self._increment_warning(data)
-        return {
-            "quality_status": "warning" if increment_warning else "pass",
-            "critical_fact_coverage": round(critical_fact_coverage, 3),
-            "source_ref_coverage": round(source_ref_coverage, 3),
-            "increment_warning": increment_warning,
-            "structure_ok": True,
-            "fields_ok": True,
-            "quality_checked_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-            "evidence_note": "increment_warning" if increment_warning else None,
-        }
-
-    def _critical_fact_coverage(self, data: CompileGeneratedInput) -> float:
-        content_tokens = set(re.findall(r"[a-z0-9_-]+", data.content.lower()))
-        if not data.source_refs:
-            return 0.0
-        covered = 0
-        for source_ref in data.source_refs:
-            _, _, doc_id = source_ref.partition(":")
-            tokens = set(re.findall(r"[a-z0-9_-]+", doc_id.lower()))
-            if tokens and tokens.issubset(content_tokens):
-                covered += 1
-        return covered / len(data.source_refs)
-
-    def _increment_warning(self, data: CompileGeneratedInput) -> bool:
-        content = data.content
-        words = re.findall(r"[a-z0-9_-]+", content.lower())
-        if not words:
-            return False
-        unique_ratio = len(set(words)) / len(words)
-        source_doc_ids = [source_ref.partition(":")[2].lower() for source_ref in data.source_refs]
-        repeated_refs = sum(1 for doc_id in source_doc_ids if doc_id and doc_id in content.lower())
-        return unique_ratio < 0.45 or repeated_refs >= max(2, len(source_doc_ids) - 1)
 
     def _append_manifest_quality(self, wiki_root: Path, doc_id: str, quality: dict) -> None:
         from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
