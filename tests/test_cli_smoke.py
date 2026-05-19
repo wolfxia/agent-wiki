@@ -4,6 +4,7 @@ import json
 from typer.testing import CliRunner
 import yaml
 
+from agent_wiki.application.compile_apply import CompileStructuredOutput
 from agent_wiki.transports.cli.app import app
 
 
@@ -961,7 +962,9 @@ def test_cli_compile_execute_applies_input_file_and_resolves_queue_item(temp_wik
         "topic": packet["prepare"]["topic"],
         "problem_cluster": packet["prepare"]["problem_cluster"],
         "source_refs": packet["prepare"]["source_refs"],
-        "content": "# Atom compiled\n\nClaim: compile execution.",
+        "summary": "Compile execution summary.",
+        "confidence": "medium",
+        "content": "# Atom compiled\n\n## Claims\n- raw-execute-input-0\n- raw-execute-input-1\n- raw-execute-input-2\n\n## Evidence\n- compile execution.",
     }
     input_path = temp_wiki_root / "compiled.json"
     input_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -1014,7 +1017,12 @@ def test_cli_compile_execute_apply_runs_single_command_pipeline(monkeypatch, tem
 
     class FakeApplyService:
         def generate(self, wiki, prepare):
-            return "# CLI Generated Atom\n\nClaim: generated through --apply."
+            self.last_structured_output = CompileStructuredOutput(
+                content="# CLI Generated Atom\n\n## Claims\n- raw-cli-apply-0\n- raw-cli-apply-1\n- raw-cli-apply-2\n\n## Evidence\n- generated through --apply.",
+                summary="CLI generated summary.",
+                confidence="medium",
+            )
+            return self.last_structured_output.content
 
     monkeypatch.setattr("agent_wiki.application.compile_execute.CompileApplyService", lambda: FakeApplyService())
 
@@ -1071,7 +1079,12 @@ def test_cli_compile_execute_apply_prints_fallback_priority(monkeypatch, temp_wi
 
     class FakeApplyService:
         def generate(self, wiki, prepare):
-            return "# CLI Fallback Atom\n\nClaim: generated through fallback."
+            self.last_structured_output = CompileStructuredOutput(
+                content="# CLI Fallback Atom\n\n## Claims\n- raw-cli-apply-fallback-0\n- raw-cli-apply-fallback-1\n- raw-cli-apply-fallback-2\n\n## Evidence\n- generated through fallback.",
+                summary="CLI fallback summary.",
+                confidence="medium",
+            )
+            return self.last_structured_output.content
 
     monkeypatch.setattr("agent_wiki.application.compile_execute.CompileApplyService", lambda: FakeApplyService())
 

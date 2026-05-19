@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 from pydantic import BaseModel
 
@@ -36,9 +37,13 @@ class CompilePrepareResult(BaseModel):
     agent_objective: str
     total_raw_count: int
     source_refs: list[str]
+    existing_atom_summaries: list[dict]
     relationship_hints: list[dict]
     contradiction_markers: list[dict]
     items: list[CompilePrepareItem]
+
+
+_TOTAL_PREVIEW_BUDGET = 6000
 
 
 class CompilePrepareService:
@@ -64,7 +69,8 @@ class CompilePrepareService:
         else:
             raw_entries = raw_entries[: max(data.max_items, 0)]
 
-        items = [self._prepare_item(wiki, wiki_root, entry) for entry in raw_entries]
+        item_count = max(len(raw_entries), 1)
+        items = [self._prepare_item(wiki, wiki_root, entry, total_items=item_count) for entry in raw_entries]
         sub_cluster_id = self._sub_cluster_id(data.topic, data.problem_cluster, data.sub_cluster_index)
         return CompilePrepareResult(
             topic=data.topic,
@@ -75,12 +81,13 @@ class CompilePrepareService:
             agent_objective="create_retrieval_ready_atom",
             total_raw_count=total_raw_count,
             source_refs=[item.source_ref for item in items],
+            existing_atom_summaries=self._existing_atom_summaries(manifest, data.topic, data.problem_cluster),
             relationship_hints=self._relationship_hints(items),
             contradiction_markers=self._contradiction_markers(items),
             items=items,
         )
 
-    def _prepare_item(self, wiki: WikiConfig, wiki_root: Path, entry: dict) -> CompilePrepareItem:
+    def _prepare_item(self, wiki: WikiConfig, wiki_root: Path, entry: dict, *, total_items: int) -> CompilePrepareItem:
         canonical_uri = entry.get("canonical_uri")
         content = ""
         if canonical_uri:
@@ -88,6 +95,7 @@ class CompilePrepareService:
             if page_path.exists() and page_path.is_file():
                 content = page_path.read_text(encoding="utf-8")
         doc_id = str(entry.get("doc_id") or "")
+        max_preview_chars = self._preview_budget_chars(total_items=total_items)
         return CompilePrepareItem(
             doc_id=doc_id,
             title=entry.get("title"),
@@ -95,18 +103,64 @@ class CompilePrepareService:
             source_ref=f"{wiki.wiki_id}:{doc_id}",
             canonical_uri=str(canonical_uri) if canonical_uri else None,
             claims=self._extract_claims(content),
-            content_preview=content[:1200],
+            content_preview=content[:max_preview_chars],
         )
 
     def _extract_claims(self, content: str) -> list[str]:
+        cleaned_lines = [line for line in content.splitlines() if not line.strip().startswith("#")]
+        cleaned = "\n".join(cleaned_lines)
+        explicit_claims: list[str] = []
+        for line in cleaned.splitlines():
+            stripped = line.strip().lstrip("-* ").strip()
+            if stripped.lower().startswith("claim"):
+                first_sentence = stripped.split(". ", maxsplit=1)[0].rstrip(".") + "."
+                explicit_claims.append(first_sentence)
+        if explicit_claims:
+            return explicit_claims[:8]
+
         claims: list[str] = []
-        for line in content.splitlines():
-            stripped = line.strip().lstrip("-*").strip()
-            if not stripped.lower().startswith("claim"):
+        sentences = re.split(r"(?<=[.!?])\s+", cleaned.replace("\n", " "))
+        for sentence in sentences:
+            stripped = sentence.strip().lstrip("-*").strip()
+            if not stripped:
                 continue
-            first_sentence = stripped.split(". ", maxsplit=1)[0].rstrip(".") + "."
-            claims.append(first_sentence)
+            lowered = stripped.lower()
+            if (
+                any(char.isdigit() for char in stripped)
+                or re.search(r"\b[A-Z][a-z]+\b", stripped)
+                or "metric" in lowered
+                or "evidence" in lowered
+                or "camera pipeline" in lowered
+            ):
+                claims.append(stripped if stripped.endswith((".", "!", "?")) else stripped + ".")
+            if len(claims) >= 8:
+                break
         return claims
+
+    def _existing_atom_summaries(self, manifest: ManifestRepository, topic: str, problem_cluster: str) -> list[dict]:
+        summaries: list[dict] = []
+        for entry in manifest.read_all():
+            if entry.get("page_type") != "atom":
+                continue
+            if entry.get("topic") != topic:
+                continue
+            if entry.get("problem_cluster") == problem_cluster:
+                continue
+            summary = entry.get("summary")
+            if not summary:
+                continue
+            summaries.append(
+                {
+                    "doc_id": str(entry.get("doc_id") or ""),
+                    "summary": str(summary),
+                    "problem_cluster": str(entry.get("problem_cluster") or ""),
+                }
+            )
+        return summaries[:10]
+
+    def _preview_budget_chars(self, total_items: int) -> int:
+        item_count = max(total_items, 1)
+        return max(1200, min(3000, _TOTAL_PREVIEW_BUDGET // item_count))
 
     def _relationship_hints(self, items: list[CompilePrepareItem]) -> list[dict]:
         hints: list[dict] = []

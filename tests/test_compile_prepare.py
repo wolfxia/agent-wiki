@@ -132,3 +132,93 @@ def test_compile_prepare_proposes_valid_normalized_doc_id_for_mixed_case_cluster
 
     assert result.proposed_doc_id == "atom-external-sync-ai-cluster-ai-0017"
     validate_doc_id(result.proposed_doc_id)
+
+
+def test_compile_prepare_uses_dynamic_token_budget_and_sentence_level_claims(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="mcp")
+    capture = CaptureRawService()
+    long_paragraph = " ".join([f"sentence-{index} with camera pipeline evidence." for index in range(500)])
+    for index in range(3):
+        capture.execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-budget-{index}",
+                topic="vision-os",
+                problem_cluster="token-budget",
+                summary=f"summary {index}",
+                content=(
+                    f"# Raw Budget {index}\n\n"
+                    f"Camera pipeline {index} improves retrieval fidelity.\n\n"
+                    f"Key metric {index}: latency dropped to {index + 10}ms.\n\n"
+                    f"{long_paragraph}"
+                ),
+                source_refs=[],
+            ),
+        )
+
+    result = CompilePrepareService().prepare(
+        wiki,
+        actor,
+        CompilePrepareInput(topic="vision-os", problem_cluster="token-budget", max_items=3),
+    )
+
+    assert result.items[0].claims
+    assert any("Camera pipeline 0 improves retrieval fidelity." in claim for claim in result.items[0].claims)
+    assert any("Key metric 0: latency dropped to 10ms." in claim for claim in result.items[0].claims)
+    assert len(result.items[0].content_preview) > 1200
+    assert len(result.items[0].content_preview) <= 3000
+
+
+def test_compile_prepare_includes_existing_atom_summaries_for_dedup_context(temp_wiki_root: Path) -> None:
+    from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="mcp")
+    capture = CaptureRawService()
+    capture.execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-context-1",
+            topic="agent-os",
+            problem_cluster="context-window",
+            content="# Raw context\n\nAgents need context windows.",
+            source_refs=[],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        data=CompileUpdateInput(
+            doc_id="atom-context-existing",
+            page_type="atom",
+            topic="agent-os",
+            problem_cluster="adjacent-cluster",
+            summary="Existing atom summary for context dedup.",
+            confidence="high",
+            aliases=["context"],
+            wikilinks=["[[raw-context-1]]"],
+            content="# Existing Atom\n\n## Claims\n- Existing context window guidance.\n\n## Evidence\n- Prior raw evidence.",
+            source_refs=["personal-1:raw-context-1"],
+        ),
+    )
+
+    result = CompilePrepareService().prepare(
+        wiki,
+        actor,
+        CompilePrepareInput(topic="agent-os", problem_cluster="context-window", max_items=1),
+    )
+
+    assert result.existing_atom_summaries == [
+        {
+            "doc_id": "atom-context-existing",
+            "summary": "Existing atom summary for context dedup.",
+            "problem_cluster": "adjacent-cluster",
+        }
+    ]

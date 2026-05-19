@@ -8,6 +8,7 @@ from agent_wiki.application.compile_apply import CompileApplyService, CompileStr
 from agent_wiki.application.compile_suggest import CompileSuggestService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
+from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 
 
@@ -171,8 +172,10 @@ def test_compile_execute_apply_generated_content_resolves_suggestion(temp_wiki_r
             page_type=packet.prepare.proposed_page_type,
             topic=packet.prepare.topic,
             problem_cluster=packet.prepare.problem_cluster,
-            content="# Atom service apply\n\nClaim: compiled by external agent.",
+            content="# Atom service apply\n\n## Claims\n- raw-service-execute-0\n- raw-service-execute-1\n- raw-service-execute-2\n\n## Evidence\n- compiled by external agent.",
             source_refs=packet.prepare.source_refs,
+            summary="Compiled by external agent.",
+            confidence="medium",
         ),
     )
 
@@ -181,6 +184,139 @@ def test_compile_execute_apply_generated_content_resolves_suggestion(temp_wiki_r
     assert stored["status"] == "resolved"
     assert stored["content_state"]["compiled_doc_id"] == packet.prepare.proposed_doc_id
     assert (temp_wiki_root / "pages" / f"{packet.prepare.proposed_doc_id}.md").exists()
+
+
+def test_compile_execute_quality_gate_rejects_missing_required_fields_before_write(temp_wiki_root: Path) -> None:
+    wiki, actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-quality-required")
+    packet = CompileExecuteService().prepare_next(
+        wiki=wiki,
+        actor=actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )[0]
+
+    try:
+        CompileExecuteService().apply_generated(
+            wiki=wiki,
+            actor=actor,
+            data=CompileGeneratedInput(
+                item_id=packet.item_id,
+                doc_id=packet.prepare.proposed_doc_id,
+                page_type=packet.prepare.proposed_page_type,
+                topic=packet.prepare.topic,
+                problem_cluster=packet.prepare.problem_cluster,
+                content="# Atom quality reject\n\n## Claims\n- Missing summary and confidence.",
+                source_refs=packet.prepare.source_refs,
+                summary=None,
+                confidence=None,
+            ),
+        )
+    except ValueError as exc:
+        assert "quality gate" in str(exc).lower()
+    else:
+        raise AssertionError("expected quality gate rejection")
+
+    stored = ReviewQueueRepository(temp_wiki_root).find(packet.item_id)
+    assert stored["status"] == "failed"
+    assert stored["content_state"]["error_type"] == "quality_rejected"
+    assert stored["content_state"]["failure_stage"] == "quality_gate"
+    assert stored["content_state"]["retry_stage"] == "quality_rewrite_retry"
+    assert not (temp_wiki_root / "pages" / f"{packet.prepare.proposed_doc_id}.md").exists()
+
+
+def test_compile_execute_quality_gate_records_warning_and_manifest_quality_metadata(temp_wiki_root: Path) -> None:
+    wiki, actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-quality-warning")
+    packet = CompileExecuteService().prepare_next(
+        wiki=wiki,
+        actor=actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )[0]
+
+    result = CompileExecuteService().apply_generated(
+        wiki=wiki,
+        actor=actor,
+        data=CompileGeneratedInput(
+            item_id=packet.item_id,
+            doc_id=packet.prepare.proposed_doc_id,
+            page_type=packet.prepare.proposed_page_type,
+            topic=packet.prepare.topic,
+            problem_cluster=packet.prepare.problem_cluster,
+            content="# Atom quality warning\n\n## Claims\n- service execute 0\n- service execute 1\n\n## Evidence\n- raw-service-execute-0\n- raw-service-execute-1\n- raw-service-execute-2",
+            source_refs=packet.prepare.source_refs,
+            summary="Compiled warning atom.",
+            confidence="medium",
+        ),
+    )
+
+    assert result.status == "committed"
+    stored = ReviewQueueRepository(temp_wiki_root).find(packet.item_id)
+    assert stored["status"] == "resolved"
+    assert stored["content_state"]["quality_status"] == "warning"
+    assert stored["content_state"]["error_type"] == "quality_warning_committed"
+    assert stored["content_state"]["retry_stage"] == "human_review"
+
+    manifest_entry = ManifestRepository(temp_wiki_root).find(packet.prepare.proposed_doc_id)
+    assert manifest_entry["quality_status"] == "warning"
+    assert manifest_entry["quality_score_summary"]["increment_warning"] is True
+    assert "quality_checked_at" in manifest_entry
+
+
+def test_compile_execute_quality_gate_rejects_low_evidence_coverage(temp_wiki_root: Path) -> None:
+    wiki, actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-quality-coverage")
+    packet = CompileExecuteService().prepare_next(
+        wiki=wiki,
+        actor=actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )[0]
+
+    try:
+        CompileExecuteService().apply_generated(
+            wiki=wiki,
+            actor=actor,
+            data=CompileGeneratedInput(
+                item_id=packet.item_id,
+                doc_id=packet.prepare.proposed_doc_id,
+                page_type=packet.prepare.proposed_page_type,
+                topic=packet.prepare.topic,
+                problem_cluster=packet.prepare.problem_cluster,
+                content="# Atom weak coverage\n\n## Claims\n- unrelated statement\n\n## Evidence\n- thin evidence",
+                source_refs=packet.prepare.source_refs,
+                summary="Weak coverage atom.",
+                confidence="low",
+            ),
+        )
+    except ValueError as exc:
+        assert "critical_fact_coverage" in str(exc)
+    else:
+        raise AssertionError("expected evidence coverage rejection")
+
+    stored = ReviewQueueRepository(temp_wiki_root).find(packet.item_id)
+    assert stored["content_state"]["error_type"] == "quality_rejected"
+    assert stored["content_state"]["quality_gate"]["critical_fact_coverage"] < 0.6
+
+
+def test_compile_execute_apply_next_marks_generation_failures_as_transport_retry(temp_wiki_root: Path) -> None:
+    wiki, actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-generation-timeout")
+
+    class TimeoutApplyService:
+        last_structured_output = None
+        last_usage = None
+        last_attempts = 1
+        last_error_type = "timeout"
+
+        def generate(self, wiki, prepare):
+            raise TimeoutError("request timed out")
+
+    results = CompileExecuteService(apply_service=TimeoutApplyService()).apply_next(
+        wiki=wiki,
+        actor=actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )
+
+    assert results[0].status == "failed"
+    stored = ReviewQueueRepository(temp_wiki_root).find(results[0].item_id)
+    assert stored["content_state"]["error_type"] == "timeout"
+    assert stored["content_state"]["failure_stage"] == "generation"
+    assert stored["content_state"]["retry_stage"] == "transport_retry"
 
 
 def test_compile_execute_apply_generated_marks_suggestion_failed_on_error(temp_wiki_root: Path) -> None:
@@ -201,8 +337,10 @@ def test_compile_execute_apply_generated_marks_suggestion_failed_on_error(temp_w
                 page_type=packet.prepare.proposed_page_type,
                 topic=packet.prepare.topic,
                 problem_cluster=packet.prepare.problem_cluster,
-                content="# Invalid",
+                content="# Invalid\n\n## Claims\n- raw-service-execute-0\n- raw-service-execute-1\n- raw-service-execute-2\n\n## Evidence\n- invalid doc id write should fail after gate.",
                 source_refs=packet.prepare.source_refs,
+                summary="Invalid summary.",
+                confidence="low",
             ),
         )
     except ValueError:
@@ -555,7 +693,12 @@ def test_compile_execute_apply_next_generates_applies_and_resolves(temp_wiki_roo
     class FakeApplyService:
         def generate(self, wiki, prepare):
             assert prepare.proposed_doc_id == "atom-imaging-os-cluster-apply-next-0001"
-            return "# Generated Apply Next\n\nClaim: single command compile."
+            self.last_structured_output = CompileStructuredOutput(
+                content="# Generated Apply Next\n\n## Claims\n- raw-service-execute-0\n- raw-service-execute-1\n- raw-service-execute-2\n\n## Evidence\n- single command compile.",
+                summary="Single command compile.",
+                confidence="medium",
+            )
+            return self.last_structured_output.content
 
     results = CompileExecuteService(apply_service=FakeApplyService()).apply_next(
         wiki=wiki,
@@ -576,7 +719,7 @@ def test_compile_execute_apply_next_generates_applies_and_resolves(temp_wiki_roo
     assert stored["content_state"]["compiled_doc_id"] == result.doc_id
     assert stored["content_state"]["latency_seconds"] >= 0
     assert stored["content_state"]["attempts"] == 1
-    assert stored["content_state"]["error_type"] is None
+    assert stored["content_state"]["error_type"] == "quality_warning_committed"
 
 
 def test_compile_execute_apply_next_persists_structured_metadata(temp_wiki_root: Path) -> None:
@@ -589,7 +732,7 @@ def test_compile_execute_apply_next_persists_structured_metadata(temp_wiki_root:
 
         def generate(self, wiki, prepare):
             self.last_structured_output = CompileStructuredOutput(
-                content="# Structured Apply\n\nClaim: structured metadata persists.",
+                content="# Structured Apply\n\n## Claims\n- raw-service-execute-0\n- raw-service-execute-1\n- raw-service-execute-2\n\n## Evidence\n- structured metadata persists.",
                 summary="Structured metadata summary.",
                 aliases=["metadata alias"],
                 confidence="high",
@@ -625,7 +768,12 @@ def test_compile_execute_apply_next_records_token_usage_when_available(temp_wiki
         last_attempts = 2
 
         def generate(self, wiki, prepare):
-            return "# Generated Token Usage\n\nClaim: token usage is observable."
+            self.last_structured_output = CompileStructuredOutput(
+                content="# Generated Token Usage\n\n## Claims\n- raw-service-execute-0\n- raw-service-execute-1\n- raw-service-execute-2\n\n## Evidence\n- token usage is observable.",
+                summary="Token usage is observable.",
+                confidence="medium",
+            )
+            return self.last_structured_output.content
 
     result = CompileExecuteService(apply_service=FakeApplyService()).apply_next(
         wiki=wiki,
@@ -648,7 +796,12 @@ def test_compile_execute_apply_next_reports_fallback_priority(temp_wiki_root: Pa
     class FakeApplyService:
         def generate(self, wiki, prepare):
             assert prepare.proposed_doc_id == "atom-misc-topic-cluster-apply-p1-0001"
-            return "# Generated Apply P1\n\nClaim: fallback compile."
+            self.last_structured_output = CompileStructuredOutput(
+                content="# Generated Apply P1\n\n## Claims\n- raw-service-execute-0\n- raw-service-execute-1\n- raw-service-execute-2\n\n## Evidence\n- fallback compile.",
+                summary="Fallback compile.",
+                confidence="medium",
+            )
+            return self.last_structured_output.content
 
     results = CompileExecuteService(apply_service=FakeApplyService()).apply_next(
         wiki=wiki,
@@ -714,7 +867,15 @@ def test_compile_execute_apply_next_generates_concurrently_but_applies_serially(
             time.sleep(0.05)
             end = time.monotonic()
             generate_windows.append((prepare.proposed_doc_id, start, end))
-            return f"# {prepare.proposed_doc_id}\n\nClaim: concurrent generation."
+            raw_ids = [item.doc_id for item in prepare.items]
+            self.last_structured_output = CompileStructuredOutput(
+                content=(
+                    f"# {prepare.proposed_doc_id}\n\n## Claims\n- {raw_ids[0]}\n- {raw_ids[1]}\n- {raw_ids[2]}\n\n## Evidence\n- concurrent generation."
+                ),
+                summary="Concurrent generation.",
+                confidence="medium",
+            )
+            return self.last_structured_output.content
 
     service = CompileExecuteService(apply_service=SlowApplyService())
     original_apply_generated = service.apply_generated

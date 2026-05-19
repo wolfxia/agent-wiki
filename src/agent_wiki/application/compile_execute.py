@@ -2,6 +2,8 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
+import re
+from datetime import UTC, datetime
 from pydantic import BaseModel
 
 from agent_wiki.application.compile_prepare import CompilePrepareInput, CompilePrepareResult, CompilePrepareService
@@ -195,10 +197,14 @@ class CompileExecuteService:
                 )
             except Exception as exc:
                 queue = ReviewQueueRepository(Path(wiki.workspace_path))
+                error_type = self._classify_error(exc)
                 queue.mark_failed(
                     packet.item_id,
                     str(exc),
-                    content_state=self._attempt_telemetry(start_time, error_type=self._classify_error(exc)),
+                    content_state={
+                        **self._attempt_telemetry(start_time, error_type=error_type),
+                        **self._failure_stage(error_type),
+                    },
                 )
                 failed = True
                 results.append(
@@ -233,6 +239,7 @@ class CompileExecuteService:
                     telemetry = getattr(exc, "compile_telemetry", None)
                     if not isinstance(telemetry, dict):
                         telemetry = {"latency_seconds": 0.0, "attempts": 1, "error_type": self._classify_error(exc)}
+                    telemetry = {**telemetry, **self._failure_stage(str(telemetry.get("error_type") or "unknown"))}
                     generated.append((packet, None, telemetry, exc))
 
         results: list[CompileExecuteResult] = []
@@ -332,6 +339,7 @@ class CompileExecuteService:
         queue = ReviewQueueRepository(Path(wiki.workspace_path))
         started_at = start_time or time.monotonic()
         try:
+            quality = self._quality_gate(data)
             with self._write_lock:
                 result = CompileUpdateService().apply(
                     wiki=wiki,
@@ -350,7 +358,13 @@ class CompileExecuteService:
                         review_status="pending_review",
                         content=data.content,
                         source_refs=data.source_refs,
+                        evidence_note=quality.get("evidence_note"),
                     ),
+                )
+                self._append_manifest_quality(
+                    wiki_root=Path(wiki.workspace_path),
+                    doc_id=data.doc_id,
+                    quality=quality,
                 )
         except Exception as exc:
             failure_telemetry = self._attempt_telemetry(
@@ -358,10 +372,20 @@ class CompileExecuteService:
                 error_type=self._classify_error(exc),
                 base=telemetry,
             )
-            queue.mark_failed(data.item_id, str(exc), content_state=self._persistable_telemetry(failure_telemetry))
+            error_type = str(failure_telemetry.get("error_type") or "unknown")
+            queue.mark_failed(
+                data.item_id,
+                str(exc),
+                content_state=self._persistable_telemetry({
+                    **failure_telemetry,
+                    **self._failure_stage(error_type),
+                    "quality_gate": self._extract_quality_gate(exc),
+                }),
+            )
             raise
 
         resolved_telemetry = self._attempt_telemetry(started_at, error_type=None, base=telemetry)
+        quality_status = quality.get("quality_status", "pass")
         with self._write_lock:
             queue.mark_resolved(
                 data.item_id,
@@ -369,6 +393,10 @@ class CompileExecuteService:
                     "compiled_doc_id": result.doc_id,
                     "compile_result_status": result.status,
                     **self._persistable_telemetry(resolved_telemetry),
+                    "quality_status": quality_status,
+                    "quality_gate": quality,
+                    "error_type": "quality_warning_committed" if quality_status == "warning" else None,
+                    "retry_stage": "human_review" if quality_status == "warning" else None,
                 },
             )
         return result
@@ -405,8 +433,102 @@ class CompileExecuteService:
         if "invalid doc_id" in message:
             return "doc_id_error"
         if isinstance(exc, ValueError):
+            message = str(exc).lower()
+            if "quality gate" in message or "critical_fact_coverage" in message:
+                return "quality_rejected"
             return "invalid_output"
         return "write_error"
+
+    def _quality_gate(self, data: CompileGeneratedInput) -> dict:
+        summary_ok = bool((data.summary or "").strip())
+        confidence_ok = bool((data.confidence or "").strip())
+        content_ok = bool((data.content or "").strip())
+        if not (summary_ok and confidence_ok and content_ok):
+            raise ValueError("quality gate failed: summary/confidence/content required")
+
+        lowered = data.content.lower()
+        has_claims = "claims" in lowered
+        has_evidence = "evidence" in lowered
+        if not (has_claims and has_evidence):
+            raise ValueError("quality gate failed: Claims + Evidence sections required")
+
+        source_ref_coverage = 1.0 if data.source_refs else 0.0
+        critical_fact_coverage = self._critical_fact_coverage(data)
+        if source_ref_coverage < 1.0 or critical_fact_coverage < 0.6:
+            raise ValueError(
+                f"quality gate failed: critical_fact_coverage={critical_fact_coverage:.3f}, source_ref_coverage={source_ref_coverage:.3f}"
+            )
+
+        increment_warning = self._increment_warning(data)
+        return {
+            "quality_status": "warning" if increment_warning else "pass",
+            "critical_fact_coverage": round(critical_fact_coverage, 3),
+            "source_ref_coverage": round(source_ref_coverage, 3),
+            "increment_warning": increment_warning,
+            "structure_ok": True,
+            "fields_ok": True,
+            "quality_checked_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "evidence_note": "increment_warning" if increment_warning else None,
+        }
+
+    def _critical_fact_coverage(self, data: CompileGeneratedInput) -> float:
+        content_tokens = set(re.findall(r"[a-z0-9_-]+", data.content.lower()))
+        if not data.source_refs:
+            return 0.0
+        covered = 0
+        for source_ref in data.source_refs:
+            _, _, doc_id = source_ref.partition(":")
+            tokens = set(re.findall(r"[a-z0-9_-]+", doc_id.lower()))
+            if tokens and tokens.issubset(content_tokens):
+                covered += 1
+        return covered / len(data.source_refs)
+
+    def _increment_warning(self, data: CompileGeneratedInput) -> bool:
+        content = data.content
+        words = re.findall(r"[a-z0-9_-]+", content.lower())
+        if not words:
+            return False
+        unique_ratio = len(set(words)) / len(words)
+        source_doc_ids = [source_ref.partition(":")[2].lower() for source_ref in data.source_refs]
+        repeated_refs = sum(1 for doc_id in source_doc_ids if doc_id and doc_id in content.lower())
+        return unique_ratio < 0.45 or repeated_refs >= max(2, len(source_doc_ids) - 1)
+
+    def _append_manifest_quality(self, wiki_root: Path, doc_id: str, quality: dict) -> None:
+        from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
+
+        ManifestRepository(wiki_root).upsert(
+            {
+                "doc_id": doc_id,
+                "quality_status": quality.get("quality_status", "pass"),
+                "quality_score_summary": {
+                    "critical_fact_coverage": quality.get("critical_fact_coverage", 0.0),
+                    "source_ref_coverage": quality.get("source_ref_coverage", 0.0),
+                    "increment_warning": quality.get("increment_warning", False),
+                },
+                "quality_checked_at": quality.get("quality_checked_at"),
+            }
+        )
+
+    def _failure_stage(self, error_type: str) -> dict:
+        normalized = (error_type or "unknown").lower()
+        if normalized in {"timeout", "5xx", "4xx_auth"}:
+            return {"failure_stage": "generation", "retry_stage": "transport_retry"}
+        if normalized == "invalid_output":
+            return {"failure_stage": "generation", "retry_stage": "output_repair_retry"}
+        if normalized == "quality_rejected":
+            return {"failure_stage": "quality_gate", "retry_stage": "quality_rewrite_retry"}
+        return {"failure_stage": "apply", "retry_stage": "human_review"}
+
+    def _extract_quality_gate(self, exc: Exception) -> dict | None:
+        message = str(exc)
+        if "critical_fact_coverage=" not in message:
+            return None
+        try:
+            parts = message.split("critical_fact_coverage=", maxsplit=1)[1]
+            coverage_text = parts.split(",", maxsplit=1)[0]
+            return {"critical_fact_coverage": float(coverage_text)}
+        except Exception:
+            return None
 
     def _apply_service_for_generate(self) -> object:
         if isinstance(self._apply_service, CompileApplyService):
