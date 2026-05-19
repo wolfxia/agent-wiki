@@ -254,6 +254,89 @@ def test_co_occurrence_enqueues_signal_candidates(temp_wiki_root: Path) -> None:
     assert signals[0]["relation_type"] == "co_occurrence"
 
 
+def test_co_occurrence_enqueue_skips_existing_signal_candidate_pair(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    (temp_wiki_root / "MANIFEST.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"wiki_id": "personal-1", "doc_id": "atom-existing-a", "page_type": "atom", "topic": "infra", "problem_cluster": "co"}),
+                json.dumps({"wiki_id": "personal-1", "doc_id": "atom-existing-b", "page_type": "atom", "topic": "infra", "problem_cluster": "co"}),
+            ]
+        ) + "\n",
+        encoding="utf-8",
+    )
+    (temp_wiki_root / "query_hits.jsonl").write_text(
+        "\n".join(
+            json.dumps({"query_id": query_id, "doc_id": doc_id})
+            for query_id in ["q1", "q2"]
+            for doc_id in ["atom-existing-a", "atom-existing-b"]
+        ) + "\n",
+        encoding="utf-8",
+    )
+    (temp_wiki_root / "query_outcomes.jsonl").write_text(
+        json.dumps({"query_id": "q1"}) + "\n" + json.dumps({"query_id": "q2"}) + "\n",
+        encoding="utf-8",
+    )
+    (temp_wiki_root / "review_queue.jsonl").write_text(
+        json.dumps(
+            {
+                "item_id": "legacy-signal-candidate",
+                "item_type": "signal_candidate",
+                "relation_type": "co_occurrence",
+                "doc_ids": ["atom-existing-b", "atom-existing-a"],
+                "status": "open",
+            }
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    candidates = RelationsService().detect_and_enqueue_co_occurrences(wiki, threshold=2)
+
+    entries = [json.loads(line) for line in (temp_wiki_root / "review_queue.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    signals = [e for e in entries if e.get("item_type") == "signal_candidate" and e.get("relation_type") == "co_occurrence"]
+    assert candidates == []
+    assert len(signals) == 1
+
+
+def test_co_occurrence_enqueue_limits_new_candidates_per_run(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    doc_ids = [f"atom-limited-{index}" for index in range(6)]
+    (temp_wiki_root / "MANIFEST.jsonl").write_text(
+        "\n".join(
+            json.dumps({"wiki_id": "personal-1", "doc_id": doc_id, "page_type": "atom", "topic": "infra", "problem_cluster": "limit"})
+            for doc_id in doc_ids
+        ) + "\n",
+        encoding="utf-8",
+    )
+    (temp_wiki_root / "query_hits.jsonl").write_text(
+        "\n".join(
+            json.dumps({"query_id": query_id, "doc_id": doc_id})
+            for query_id in ["q1", "q2"]
+            for doc_id in doc_ids
+        ) + "\n",
+        encoding="utf-8",
+    )
+    (temp_wiki_root / "query_outcomes.jsonl").write_text(
+        json.dumps({"query_id": "q1"}) + "\n" + json.dumps({"query_id": "q2"}) + "\n",
+        encoding="utf-8",
+    )
+
+    candidates = RelationsService().detect_and_enqueue_co_occurrences(
+        wiki,
+        threshold=2,
+        max_new_candidates=5,
+    )
+
+    entries = [json.loads(line) for line in (temp_wiki_root / "review_queue.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    signals = [e for e in entries if e.get("item_type") == "signal_candidate" and e.get("relation_type") == "co_occurrence"]
+    assert len(candidates) == 5
+    assert len(signals) == 5
+
+
 def test_cross_reference_enqueues_signal_candidates(temp_wiki_root: Path) -> None:
     wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
         update={"workspace_path": str(temp_wiki_root)}

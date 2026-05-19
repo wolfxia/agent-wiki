@@ -102,22 +102,38 @@ class RelationsService:
             )
         return buckets
 
-    def detect_and_enqueue_co_occurrences(self, wiki: WikiConfig, threshold: int = 2) -> list[dict]:
+    def detect_and_enqueue_co_occurrences(
+        self,
+        wiki: WikiConfig,
+        threshold: int = 2,
+        max_new_candidates: int = 20,
+    ) -> list[dict]:
         candidates = self.detect_co_occurrences(wiki, threshold)
         if not candidates:
             return candidates
         wiki_root = Path(wiki.workspace_path)
         queue = ReviewQueueRepository(wiki_root)
+        existing_pairs = self._existing_co_occurrence_pairs(queue.read_all())
+        new_entries: list[dict] = []
+        new_candidates: list[dict] = []
         for candidate in candidates:
-            queue.append({
-                "item_id": f"signal_candidate:co_occurrence:{candidate['doc_ids'][0]}:{candidate['doc_ids'][1]}",
+            pair = tuple(sorted(candidate["doc_ids"]))
+            if pair in existing_pairs:
+                continue
+            existing_pairs.add(pair)
+            new_candidates.append(candidate)
+            new_entries.append({
+                "item_id": self._co_occurrence_signal_item_id(pair),
                 "item_type": "signal_candidate",
                 "relation_type": "co_occurrence",
-                "doc_ids": candidate["doc_ids"],
+                "doc_ids": list(pair),
                 "co_occurrence_count": candidate["co_occurrence_count"],
                 "status": "open",
             })
-        return candidates
+            if len(new_entries) >= max_new_candidates:
+                break
+        queue.append_many(new_entries)
+        return new_candidates
 
     def detect_and_enqueue_cross_references(self, wiki: WikiConfig) -> list[dict]:
         candidates = self.detect_cross_references(wiki)
@@ -135,3 +151,26 @@ class RelationsService:
                 "status": "open",
             })
         return candidates
+
+    def _co_occurrence_signal_item_id(self, doc_ids: tuple[str, str]) -> str:
+        return f"signal_candidate:co_occurrence:{doc_ids[0]}:{doc_ids[1]}"
+
+    def _existing_co_occurrence_pairs(self, items: list[dict]) -> set[tuple[str, str]]:
+        pairs: set[tuple[str, str]] = set()
+        for item in items:
+            if item.get("item_type") != "signal_candidate":
+                continue
+            if item.get("relation_type") != "co_occurrence":
+                continue
+            doc_ids = item.get("doc_ids")
+            if isinstance(doc_ids, list) and len(doc_ids) == 2:
+                pair = tuple(sorted(str(doc_id) for doc_id in doc_ids))
+                pairs.add(pair)
+                continue
+            item_id = str(item.get("item_id") or "")
+            prefix = "signal_candidate:co_occurrence:"
+            if not item_id.startswith(prefix):
+                continue
+            _, _, a, b = item_id.split(":", 3)
+            pairs.add(tuple(sorted((a, b))))
+        return pairs

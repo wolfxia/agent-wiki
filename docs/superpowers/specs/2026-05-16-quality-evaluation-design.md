@@ -88,6 +88,7 @@ Three loops run at three different cadences. Each loop has a distinct trigger so
   4. `RelationsService.detect_and_enqueue_cross_references` — shared `source_refs` pairs.
 - Output: review queue items (`compile_suggestion`, `quality_signal`, `signal_candidate`) and a `MaintenanceService` summary dictionary.
 - No new detectors are added in this iteration. The slow loop wires already-existing code so it actually runs.
+- Co-occurrence signal enqueueing is idempotent by `(doc_id_a, doc_id_b)` and rate-limited per maintenance run. Repeated `aw maintain` runs should not keep appending the same `signal_candidate` pairs to `review_queue.jsonl`.
 
 ### 2.3 Reporting loop — weekly review + quality report (latency: weekly or on demand)
 
