@@ -366,7 +366,7 @@ def test_rest_feedback_endpoint_records_feedback_and_queue(temp_wiki_root: Path)
     assert response.status_code == 200
     payload = response.json()
     assert payload["created_review_item"] is True
-    assert (temp_wiki_root / "query_outcomes.jsonl").exists()
+    assert (temp_wiki_root / "feedback_outcomes.jsonl").exists()
     assert (temp_wiki_root / "review_queue.jsonl").exists()
 
 

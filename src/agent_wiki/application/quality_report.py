@@ -57,6 +57,8 @@ class QualityReportService:
             if not line.strip():
                 continue
             entry = json.loads(line)
+            if entry.get("record_type") == "feedback" or "query" not in entry or "hit_count" not in entry:
+                continue
             total += 1
             if entry.get("hit_count", 0) > 0:
                 hits += 1

@@ -26,8 +26,9 @@ class FeedbackService:
         wiki_root = Path(wiki.workspace_path)
         outcomes_path = wiki_root / "query_outcomes.jsonl"
         self._update_query_labels(outcomes_path, data)
-        with outcomes_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(data.model_dump(), ensure_ascii=False) + "\n")
+        feedback_path = wiki_root / "feedback_outcomes.jsonl"
+        with feedback_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"record_type": "feedback", **data.model_dump()}, ensure_ascii=False) + "\n")
 
         created_review_item = bool((not data.approved) or data.missing_evidence or data.rewrite_targets)
         if created_review_item:

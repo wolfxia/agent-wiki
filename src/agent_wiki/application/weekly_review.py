@@ -18,6 +18,7 @@ class WeeklyReviewService:
         wiki_root = Path(wiki.workspace_path)
         queue_path = wiki_root / "review_queue.jsonl"
         outcomes_path = wiki_root / "query_outcomes.jsonl"
+        feedback_path = wiki_root / "feedback_outcomes.jsonl"
 
         queue_items: list[dict] = []
         if queue_path.exists():
@@ -27,7 +28,9 @@ class WeeklyReviewService:
         outcomes: list[dict] = []
         if outcomes_path.exists():
             outcomes = [json.loads(line) for line in outcomes_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-        feedback_events = [entry for entry in outcomes if "approved" in entry or "missing_evidence" in entry or "rewrite_targets" in entry]
+        feedback_events: list[dict] = []
+        if feedback_path.exists():
+            feedback_events = [json.loads(line) for line in feedback_path.read_text(encoding="utf-8").splitlines() if line.strip()]
         query_events = [entry for entry in outcomes if "query" in entry and "hit_count" in entry]
         miss_signals = sum(1 for entry in query_events if entry.get("hit_count", 0) == 0)
 

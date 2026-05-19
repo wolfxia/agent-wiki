@@ -207,6 +207,8 @@ class DiagnosisService:
     def _accepted_doc_counts(self, wiki_root: Path) -> dict[str, int]:
         counts: defaultdict[str, int] = defaultdict(int)
         for entry in self._read_jsonl(wiki_root / "query_outcomes.jsonl"):
+            if entry.get("record_type") == "feedback" or "query" not in entry or "hit_count" not in entry:
+                continue
             for doc_id in entry.get("accepted_doc_ids") or []:
                 counts[str(doc_id)] += 1
         return dict(counts)

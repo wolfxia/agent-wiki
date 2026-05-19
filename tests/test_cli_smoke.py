@@ -566,7 +566,7 @@ def test_cli_feedback_command_records_feedback(temp_wiki_root) -> None:
 
     assert result.exit_code == 0
     assert "created_review_item=True" in result.stdout
-    assert (temp_wiki_root / "query_outcomes.jsonl").exists()
+    assert (temp_wiki_root / "feedback_outcomes.jsonl").exists()
     assert (temp_wiki_root / "review_queue.jsonl").exists()
 
 

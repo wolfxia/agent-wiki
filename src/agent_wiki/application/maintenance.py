@@ -277,6 +277,8 @@ class MaintenanceService:
         atom_doc_ids = {str(entry.get("doc_id")) for entry in manifest.read_all() if entry.get("page_type") == "atom" and entry.get("doc_id")}
         referenced_atoms: set[str] = set()
         for entry in self._read_jsonl(wiki_root / "query_outcomes.jsonl"):
+            if entry.get("record_type") == "feedback" or "query" not in entry or "hit_count" not in entry:
+                continue
             for doc_id in entry.get("accepted_doc_ids") or []:
                 doc_id = str(doc_id)
                 if doc_id in atom_doc_ids:
@@ -330,6 +332,8 @@ class MaintenanceService:
     def _accepted_doc_counts(self, wiki_root: Path) -> dict[str, int]:
         counts: Counter[str] = Counter()
         for entry in self._read_jsonl(wiki_root / "query_outcomes.jsonl"):
+            if entry.get("record_type") == "feedback" or "query" not in entry or "hit_count" not in entry:
+                continue
             for doc_id in entry.get("accepted_doc_ids") or []:
                 counts[str(doc_id)] += 1
         return dict(counts)
