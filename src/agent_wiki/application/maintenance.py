@@ -1,9 +1,12 @@
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 from agent_wiki.application.compile_suggest import CompileSuggestService
+from agent_wiki.application.eval_retrieval import EvalRetrievalService
 from agent_wiki.application.fast_feedback import FastFeedbackService
 from agent_wiki.application.relations import RelationsService
 from agent_wiki.bootstrap.registry_loader import WikiConfig
+from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.infrastructure.repair.raw_metadata_repair import RawMetadataRepairService
 from agent_wiki.infrastructure.retrieval.knowledge_graph import KnowledgeGraphRepository
 from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRepository
@@ -12,6 +15,8 @@ from agent_wiki.infrastructure.retrieval.topic_index import TopicIndexRepository
 from agent_wiki.infrastructure.runtime.operation_log import OperationLogRepository
 from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
+
+_MAINTAIN_EVAL_TIMEOUT_SECONDS = 30
 
 
 class MaintenanceService:
@@ -55,7 +60,7 @@ class MaintenanceService:
                 f"Review cross-reference candidate: {relation['doc_ids'][0]} <-> {relation['doc_ids'][1]}"
             )
 
-        return {
+        summary = {
             "metadata_repair_candidates": total_repair_candidates,
             "orphan_cleanup_count": orphan_cleanup_count,
             "queue_timeouts_recovered": queue_timeouts_recovered,
@@ -67,6 +72,8 @@ class MaintenanceService:
             "cross_reference_candidates": len(cross_references),
             "action_items": action_items,
         }
+        self._run_eval_if_available(wiki, summary)
+        return summary
 
     def _clean_orphan_authority_entries(self, wiki: WikiConfig) -> int:
         wiki_root = Path(wiki.workspace_path)
@@ -104,3 +111,23 @@ class MaintenanceService:
             fts_index.rebuild_from_manifest(remaining_entries)
 
         return len([doc_id for doc_id in orphan_doc_ids if doc_id])
+
+    def _run_eval_if_available(self, wiki: WikiConfig, summary: dict) -> None:
+        wiki_root = Path(wiki.workspace_path)
+        eval_file = wiki_root / "eval" / "retrieval_queries.jsonl"
+        if not eval_file.exists():
+            return
+        actor = ResolvedActor(actor_type="agent", actor_id="system-maintenance", transport="maintenance")
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                EvalRetrievalService().run,
+                wiki=wiki,
+                actor=actor,
+                eval_file=eval_file,
+                k=5,
+                page_types=None,
+            )
+            try:
+                summary["eval_baseline"] = future.result(timeout=_MAINTAIN_EVAL_TIMEOUT_SECONDS)
+            except FuturesTimeoutError:
+                summary["eval_timeout"] = True

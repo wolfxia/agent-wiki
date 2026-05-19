@@ -25,9 +25,12 @@ def test_quality_report_returns_zeros_for_empty_wiki(temp_wiki_root: Path) -> No
     assert report["compile_failure_rate"] == 0.0
     assert report["compile_failure_breakdown"] == {}
     assert report["avg_compile_latency_seconds"] == 0.0
-    assert report["metadata_completeness"] == 0.0
+    assert report["atom_field_completeness"] == 0.0
+    assert report["section_structure_compliance"] == 0.0
+    assert report["source_ref_coverage"] == 0.0
     assert report["cluster_coverage"] == 0.0
     assert report["mature_cluster_coverage"] == 0.0
+    assert report["eval_baseline"] is None
     assert report["relation_stats"] == {
         "total": 0,
         "extracted": 0,
@@ -248,9 +251,101 @@ def test_quality_report_computes_compile_observability_metrics(temp_wiki_root: P
     assert abs(report["compile_failure_rate"] - (2 / 3)) < 0.01
     assert report["compile_failure_breakdown"] == {"timeout": 1, "doc_id_error": 1}
     assert report["avg_compile_latency_seconds"] == 15.0
-    assert report["metadata_completeness"] == 0.5
+    assert report["atom_field_completeness"] == 0.5
     assert report["cluster_coverage"] == 1.0
     assert report["mature_cluster_coverage"] == 1.0
+
+
+def test_quality_report_includes_section_structure_source_ref_and_eval_baseline(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    capture_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-structure-1",
+            topic="observability",
+            problem_cluster="quality-structure",
+            content="# Raw structure",
+            source_refs=[],
+        ),
+    )
+    capture_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-structure-2",
+            topic="observability",
+            problem_cluster="quality-structure",
+            content="# Raw structure two",
+            source_refs=[],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-structured-1",
+            page_type="atom",
+            topic="observability",
+            problem_cluster="quality-structure",
+            summary="Structured",
+            aliases=["structured"],
+            confidence="high",
+            wikilinks=["[[raw-structure-1]]"],
+            content="# Atom structured\n\n## Claims\n- Claim.\n\n## Evidence\n- Evidence.",
+            source_refs=["personal-1:raw-structure-1"],
+        ),
+    )
+    compile_service.apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-unstructured-1",
+            page_type="atom",
+            topic="observability",
+            problem_cluster="quality-structure",
+            content="# Atom unstructured\n\nNo explicit sections.",
+            source_refs=[],
+            allow_shared_write_without_sources=True,
+        ),
+    )
+    runtime_dir = temp_wiki_root / ".agent-wiki"
+    runtime_dir.mkdir(exist_ok=True)
+    (runtime_dir / "eval_history.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-05-19T00:00:00Z",
+                "eval_file": "eval/retrieval_queries.jsonl",
+                "k": 5,
+                "runtime_tuning": "defaults",
+                "metrics": {
+                    "strict_recall_at_k": 0.8,
+                    "loose_recall_at_k": 0.9,
+                    "must_not_violation_at_k": 0.1,
+                    "mrr": 0.75,
+                    "compiled_hit_ratio": 0.6,
+                },
+                "queries": [],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = QualityReportService().generate(wiki)
+
+    assert report["atom_field_completeness"] == 0.5
+    assert report["section_structure_compliance"] == 0.5
+    assert report["source_ref_coverage"] == 0.5
+    assert report["eval_baseline"]["metrics"]["strict_recall_at_k"] == 0.8
+    assert report["eval_baseline"]["metrics"]["loose_recall_at_k"] == 0.9
 
 
 def test_quality_report_includes_relation_confidence_stats(temp_wiki_root: Path) -> None:

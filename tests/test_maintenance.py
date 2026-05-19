@@ -133,6 +133,93 @@ def test_maintenance_idempotent_with_no_signals(temp_wiki_root: Path) -> None:
     assert summary["cross_reference_candidates"] == 0
 
 
+def test_maintenance_runs_eval_and_writes_eval_history_when_eval_file_exists(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-maint-eval-1",
+            topic="agent-os",
+            problem_cluster="maint-eval",
+            content="# Raw maintain eval",
+            source_refs=[],
+        ),
+    )
+    eval_dir = temp_wiki_root / "eval"
+    eval_dir.mkdir(exist_ok=True)
+    (eval_dir / "retrieval_queries.jsonl").write_text(
+        json.dumps(
+            {
+                "query": "maintain eval",
+                "query_type": "fact",
+                "expected_doc_ids": ["raw-maint-eval-1"],
+                "acceptable_doc_ids": [],
+                "must_not_doc_ids": [],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = MaintenanceService().run(wiki)
+
+    assert "eval_baseline" in summary
+    assert summary["eval_baseline"]["metrics"]["strict_recall_at_k"] == 1.0
+    history_path = temp_wiki_root / ".agent-wiki" / "eval_history.jsonl"
+    assert history_path.exists()
+    history = [json.loads(line) for line in history_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(history) == 1
+
+
+def test_maintenance_eval_timeout_returns_summary_without_eval_baseline(monkeypatch, temp_wiki_root: Path) -> None:
+    import json
+    import time
+
+    import agent_wiki.application.maintenance as maintenance_module
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    eval_dir = temp_wiki_root / "eval"
+    eval_dir.mkdir(exist_ok=True)
+    (eval_dir / "retrieval_queries.jsonl").write_text(
+        json.dumps(
+            {
+                "query": "slow maintain eval",
+                "query_type": "fact",
+                "expected_doc_ids": [],
+                "acceptable_doc_ids": [],
+                "must_not_doc_ids": [],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class SlowEvalService:
+        def run(self, **kwargs):
+            time.sleep(0.2)
+            return {"metrics": {"strict_recall_at_k": 1.0}}
+
+    monkeypatch.setattr(maintenance_module, "EvalRetrievalService", lambda: SlowEvalService())
+    monkeypatch.setattr(maintenance_module, "_MAINTAIN_EVAL_TIMEOUT_SECONDS", 0.01)
+
+    summary = MaintenanceService().run(wiki)
+
+    assert "eval_baseline" not in summary
+    assert summary["eval_timeout"] is True
+    history_path = temp_wiki_root / ".agent-wiki" / "eval_history.jsonl"
+    assert not history_path.exists()
+
+
 
 def test_maintenance_does_not_duplicate_queue_items_on_repeat_run(temp_wiki_root: Path) -> None:
     import json

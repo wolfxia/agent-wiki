@@ -187,7 +187,18 @@ def test_cli_eval_retrieval_outputs_json_report(monkeypatch, tmp_path) -> None:
             captured["eval_file"] = str(eval_file)
             captured["k"] = k
             captured["page_types"] = page_types
-            return {"query_count": 0, "k": k, "metrics": {"mrr": 0.0}}
+            return {
+                "query_count": 0,
+                "k": k,
+                "metrics": {
+                    "strict_recall_at_k": 0.0,
+                    "loose_recall_at_k": 0.0,
+                    "must_not_violation_at_k": 0.0,
+                    "mrr": 0.0,
+                    "compiled_hit_ratio": 0.0,
+                },
+                "queries": [],
+            }
 
     monkeypatch.setattr(cli_app, "EvalRetrievalService", lambda: FakeEvalRetrievalService())
 
@@ -209,6 +220,9 @@ def test_cli_eval_retrieval_outputs_json_report(monkeypatch, tmp_path) -> None:
 
     assert result.exit_code == 0
     assert json.loads(result.stdout)["query_count"] == 0
+    assert json.loads(result.stdout)["metrics"]["strict_recall_at_k"] == 0.0
+    assert json.loads(result.stdout)["metrics"]["loose_recall_at_k"] == 0.0
+    assert json.loads(result.stdout)["metrics"]["must_not_violation_at_k"] == 0.0
     assert captured == {
         "workspace_path": "/tmp",
         "actor_id": "claude-code",
@@ -216,6 +230,47 @@ def test_cli_eval_retrieval_outputs_json_report(monkeypatch, tmp_path) -> None:
         "k": 7,
         "page_types": None,
     }
+
+
+def test_cli_eval_alias_outputs_json_report(monkeypatch, tmp_path) -> None:
+    import agent_wiki.transports.cli.app as cli_app
+
+    eval_file = tmp_path / "retrieval_queries.jsonl"
+    eval_file.write_text("", encoding="utf-8")
+
+    class FakeEvalRetrievalService:
+        def run(self, wiki, actor, eval_file, k, page_types=None):
+            return {
+                "query_count": 0,
+                "k": k,
+                "metrics": {
+                    "strict_recall_at_k": 1.0,
+                    "loose_recall_at_k": 1.0,
+                    "must_not_violation_at_k": 0.0,
+                    "mrr": 1.0,
+                    "compiled_hit_ratio": 1.0,
+                },
+                "queries": [],
+            }
+
+    monkeypatch.setattr(cli_app, "EvalRetrievalService", lambda: FakeEvalRetrievalService())
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "eval",
+            "--eval-file",
+            str(eval_file),
+            "--workspace",
+            "/tmp",
+            "--registry",
+            "tests/fixtures/registry.yaml",
+        ],
+        env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"},
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["metrics"]["strict_recall_at_k"] == 1.0
 
 
 def test_cli_review_relations_reclassifies_review_item(temp_wiki_root) -> None:

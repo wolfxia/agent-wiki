@@ -21,9 +21,12 @@ class QualityReportService:
         compile_rate = (compiled_count / raw_count) if raw_count else 0.0
         orphan_count = self._orphan_count(entries)
         compile_failure_rate, compile_failure_breakdown, avg_compile_latency_seconds = self._compile_attempt_metrics(wiki_root)
-        metadata_completeness = self._metadata_completeness(entries)
+        atom_field_completeness = self._metadata_completeness(entries)
+        section_structure_compliance = self._section_structure_compliance(wiki_root, entries)
+        source_ref_coverage = self._source_ref_coverage(entries)
         cluster_coverage, mature_cluster_coverage = self._cluster_coverage(entries)
         relation_stats = self._relation_stats(wiki_root)
+        eval_baseline = self._latest_eval_baseline(wiki_root)
 
         return {
             "query_count": query_count,
@@ -35,10 +38,13 @@ class QualityReportService:
             "compile_failure_rate": compile_failure_rate,
             "compile_failure_breakdown": compile_failure_breakdown,
             "avg_compile_latency_seconds": avg_compile_latency_seconds,
-            "metadata_completeness": metadata_completeness,
+            "atom_field_completeness": atom_field_completeness,
+            "section_structure_compliance": section_structure_compliance,
+            "source_ref_coverage": source_ref_coverage,
             "cluster_coverage": cluster_coverage,
             "mature_cluster_coverage": mature_cluster_coverage,
             "relation_stats": relation_stats,
+            "eval_baseline": eval_baseline,
         }
 
     def _query_metrics(self, wiki_root: Path) -> tuple[int, float]:
@@ -127,6 +133,30 @@ class QualityReportService:
                 complete += 1
         return complete / len(compiled_entries)
 
+    def _section_structure_compliance(self, wiki_root: Path, entries: list[dict]) -> float:
+        atom_entries = [entry for entry in entries if entry.get("page_type") == PageType.ATOM.value]
+        if not atom_entries:
+            return 0.0
+        compliant = 0
+        for entry in atom_entries:
+            canonical_uri = entry.get("canonical_uri")
+            if not canonical_uri:
+                continue
+            page_path = wiki_root / str(canonical_uri)
+            if not page_path.exists():
+                continue
+            content = page_path.read_text(encoding="utf-8")
+            if "claims" in content.lower() and "evidence" in content.lower():
+                compliant += 1
+        return compliant / len(atom_entries)
+
+    def _source_ref_coverage(self, entries: list[dict]) -> float:
+        compiled_entries = [entry for entry in entries if entry.get("page_type") in _COMPILED_PAGE_TYPES]
+        if not compiled_entries:
+            return 0.0
+        covered = sum(1 for entry in compiled_entries if entry.get("source_refs"))
+        return covered / len(compiled_entries)
+
     def _cluster_coverage(self, entries: list[dict]) -> tuple[float, float]:
         raw_clusters: Counter[tuple[str, str]] = Counter()
         compiled_clusters: set[tuple[str, str]] = set()
@@ -180,3 +210,12 @@ class QualityReportService:
                 if item.get("item_type") == "relation_review" and item.get("status", "open") == "open":
                     stats["pending_review"] += 1
         return stats
+
+    def _latest_eval_baseline(self, wiki_root: Path) -> dict | None:
+        history_path = wiki_root / ".agent-wiki" / "eval_history.jsonl"
+        if not history_path.exists():
+            return None
+        lines = [line for line in history_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if not lines:
+            return None
+        return json.loads(lines[-1])

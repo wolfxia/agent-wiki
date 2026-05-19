@@ -201,6 +201,29 @@ def eval_retrieval(
     _run_cli(_command)
 
 
+@app.command("eval")
+def eval_alias(
+    eval_file: Path = typer.Option(Path("eval/retrieval_queries.jsonl"), "--eval-file"),
+    k: int = typer.Option(5, "--k"),
+    page_types: list[str] = typer.Option(None, "--page-type"),
+    workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
+) -> None:
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
+        report = EvalRetrievalService().run(
+            wiki=wiki,
+            actor=_actor(),
+            eval_file=eval_file,
+            k=k,
+            page_types=page_types or None,
+        )
+        typer.echo(json.dumps(report, ensure_ascii=False, separators=(",", ":")))
+
+    _run_cli(_command)
+
+
 @app.command("capture-raw")
 def capture_raw(
     doc_id: str = typer.Argument(...),

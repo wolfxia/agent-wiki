@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 import time
 from pathlib import Path
 from statistics import mean
@@ -33,8 +34,9 @@ class EvalRetrievalService:
         k: int = 5,
         page_types: list[str] | None = None,
     ) -> dict[str, Any]:
+        wiki_root = Path(wiki.workspace_path)
         queries = self._read_queries(eval_file)
-        manifest = ManifestRepository(Path(wiki.workspace_path))
+        manifest = ManifestRepository(wiki_root)
         manifest_by_doc_id = {
             str(entry.get("doc_id")): entry
             for entry in manifest.read_all()
@@ -42,7 +44,9 @@ class EvalRetrievalService:
         }
         rows: list[dict[str, Any]] = []
         latencies: list[float] = []
-        recall_values: list[float] = []
+        strict_recall_values: list[float] = []
+        loose_recall_values: list[float] = []
+        must_not_violation_values: list[float] = []
         precision_values: list[float] = []
         reciprocal_ranks: list[float] = []
         compiled_hits = 0
@@ -64,8 +68,11 @@ class EvalRetrievalService:
             expected = set(item.expected_doc_ids)
             relevant_hits = [doc_id for doc_id in hit_doc_ids if doc_id in relevant]
             expected_hits = [doc_id for doc_id in hit_doc_ids if doc_id in expected]
+            must_not_hits = [doc_id for doc_id in hit_doc_ids if doc_id in set(item.must_not_doc_ids)]
 
-            recall_values.append(len(expected_hits) / len(expected) if expected else 0.0)
+            strict_recall_values.append(len(expected_hits) / len(expected) if expected else 0.0)
+            loose_recall_values.append(1.0 if relevant_hits else 0.0)
+            must_not_violation_values.append(1.0 if must_not_hits else 0.0)
             precision_values.append(len(relevant_hits) / k if k > 0 else 0.0)
             reciprocal_ranks.append(self._reciprocal_rank(hit_doc_ids, expected))
 
@@ -82,7 +89,9 @@ class EvalRetrievalService:
                     "expected_doc_ids": item.expected_doc_ids,
                     "acceptable_doc_ids": item.acceptable_doc_ids,
                     "must_not_doc_ids": item.must_not_doc_ids,
-                    "recall_at_k": recall_values[-1],
+                    "strict_recall_at_k": strict_recall_values[-1],
+                    "loose_recall_at_k": loose_recall_values[-1],
+                    "must_not_violation_at_k": must_not_violation_values[-1],
                     "precision_at_k": precision_values[-1],
                     "reciprocal_rank": reciprocal_ranks[-1],
                     "latency_ms": latency_ms,
@@ -94,17 +103,19 @@ class EvalRetrievalService:
                         }
                         for hit in hits
                     ],
-                    "must_not_hits": [doc_id for doc_id in hit_doc_ids if doc_id in set(item.must_not_doc_ids)],
+                    "must_not_hits": must_not_hits,
                     "notes": item.notes,
                 }
             )
 
-        return {
+        report = {
             "query_count": len(queries),
             "k": k,
             "page_types": page_types or [],
             "metrics": {
-                "recall_at_k": self._avg(recall_values),
+                "strict_recall_at_k": self._avg(strict_recall_values),
+                "loose_recall_at_k": self._avg(loose_recall_values),
+                "must_not_violation_at_k": self._avg(must_not_violation_values),
                 "precision_at_k": self._avg(precision_values),
                 "mrr": self._avg(reciprocal_ranks),
                 "compiled_hit_ratio": compiled_hits / total_hits if total_hits else 0.0,
@@ -112,6 +123,8 @@ class EvalRetrievalService:
             "latency_ms": self._latency_summary(latencies),
             "queries": rows,
         }
+        self._append_history(wiki_root=wiki_root, eval_file=eval_file, report=report)
+        return report
 
     def _read_queries(self, eval_file: Path) -> list[RetrievalEvalQuery]:
         if not eval_file.exists():
@@ -153,3 +166,33 @@ class EvalRetrievalService:
             return 0.0
         index = min(len(ordered) - 1, max(0, int(round((len(ordered) - 1) * percentile))))
         return round(ordered[index], 3)
+
+    def _append_history(self, wiki_root: Path, eval_file: Path, report: dict[str, Any]) -> None:
+        runtime_root = wiki_root / ".agent-wiki"
+        runtime_root.mkdir(exist_ok=True)
+        history_path = runtime_root / "eval_history.jsonl"
+        entry = {
+            "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "eval_file": str(eval_file),
+            "k": report.get("k", 5),
+            "runtime_tuning": self._runtime_tuning_snapshot(runtime_root),
+            "metrics": {
+                "strict_recall_at_k": report["metrics"].get("strict_recall_at_k", 0.0),
+                "loose_recall_at_k": report["metrics"].get("loose_recall_at_k", 0.0),
+                "must_not_violation_at_k": report["metrics"].get("must_not_violation_at_k", 0.0),
+                "mrr": report["metrics"].get("mrr", 0.0),
+                "compiled_hit_ratio": report["metrics"].get("compiled_hit_ratio", 0.0),
+            },
+            "queries": report.get("queries", []),
+        }
+        with history_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    def _runtime_tuning_snapshot(self, runtime_root: Path) -> dict[str, Any] | str:
+        tuning_path = runtime_root / "runtime_tuning.json"
+        if not tuning_path.exists():
+            return "defaults"
+        try:
+            return json.loads(tuning_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return "defaults"
