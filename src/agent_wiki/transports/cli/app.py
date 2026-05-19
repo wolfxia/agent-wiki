@@ -420,6 +420,22 @@ def lint(
     _run_cli(_command)
 
 
+@app.command("rebuild-index")
+def rebuild_index(
+    workspace: str | None = typer.Option(None, "--workspace"),
+    registry: str | None = typer.Option(None, "--registry"),
+    wiki_id: str | None = typer.Option(None, "--wiki-id"),
+) -> None:
+    """Rebuild retrieval indexes from current manifest entries."""
+    def _command() -> None:
+        wiki = _load_wiki(registry, workspace, wiki_id)
+        result = MaintenanceService().rebuild_index(wiki)
+        typer.echo(f"removed_count={result['removed_count']}")
+        typer.echo(f"rebuilt_count={result['rebuilt_count']}")
+
+    _run_cli(_command)
+
+
 @sync_app.command("status")
 def sync_status(
     workspace: str | None = typer.Option(None, "--workspace"),

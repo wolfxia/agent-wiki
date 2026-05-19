@@ -174,6 +174,72 @@ def test_cli_query_command(temp_wiki_root) -> None:
     assert "atom-cli-1" in result.stdout
 
 
+def test_cli_rebuild_index_removes_stale_entries_and_rebuilds_fts(temp_wiki_root) -> None:
+    from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+    from agent_wiki.bootstrap.registry_loader import RegistryLoader
+    from agent_wiki.domain.contracts import ResolvedActor
+    from agent_wiki.infrastructure.retrieval.sqlite_fts import SQLiteFTSIndexProvider
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-rebuild-keep",
+            topic="indexing",
+            problem_cluster="rebuild",
+            summary="Keep indexed page.",
+            content="# Keep\n\nCurrent manifest-backed content.",
+            source_refs=[],
+        ),
+    )
+    with (temp_wiki_root / "retrieval_index.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "wiki_id": "personal-1",
+                    "doc_id": "raw-rebuild-stale",
+                    "page_type": "raw",
+                    "topic": "indexing",
+                    "problem_cluster": "rebuild",
+                    "content": "stale orphan content",
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+    fts = SQLiteFTSIndexProvider(temp_wiki_root, wiki_id="personal-1")
+    fts.upsert("raw-rebuild-stale", {"wiki_id": "personal-1", "doc_id": "raw-rebuild-stale", "content": "stale orphan content"})
+
+    result = CliRunner().invoke(
+        app,
+        ["rebuild-index", "--workspace", str(temp_wiki_root), "--registry", "tests/fixtures/registry.yaml"],
+        env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"},
+    )
+
+    assert result.exit_code == 0
+    assert "removed_count=1" in result.stdout
+    assert "rebuilt_count=1" in result.stdout
+    retrieval_index = (temp_wiki_root / "retrieval_index.jsonl").read_text(encoding="utf-8")
+    assert "raw-rebuild-keep" in retrieval_index
+    assert "raw-rebuild-stale" not in retrieval_index
+    assert fts.search("stale orphan", top_k=5) == []
+    assert [hit.doc_id for hit in fts.search("Current manifest-backed", top_k=5)] == ["raw-rebuild-keep"]
+
+    second = CliRunner().invoke(
+        app,
+        ["rebuild-index", "--workspace", str(temp_wiki_root), "--registry", "tests/fixtures/registry.yaml"],
+        env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"},
+    )
+
+    assert second.exit_code == 0
+    assert "removed_count=0" in second.stdout
+    assert "rebuilt_count=1" in second.stdout
+
+
 def test_cli_eval_retrieval_outputs_json_report(monkeypatch, tmp_path) -> None:
     import agent_wiki.transports.cli.app as cli_app
 

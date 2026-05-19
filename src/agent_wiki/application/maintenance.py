@@ -26,6 +26,30 @@ _MAINTAIN_EVAL_TIMEOUT_SECONDS = 30
 
 
 class MaintenanceService:
+    def rebuild_index(self, wiki: WikiConfig) -> dict[str, int]:
+        wiki_root = Path(wiki.workspace_path)
+        manifest_entries = ManifestRepository(wiki_root).read_all()
+        manifest_doc_ids = {
+            str(entry.get("doc_id"))
+            for entry in manifest_entries
+            if entry.get("doc_id")
+        }
+
+        retrieval_path = wiki_root / "retrieval_index.jsonl"
+        removed_count = 0
+        if retrieval_path.exists():
+            for line in retrieval_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                card = json.loads(line)
+                doc_id = card.get("doc_id")
+                if doc_id and str(doc_id) not in manifest_doc_ids:
+                    removed_count += 1
+
+        RetrievalIndexRepository(wiki_root).rebuild_from_manifest(manifest_entries)
+        SQLiteFTSIndexProvider(wiki_root, wiki_id=wiki.wiki_id).rebuild_from_manifest(manifest_entries)
+        return {"removed_count": removed_count, "rebuilt_count": len(manifest_doc_ids)}
+
     def run(self, wiki: WikiConfig, auto_tune: bool = False) -> dict:
         queue_timeouts_recovered = ReviewQueueRepository(Path(wiki.workspace_path)).recover_assigned_timeouts()
         repair_summary = RawMetadataRepairService().repair(wiki)
