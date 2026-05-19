@@ -23,6 +23,53 @@ class ReviewQueueRepository:
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(normalized, ensure_ascii=False) + "\n")
 
+    def append_many(self, entries: list[dict]) -> int:
+        if not entries:
+            return 0
+        items = self.read_all()
+        existing_ids = {item.get("item_id") for item in items if item.get("item_id")}
+        appended = 0
+        for entry in entries:
+            normalized = self._normalize_entry(entry)
+            item_id = normalized.get("item_id")
+            if item_id and item_id in existing_ids:
+                continue
+            items.append(normalized)
+            if item_id:
+                existing_ids.add(item_id)
+            appended += 1
+        if appended:
+            self._write_all(items)
+        return appended
+
+    def upsert_compile_suggestions(self, entries: list[dict]) -> int:
+        if not entries:
+            return 0
+        items = self.read_all()
+        item_indexes = {item.get("item_id"): index for index, item in enumerate(items) if item.get("item_id")}
+        changed = 0
+        for entry in entries:
+            normalized = self._normalize_entry(entry)
+            item_id = normalized.get("item_id")
+            if not item_id:
+                continue
+            existing_index = item_indexes.get(item_id)
+            if existing_index is None:
+                item_indexes[item_id] = len(items)
+                items.append(normalized)
+                changed += 1
+                continue
+
+            existing = items[existing_index]
+            if not self._should_update_compile_suggestion(existing, normalized):
+                continue
+            created_at = existing.get("created_at", normalized.get("created_at"))
+            items[existing_index] = {**existing, **normalized, "created_at": created_at}
+            changed += 1
+        if changed:
+            self._write_all(items)
+        return changed
+
     def read_all(self) -> list[dict]:
         if not self.path.exists():
             return []
@@ -193,6 +240,22 @@ class ReviewQueueRepository:
             bool(item.get("sub_cluster_id"))
             and isinstance(item.get("raw_doc_ids"), list)
             and isinstance(item.get("prepare_params"), dict)
+        )
+
+    def _should_update_compile_suggestion(self, existing: dict, candidate: dict) -> bool:
+        if existing.get("item_type") != "compile_suggestion" or candidate.get("item_type") != "compile_suggestion":
+            return False
+        if existing.get("status") in {"assigned", "in_progress"}:
+            return False
+        return self._compile_suggestion_fingerprint(existing) != self._compile_suggestion_fingerprint(candidate)
+
+    def _compile_suggestion_fingerprint(self, item: dict) -> tuple:
+        return (
+            tuple(str(doc_id) for doc_id in item.get("raw_doc_ids") or []),
+            item.get("raw_count"),
+            item.get("cluster_raw_count"),
+            item.get("sub_cluster_index"),
+            item.get("sub_cluster_id"),
         )
 
     def _normalize_entry(self, entry: dict) -> dict:

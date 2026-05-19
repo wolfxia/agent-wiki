@@ -79,43 +79,72 @@ class CompileSuggestService:
         wiki_root = Path(wiki.workspace_path)
         queue = ReviewQueueRepository(wiki_root)
         queue.remove_old_format_compile_suggestions()
+        queue_items = queue.read_all()
+        queue_by_id = {str(item.get("item_id")): item for item in queue_items if item.get("item_id")}
+        metadata_repair_entries: list[dict] = []
+        compile_suggestion_entries: list[dict] = []
+        active_candidates: list[dict] = []
         for candidate in candidates:
             if candidate["kind"] == "needs_metadata_repair":
-                queue.append({
-                    "item_id": f"metadata_repair:{candidate['doc_id']}",
-                    "item_type": "metadata_repair",
-                    "doc_id": candidate["doc_id"],
-                    "reason": candidate.get("reason", "missing metadata"),
-                    "status": "open",
-                })
+                active_candidates.append(candidate)
+                metadata_repair_entries.append(
+                    {
+                        "item_id": f"metadata_repair:{candidate['doc_id']}",
+                        "item_type": "metadata_repair",
+                        "doc_id": candidate["doc_id"],
+                        "reason": candidate.get("reason", "missing metadata"),
+                        "status": "open",
+                    }
+                )
                 continue
 
-            queue.append({
-                "item_id": (
-                    f"compile_suggestion:{candidate['topic']}:{candidate['problem_cluster']}:"
-                    f"{candidate.get('sub_cluster_index', 1):04d}"
-                ),
-                "item_type": "compile_suggestion",
+            entry = self._compile_suggestion_entry(candidate)
+            existing = queue_by_id.get(str(entry["item_id"]))
+            if existing and existing.get("status") == "resolved" and self._fingerprint(existing) == self._fingerprint(entry):
+                continue
+            active_candidates.append(candidate)
+            compile_suggestion_entries.append(
+                entry
+            )
+        queue.append_many(metadata_repair_entries)
+        queue.upsert_compile_suggestions(compile_suggestion_entries)
+        return active_candidates
+
+    def _compile_suggestion_entry(self, candidate: dict) -> dict:
+        return {
+            "item_id": (
+                f"compile_suggestion:{candidate['topic']}:{candidate['problem_cluster']}:"
+                f"{candidate.get('sub_cluster_index', 1):04d}"
+            ),
+            "item_type": "compile_suggestion",
+            "topic": candidate["topic"],
+            "problem_cluster": candidate["problem_cluster"],
+            "raw_count": candidate["raw_count"],
+            "cluster_raw_count": candidate.get("cluster_raw_count", candidate["raw_count"]),
+            "kind": candidate["kind"],
+            "priority": candidate.get("priority", 1),
+            "priority_label": candidate.get("priority_label", "P1"),
+            "priority_reason": candidate.get("priority_reason", "general"),
+            "sub_cluster_index": candidate.get("sub_cluster_index", 1),
+            "sub_cluster_id": candidate.get("sub_cluster_id"),
+            "raw_doc_ids": candidate.get("raw_doc_ids", []),
+            "prepare_params": {
                 "topic": candidate["topic"],
                 "problem_cluster": candidate["problem_cluster"],
-                "raw_count": candidate["raw_count"],
-                "cluster_raw_count": candidate.get("cluster_raw_count", candidate["raw_count"]),
-                "kind": candidate["kind"],
-                "priority": candidate.get("priority", 1),
-                "priority_label": candidate.get("priority_label", "P1"),
-                "priority_reason": candidate.get("priority_reason", "general"),
+                "doc_ids": candidate.get("raw_doc_ids", []),
                 "sub_cluster_index": candidate.get("sub_cluster_index", 1),
-                "sub_cluster_id": candidate.get("sub_cluster_id"),
-                "raw_doc_ids": candidate.get("raw_doc_ids", []),
-                "prepare_params": {
-                    "topic": candidate["topic"],
-                    "problem_cluster": candidate["problem_cluster"],
-                    "doc_ids": candidate.get("raw_doc_ids", []),
-                    "sub_cluster_index": candidate.get("sub_cluster_index", 1),
-                },
-                "status": "open",
-            })
-        return candidates
+            },
+            "status": "open",
+        }
+
+    def _fingerprint(self, item: dict) -> tuple:
+        return (
+            tuple(str(doc_id) for doc_id in item.get("raw_doc_ids") or []),
+            item.get("raw_count"),
+            item.get("cluster_raw_count"),
+            item.get("sub_cluster_index"),
+            item.get("sub_cluster_id"),
+        )
 
     def _chunks(self, entries: list[dict], size: int) -> list[list[dict]]:
         return [entries[index:index + size] for index in range(0, len(entries), size)]

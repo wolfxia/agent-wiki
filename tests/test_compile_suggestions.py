@@ -395,3 +395,54 @@ def test_compile_suggestions_prioritize_purpose_aligned_clusters(temp_wiki_root:
     assert candidates[0]["priority"] == 0
     assert candidates[0]["priority_label"] == "P0"
     assert candidates[1]["priority"] == 1
+
+
+def test_compile_suggestion_reopens_resolved_subcluster_when_raw_count_changes(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    capture_service = CaptureRawService()
+    for index in range(4):
+        capture_service.execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-incremental-{index}",
+                topic="edge-ai",
+                problem_cluster="imaging",
+                content=f"# Raw incremental {index}",
+                source_refs=[],
+            ),
+        )
+
+    service = CompileSuggestService()
+    service.detect_and_enqueue(wiki, threshold=3)
+
+    queue_path = temp_wiki_root / "review_queue.jsonl"
+    entries = [json.loads(line) for line in queue_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    subcluster_two = next(entry for entry in entries if entry.get("item_id") == "compile_suggestion:edge-ai:imaging:0002")
+    subcluster_two["status"] = "resolved"
+    subcluster_two["resolved_at"] = "2026-05-20T00:00:00Z"
+    queue_path.write_text("".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries), encoding="utf-8")
+
+    capture_service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-incremental-4",
+            topic="edge-ai",
+            problem_cluster="imaging",
+            content="# Raw incremental 4",
+            source_refs=[],
+        ),
+    )
+
+    service.detect_and_enqueue(wiki, threshold=3)
+
+    entries = [json.loads(line) for line in queue_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    subcluster_two = next(entry for entry in entries if entry.get("item_id") == "compile_suggestion:edge-ai:imaging:0002")
+    assert subcluster_two["status"] == "open"
+    assert subcluster_two["raw_doc_ids"] == ["raw-incremental-3", "raw-incremental-4"]

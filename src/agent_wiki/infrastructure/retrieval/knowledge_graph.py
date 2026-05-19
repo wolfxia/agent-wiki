@@ -187,6 +187,7 @@ class KnowledgeGraphRepository:
         self.wiki_root = wiki_root
         self.wiki_id = wiki_id
         self.path = wiki_root / "knowledge_graph.jsonl"
+        self.state_path = wiki_root / ".agent-wiki" / "knowledge_graph_state.json"
 
     def read_all(self) -> list[dict]:
         if not self.path.exists():
@@ -300,14 +301,27 @@ class KnowledgeGraphRepository:
         return label
 
     def rebuild_from_raw_pages(self) -> int:
-        definitions = RelationSchemaRepository(self.wiki_root).load()
+        schema_repository = RelationSchemaRepository(self.wiki_root)
+        definitions = schema_repository.load()
         if not definitions:
             self.path.unlink(missing_ok=True)
+            self.state_path.unlink(missing_ok=True)
             return 0
         manifest = ManifestRepository(self.wiki_root)
         extractor = RelationExtractor(definitions)
-        relations: list[dict] = []
+        existing_relations = self.read_all()
+        state = self._read_state()
+        schema_fingerprint = self._path_fingerprint(schema_repository.schema_path)
+        doc_state = state.get("docs") if state.get("schema") == schema_fingerprint and isinstance(state.get("docs"), dict) else {}
+        relations_by_doc: dict[str, list[dict]] = {}
+        for relation in existing_relations:
+            source_doc_id = str(relation.get("source_doc_id") or "")
+            if not source_doc_id:
+                continue
+            relations_by_doc.setdefault(source_doc_id, []).append(relation)
+
         extracted_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        next_doc_state: dict[str, dict] = {}
         for entry in manifest.read_all():
             if entry.get("page_type") != "raw":
                 continue
@@ -317,16 +331,51 @@ class KnowledgeGraphRepository:
             page_path = self.wiki_root / str(canonical_uri)
             if not page_path.exists() or not page_path.is_file():
                 continue
-            relations.extend(
-                extractor.extract(
-                    text=page_path.read_text(encoding="utf-8"),
-                    source_doc_id=str(entry.get("doc_id")),
-                    extracted_at=extracted_at,
-                    wiki_id=self.wiki_id,
-                )
+            doc_id = str(entry.get("doc_id"))
+            fingerprint = self._page_fingerprint(page_path)
+            next_doc_state[doc_id] = fingerprint
+            if doc_state.get(doc_id) == fingerprint:
+                continue
+            relations_by_doc[doc_id] = extractor.extract(
+                text=page_path.read_text(encoding="utf-8"),
+                source_doc_id=doc_id,
+                extracted_at=extracted_at,
+                wiki_id=self.wiki_id,
             )
+
+        removed_doc_ids = set(relations_by_doc) - set(next_doc_state)
+        for doc_id in removed_doc_ids:
+            relations_by_doc.pop(doc_id, None)
+
+        relations: list[dict] = []
+        for doc_id in sorted(relations_by_doc):
+            relations.extend(relations_by_doc[doc_id])
         self.replace_all(relations)
+        self._write_state({"schema": schema_fingerprint, "docs": next_doc_state})
         return len(relations)
+
+    def _read_state(self) -> dict:
+        if not self.state_path.exists():
+            return {}
+        try:
+            data = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _write_state(self, state: dict) -> None:
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.state_path.write_text(json.dumps(state, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+
+    def _page_fingerprint(self, page_path: Path) -> dict:
+        return self._path_fingerprint(page_path)
+
+    def _path_fingerprint(self, path: Path) -> dict:
+        stat = path.stat()
+        return {
+            "mtime_ns": stat.st_mtime_ns,
+            "size": stat.st_size,
+        }
 
 
 class KnowledgeGraphRetrievalProvider:

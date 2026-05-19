@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
@@ -258,6 +259,65 @@ def test_query_can_use_each_configured_relation_type(temp_wiki_root: Path) -> No
         result = QueryService().execute(wiki=wiki, actor=_actor(), data=QueryInput(query=query))
         assert result.hits[0].doc_id == expected_doc_id
         assert result.hits[0].section == "knowledge_graph"
+
+
+def test_knowledge_graph_rebuild_skips_unchanged_raw_pages_and_reprocesses_modified_ones(temp_wiki_root: Path, monkeypatch) -> None:
+    from agent_wiki.infrastructure.retrieval.knowledge_graph import KnowledgeGraphRepository
+
+    (temp_wiki_root / "relation_schema.yaml").write_text(
+        """relation_types:
+  - name: depends_on
+    patterns:
+      - "(?P<a>.+?) depends on (?P<b>.+)"
+    subject_type: technology
+    object_type: technology
+""",
+        encoding="utf-8",
+    )
+    wiki = _wiki(temp_wiki_root)
+    for doc_id, content in [
+        ("raw-graph-a", "# Graph A\nAgent Wiki depends on SQLite."),
+        ("raw-graph-b", "# Graph B\nHermes depends on MCP."),
+    ]:
+        CaptureRawService().execute(
+            wiki=wiki,
+            actor=_actor(),
+            data=CaptureRawInput(
+                doc_id=doc_id,
+                topic="graph",
+                problem_cluster="incremental",
+                content=content,
+                source_refs=[],
+            ),
+        )
+
+    repository = KnowledgeGraphRepository(temp_wiki_root, wiki_id=wiki.wiki_id)
+    repository.rebuild_from_raw_pages()
+
+    processed_doc_ids: list[str] = []
+    original_extract = RelationExtractor.extract
+
+    def tracking_extract(self, *, text, source_doc_id, extracted_at=None, wiki_id=None):
+        processed_doc_ids.append(source_doc_id)
+        return original_extract(self, text=text, source_doc_id=source_doc_id, extracted_at=extracted_at, wiki_id=wiki_id)
+
+    monkeypatch.setattr(RelationExtractor, "extract", tracking_extract)
+
+    repository.rebuild_from_raw_pages()
+    assert processed_doc_ids == []
+
+    graph_b_path = temp_wiki_root / "pages" / "raw-graph-b.md"
+    graph_b_path.write_text("# Graph B\nHermes depends on FastMCP.", encoding="utf-8")
+    stat = graph_b_path.stat()
+    os.utime(graph_b_path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+
+    repository.rebuild_from_raw_pages()
+
+    assert processed_doc_ids == ["raw-graph-b"]
+    entries = repository.read_all()
+    relation_keys = {(entry["subject"], entry["relation"], entry["object"], entry["source_doc_id"]) for entry in entries}
+    assert ("Agent Wiki", "depends_on", "SQLite", "raw-graph-a") in relation_keys
+    assert ("Hermes", "depends_on", "FastMCP", "raw-graph-b") in relation_keys
 
 
 def _extractor(*definitions: RelationTypeDefinition) -> RelationExtractor:

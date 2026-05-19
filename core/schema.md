@@ -357,6 +357,8 @@ The SQLite database is runtime state and must remain rebuildable from committed 
 
 Current deterministic regex extraction writes `EXTRACTED` relations with direct evidence text. Legacy relations missing confidence fields are backfilled as `INFERRED`. `AMBIGUOUS` relations are not queryable by default; they must enter review queue as `item_type=relation_review` and can be resolved through `aw review-relations` by accepting, rejecting, or reclassifying the relation.
 
+Incremental graph rebuild state lives in `.agent-wiki/knowledge_graph_state.json`. It records source page and relation-schema fingerprints so `maintain` can reprocess only new or modified raw pages. This file is runtime state, not Git authority, and deleting it forces a full rebuild from committed workspace artifacts.
+
 ### 8.3 Layered presentation
 - **L1** Answer layer: directly usable answer entries
 - **L2** Reasoning layer: why relevant, any disputes, which pages are dependencies
