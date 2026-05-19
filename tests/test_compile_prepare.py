@@ -199,8 +199,8 @@ def test_compile_prepare_includes_existing_atom_summaries_for_dedup_context(temp
             doc_id="atom-context-existing",
             page_type="atom",
             topic="agent-os",
-            problem_cluster="adjacent-cluster",
-            summary="Existing atom summary for context dedup.",
+            problem_cluster="context-window",
+            summary="Same-cluster atom summary for context dedup.",
             confidence="high",
             aliases=["context"],
             wikilinks=["[[raw-context-1]]"],
@@ -218,7 +218,7 @@ def test_compile_prepare_includes_existing_atom_summaries_for_dedup_context(temp
     assert result.existing_atom_summaries == [
         {
             "doc_id": "atom-context-existing",
-            "summary": "Existing atom summary for context dedup.",
-            "problem_cluster": "adjacent-cluster",
+            "summary": "Same-cluster atom summary for context dedup.",
+            "problem_cluster": "context-window",
         }
     ]

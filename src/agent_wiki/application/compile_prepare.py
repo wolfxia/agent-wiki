@@ -144,7 +144,7 @@ class CompilePrepareService:
                 continue
             if entry.get("topic") != topic:
                 continue
-            if entry.get("problem_cluster") == problem_cluster:
+            if entry.get("problem_cluster") != problem_cluster:
                 continue
             summary = entry.get("summary")
             if not summary:
