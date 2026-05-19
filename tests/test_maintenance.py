@@ -1,4 +1,6 @@
 from pathlib import Path
+import json
+from datetime import UTC, datetime, timedelta
 
 from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
 from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
@@ -402,8 +404,6 @@ def test_maintenance_recovers_timed_out_assigned_queue_items(temp_wiki_root: Pat
 
 
 def test_maintenance_enqueues_duplicate_atom_warnings(temp_wiki_root: Path) -> None:
-    import json
-
     wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
         update={"workspace_path": str(temp_wiki_root)}
     )
@@ -473,3 +473,190 @@ def test_maintenance_enqueues_duplicate_atom_warnings(temp_wiki_root: Path) -> N
     ]
     duplicate_item = next(entry for entry in queue_entries if entry.get("item_type") == "duplicate_atom_warning")
     assert duplicate_item["content_state"]["doc_ids"] == ["atom-dup-1", "atom-dup-2"]
+
+
+def test_maintenance_compile_suggestions_include_strategy_score_and_deep_rounds(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    (temp_wiki_root / "purpose.md").write_text("# Purpose\n\n## Topics\n- core-topic\n", encoding="utf-8")
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    for index in range(5):
+        CaptureRawService().execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-deep-{index}",
+                topic="core-topic",
+                problem_cluster="deep-cluster",
+                content=f"# Raw deep {index}\n\nContradiction marker conflict {index}.",
+                source_refs=[],
+            ),
+        )
+    for index in range(4):
+        QueryService().execute(wiki=wiki, actor=actor, data=QueryInput(query="core-topic deep-cluster"))
+    (temp_wiki_root / "review_queue.jsonl").write_text(
+        json.dumps(
+            {
+                "item_id": "compile_suggestion:old-failed",
+                "item_type": "compile_suggestion",
+                "status": "failed",
+                "topic": "core-topic",
+                "problem_cluster": "deep-cluster",
+                "content_state": {"error_type": "quality_rejected"},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = MaintenanceService().run(wiki)
+
+    queue_entries = [
+        json.loads(line)
+        for line in (temp_wiki_root / "review_queue.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    suggestion = next(
+        entry
+        for entry in queue_entries
+        if entry.get("item_type") == "compile_suggestion" and entry.get("problem_cluster") == "deep-cluster"
+    )
+    assert suggestion["compile_strategy"] == "Deep"
+    assert suggestion["compile_priority_score"] >= 80
+    assert suggestion["deep_compile_rounds"] == 3
+    assert summary["compile_strategy_counts"]["Deep"] >= 1
+
+
+def test_maintenance_reports_post_compile_uplift_atom_reference_rate_and_staleness_governance(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-value-1",
+            topic="value",
+            problem_cluster="cluster-value",
+            content="# Raw value",
+            source_refs=[],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-value-1",
+            page_type="atom",
+            topic="value",
+            problem_cluster="cluster-value",
+            summary="Value atom.",
+            aliases=["value"],
+            confidence="high",
+            wikilinks=["[[raw-value-1]]"],
+            content="# Atom value\n\n## Claims\n- Claim.\n\n## Evidence\n- Evidence.",
+            source_refs=["personal-1:raw-value-1"],
+        ),
+    )
+    stale_ts = (datetime.now(UTC) - timedelta(days=45)).isoformat().replace("+00:00", "Z")
+    manifest_entries = [json.loads(line) for line in (temp_wiki_root / "MANIFEST.jsonl").read_text(encoding="utf-8").splitlines()]
+    for entry in manifest_entries:
+        if entry.get("doc_id") == "atom-value-1":
+            entry["updated_at"] = stale_ts
+    (temp_wiki_root / "MANIFEST.jsonl").write_text(
+        "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in manifest_entries),
+        encoding="utf-8",
+    )
+    runtime_root = temp_wiki_root / ".agent-wiki"
+    runtime_root.mkdir(exist_ok=True)
+    (runtime_root / "eval_history.jsonl").write_text(
+        "".join(
+            json.dumps(entry, ensure_ascii=False) + "\n"
+            for entry in [
+                {"timestamp": "2026-05-18T00:00:00Z", "metrics": {"strict_recall_at_k": 0.40}},
+                {"timestamp": "2026-05-19T00:00:00Z", "metrics": {"strict_recall_at_k": 0.55}},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (temp_wiki_root / "query_outcomes.jsonl").write_text(
+        "".join(
+            json.dumps(
+                {
+                    "query_id": f"value-q-{index}",
+                    "query": "value cluster",
+                    "hit_count": 1,
+                    "accepted_doc_ids": ["atom-value-1"],
+                    "rejected_doc_ids": [],
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+            for index in range(3)
+        ),
+        encoding="utf-8",
+    )
+
+    summary = MaintenanceService().run(wiki)
+
+    assert summary["value_metrics"]["post_compile_query_uplift"] == 0.15
+    assert summary["value_metrics"]["atom_reference_rate"] == 1.0
+    assert summary["staleness_governance"]["hot_stale_doc_ids"] == ["atom-value-1"]
+    queue_entries = [
+        json.loads(line)
+        for line in (temp_wiki_root / "review_queue.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert any(entry.get("item_type") == "staleness_refresh" for entry in queue_entries)
+
+
+def test_maintenance_auto_tune_runs_post_change_eval_and_rolls_back(monkeypatch, temp_wiki_root: Path) -> None:
+    import agent_wiki.application.maintenance as maintenance_module
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={
+            "workspace_path": str(temp_wiki_root),
+            "tuning_defaults": {"query_ranking": {"topic_alignment_boost": 6.5}},
+        }
+    )
+    runtime_root = temp_wiki_root / ".agent-wiki"
+    runtime_root.mkdir(exist_ok=True)
+    (runtime_root / "eval_history.jsonl").write_text(
+        "".join(
+            json.dumps(entry, ensure_ascii=False) + "\n"
+            for entry in [
+                {"timestamp": "2026-05-18T00:00:00Z", "metrics": {"strict_recall_at_k": 0.80}},
+                {"timestamp": "2026-05-19T00:00:00Z", "metrics": {"strict_recall_at_k": 0.70}},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    eval_dir = temp_wiki_root / "eval"
+    eval_dir.mkdir(exist_ok=True)
+    (eval_dir / "retrieval_queries.jsonl").write_text(
+        json.dumps({"query": "auto tune", "expected_doc_ids": [], "acceptable_doc_ids": [], "must_not_doc_ids": []}, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    eval_reports = [
+        {"metrics": {"strict_recall_at_k": 0.70}},
+        {"metrics": {"strict_recall_at_k": 0.67}},
+    ]
+
+    class FakeEvalRetrievalService:
+        def run(self, **kwargs):
+            return eval_reports.pop(0)
+
+    monkeypatch.setattr(maintenance_module, "EvalRetrievalService", lambda: FakeEvalRetrievalService())
+
+    summary = MaintenanceService().run(wiki, auto_tune=True)
+
+    assert summary["auto_tune"]["status"] == "rolled_back"
+    assert summary["auto_tune"]["eval_after"]["metrics"]["strict_recall_at_k"] == 0.67
+    assert eval_reports == []
+    runtime = json.loads((runtime_root / "runtime_tuning.json").read_text(encoding="utf-8"))
+    assert runtime["query_ranking"]["topic_alignment_boost"] == 6.5

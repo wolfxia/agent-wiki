@@ -1,11 +1,24 @@
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from pydantic import ValidationError
 
 from agent_wiki.bootstrap.registry_loader import RuntimeTuningConfig, WikiConfig
+
+
+_LOW_RISK_PARAMETERS = {
+    "query_ranking.atom_page_type_boost",
+    "query_ranking.synthesis_page_type_boost",
+    "query_ranking.principle_page_type_boost",
+    "query_ranking.purpose_boost",
+    "query_ranking.topic_alignment_boost",
+    "query_ranking.topic_seed_score",
+    "query_ranking.rerank_candidate_multiplier",
+}
+_MAX_AUTO_TUNE_STEP = 1.0
+_AUTO_TUNE_ROLLBACK_DROP_THRESHOLD = 0.02
 
 
 class RuntimeTuningService:
@@ -78,8 +91,108 @@ class RuntimeTuningService:
         except ValidationError:
             return None
 
+    def auto_tune(
+        self,
+        wiki: WikiConfig,
+        diagnosis_report: dict[str, Any],
+        *,
+        eval_after: dict[str, Any] | None = None,
+        evaluate_after: Callable[[], dict[str, Any] | None] | None = None,
+    ) -> dict[str, Any]:
+        latest_eval = diagnosis_report.get("latest_eval") or {}
+        eval_before = latest_eval.get("metrics") or {}
+        if not eval_before:
+            return {"status": "skipped", "reason": "missing_eval_baseline"}
+
+        recommendation = self._select_auto_tune_recommendation(diagnosis_report.get("diagnoses") or [])
+        if recommendation is None:
+            return {"status": "skipped", "reason": "no_low_risk_recommendation"}
+
+        parameter_name = str(recommendation["parameter_name"])
+        current_payload = self.load(wiki).model_dump(mode="json")
+        old_value = self._nested_get(current_payload, parameter_name)
+        new_value = self._recommended_value(old_value, recommendation)
+        if new_value is None or new_value == old_value:
+            return {"status": "skipped", "reason": "no_effective_change", "parameter_name": parameter_name}
+
+        self.update_parameter(
+            wiki=wiki,
+            parameter_name=parameter_name,
+            new_value=new_value,
+            trigger=f"auto_tune:{recommendation['diagnosis_type']}",
+            expected_effect=str(recommendation.get("expected_effect") or "improve retrieval quality"),
+            eval_before=eval_before,
+        )
+
+        after_report = eval_after
+        if after_report is None and evaluate_after is not None:
+            after_report = evaluate_after()
+
+        if self._strict_recall_regressed(eval_before, after_report):
+            self.update_parameter(
+                wiki=wiki,
+                parameter_name=parameter_name,
+                new_value=old_value,
+                trigger="auto_tune_rollback",
+                expected_effect="restore previous value after strict recall regression",
+                eval_before=(after_report or {}).get("metrics") or {},
+            )
+            return {
+                "status": "rolled_back",
+                "parameter_name": parameter_name,
+                "old_value": old_value,
+                "new_value": new_value,
+                "eval_after": after_report,
+            }
+
+        return {
+            "status": "changed",
+            "parameter_name": parameter_name,
+            "old_value": old_value,
+            "new_value": new_value,
+            "eval_after": after_report,
+        }
+
     def _defaults(self, wiki: WikiConfig) -> RuntimeTuningConfig:
         return RuntimeTuningConfig.model_validate(self._as_payload(getattr(wiki, "tuning_defaults", {})))
+
+    def _select_auto_tune_recommendation(self, diagnoses: list[dict[str, Any]]) -> dict[str, Any] | None:
+        for diagnosis in diagnoses:
+            recommendation = diagnosis.get("recommendation") or {}
+            if recommendation.get("action") != "adjust_parameter":
+                continue
+            parameter_name = str(recommendation.get("parameter_name") or "")
+            if parameter_name not in _LOW_RISK_PARAMETERS:
+                continue
+            step = recommendation.get("step")
+            if not isinstance(step, (int, float)) or step <= 0 or step > _MAX_AUTO_TUNE_STEP:
+                continue
+            return {
+                **recommendation,
+                "diagnosis_type": diagnosis.get("diagnosis_type") or "unknown",
+            }
+        return None
+
+    def _recommended_value(self, old_value: Any, recommendation: dict[str, Any]) -> Any:
+        if not isinstance(old_value, (int, float)):
+            return None
+        direction = str(recommendation.get("direction") or "increase").lower()
+        step = float(recommendation.get("step") or 0)
+        if direction == "decrease":
+            candidate = float(old_value) - step
+        else:
+            candidate = float(old_value) + step
+        if isinstance(old_value, int) and not isinstance(old_value, bool):
+            return int(round(candidate))
+        return round(candidate, 3)
+
+    def _strict_recall_regressed(self, eval_before: dict[str, Any], eval_after: dict[str, Any] | None) -> bool:
+        if not eval_after:
+            return False
+        after_metrics = eval_after.get("metrics") or {}
+        before_strict = float(eval_before.get("strict_recall_at_k", 0.0) or 0.0)
+        after_strict = float(after_metrics.get("strict_recall_at_k", 0.0) or 0.0)
+        return (before_strict - after_strict) > _AUTO_TUNE_ROLLBACK_DROP_THRESHOLD
 
     def _merge(self, defaults: RuntimeTuningConfig, override: dict) -> RuntimeTuningConfig:
         merged = defaults.model_dump(mode="json")

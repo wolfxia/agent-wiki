@@ -1,4 +1,6 @@
+import json
 from collections import defaultdict
+from datetime import UTC, datetime
 from pathlib import Path
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
@@ -37,12 +39,28 @@ class CompileSuggestService:
             if topic and problem_cluster:
                 compiled_cluster_counts[(topic, problem_cluster)] += 1
 
+        query_signal_counts = self._query_signal_counts(wiki_root, set(raw_cluster_entries.keys()))
+        quality_failure_counts = self._quality_failure_counts(wiki_root)
+
         for (topic, problem_cluster), raw_entries in raw_cluster_entries.items():
             raw_entries.sort(key=lambda entry: str(entry.get("doc_id") or ""))
             count = len(raw_entries)
             if count < threshold:
                 continue
             compiled_count = compiled_cluster_counts.get((topic, problem_cluster), 0)
+            cluster_key = (topic, problem_cluster)
+            purpose_aligned = purpose_reader.is_aligned(topic)
+            priority_score = self._compile_priority_score(
+                raw_count=count,
+                query_hit_frequency=query_signal_counts[cluster_key]["hits"],
+                query_miss_frequency=query_signal_counts[cluster_key]["misses"],
+                purpose_aligned=purpose_aligned,
+                existing_compiled_count=compiled_count,
+                previous_quality_gate_failures=quality_failure_counts[cluster_key],
+                staleness_days=self._cluster_staleness_days(raw_entries),
+                contradiction_markers_present=self._has_contradiction_markers(wiki_root, raw_entries),
+            )
+            compile_strategy = self._compile_strategy(priority_score)
             for sub_cluster_index, group in enumerate(self._chunks(raw_entries, SUB_CLUSTER_SIZE), start=1):
                 raw_doc_ids = [str(entry.get("doc_id")) for entry in group if entry.get("doc_id")]
                 candidates.append({
@@ -55,7 +73,10 @@ class CompileSuggestService:
                     "sub_cluster_index": sub_cluster_index,
                     "sub_cluster_id": self._sub_cluster_id(topic, problem_cluster, sub_cluster_index),
                     "raw_doc_ids": raw_doc_ids,
-                    "purpose_aligned": purpose_reader.is_aligned(topic),
+                    "purpose_aligned": purpose_aligned,
+                    "compile_priority_score": priority_score,
+                    "compile_strategy": compile_strategy,
+                    "deep_compile_rounds": 3 if compile_strategy == "Deep" else 1,
                     "priority": 0 if self._topic_matches_p0(topic, purpose) else 1,
                     "priority_label": "P0" if self._topic_matches_p0(topic, purpose) else "P1",
                     "priority_reason": "purpose_aligned" if self._topic_matches_p0(topic, purpose) else "general",
@@ -128,6 +149,9 @@ class CompileSuggestService:
             "sub_cluster_index": candidate.get("sub_cluster_index", 1),
             "sub_cluster_id": candidate.get("sub_cluster_id"),
             "raw_doc_ids": candidate.get("raw_doc_ids", []),
+            "compile_priority_score": candidate.get("compile_priority_score", 0),
+            "compile_strategy": candidate.get("compile_strategy", "Standard"),
+            "deep_compile_rounds": candidate.get("deep_compile_rounds", 1),
             "prepare_params": {
                 "topic": candidate["topic"],
                 "problem_cluster": candidate["problem_cluster"],
@@ -159,6 +183,109 @@ class CompileSuggestService:
             if normalized_topic == normalized_purpose_topic or normalized_topic in normalized_purpose_topic:
                 return True
         return False
+
+    def _query_signal_counts(self, wiki_root: Path, cluster_keys: set[tuple[str, str]]) -> defaultdict[tuple[str, str], dict[str, int]]:
+        counts: defaultdict[tuple[str, str], dict[str, int]] = defaultdict(lambda: {"hits": 0, "misses": 0})
+        path = wiki_root / "query_outcomes.jsonl"
+        if not path.exists():
+            return counts
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            query = str(entry.get("query") or "").lower()
+            hit_count = int(entry.get("hit_count", 0) or 0)
+            for topic, problem_cluster in cluster_keys:
+                if topic.lower() not in query and problem_cluster.lower() not in query:
+                    continue
+                if hit_count > 0:
+                    counts[(topic, problem_cluster)]["hits"] += 1
+                else:
+                    counts[(topic, problem_cluster)]["misses"] += 1
+        return counts
+
+    def _quality_failure_counts(self, wiki_root: Path) -> defaultdict[tuple[str, str], int]:
+        counts: defaultdict[tuple[str, str], int] = defaultdict(int)
+        path = wiki_root / "review_queue.jsonl"
+        if not path.exists():
+            return counts
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            if entry.get("item_type") != "compile_suggestion":
+                continue
+            if (entry.get("content_state") or {}).get("error_type") != "quality_rejected":
+                continue
+            topic = str(entry.get("topic") or "")
+            problem_cluster = str(entry.get("problem_cluster") or "")
+            if topic and problem_cluster:
+                counts[(topic, problem_cluster)] += 1
+        return counts
+
+    def _cluster_staleness_days(self, entries: list[dict]) -> int:
+        oldest: datetime | None = None
+        for entry in entries:
+            value = entry.get("updated_at") or entry.get("updated")
+            if not value:
+                continue
+            try:
+                parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            parsed = parsed.astimezone(UTC)
+            if oldest is None or parsed < oldest:
+                oldest = parsed
+        if oldest is None:
+            return 0
+        return max((datetime.now(UTC) - oldest).days, 0)
+
+    def _has_contradiction_markers(self, wiki_root: Path, entries: list[dict]) -> bool:
+        markers = {"contradiction", "conflict", "dispute", "相互矛盾", "冲突"}
+        for entry in entries:
+            text = " ".join(str(entry.get(key) or "") for key in ("summary", "content", "doc_id")).lower()
+            canonical_uri = entry.get("canonical_uri")
+            if canonical_uri:
+                page_path = wiki_root / str(canonical_uri)
+                if page_path.exists():
+                    text = f"{text} {page_path.read_text(encoding='utf-8').lower()}"
+            if any(marker in text for marker in markers):
+                return True
+        return False
+
+    def _compile_priority_score(
+        self,
+        *,
+        raw_count: int,
+        query_hit_frequency: int,
+        query_miss_frequency: int,
+        purpose_aligned: bool,
+        existing_compiled_count: int,
+        previous_quality_gate_failures: int,
+        staleness_days: int,
+        contradiction_markers_present: bool,
+    ) -> int:
+        score = 20
+        score += min(raw_count, 10) * 4
+        score += min(query_hit_frequency, 10) * 5
+        score += min(query_miss_frequency, 10) * 6
+        if purpose_aligned:
+            score += 20
+        score -= min(existing_compiled_count, 5) * 5
+        score += min(previous_quality_gate_failures, 5) * 10
+        score += min(staleness_days // 30, 4) * 5
+        if contradiction_markers_present:
+            score += 15
+        return max(0, min(score, 100))
+
+    def _compile_strategy(self, score: int) -> str:
+        if score >= 80:
+            return "Deep"
+        if score < 45:
+            return "Light"
+        return "Standard"
 
     def _metadata_repair_candidates(self, manifest_entries: list[dict], pending: PendingStateRepository) -> list[dict]:
         candidates: list[dict] = []

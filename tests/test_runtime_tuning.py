@@ -119,3 +119,111 @@ def test_runtime_tuning_update_writes_history_and_freezes_baseline(temp_wiki_roo
 
     frozen = json.loads((temp_wiki_root / ".agent-wiki" / "frozen_baseline.json").read_text(encoding="utf-8"))
     assert frozen == baseline.model_dump(mode="json")
+
+
+def test_auto_tune_applies_single_low_risk_small_step_when_eval_exists(temp_wiki_root: Path) -> None:
+    wiki = _wiki(temp_wiki_root)
+    runtime_root = temp_wiki_root / ".agent-wiki"
+    runtime_root.mkdir(exist_ok=True)
+    (runtime_root / "eval_history.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-05-19T00:00:00Z",
+                "metrics": {"strict_recall_at_k": 0.70, "loose_recall_at_k": 0.80},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    diagnosis = {
+        "diagnoses": [
+            {
+                "diagnosis_type": "retrieval_ranking_shift",
+                "recommendation": {
+                    "action": "adjust_parameter",
+                    "parameter_name": "query_ranking.topic_alignment_boost",
+                    "direction": "increase",
+                    "step": 0.5,
+                    "expected_effect": "recover topic recall",
+                    "current_value": 6.5,
+                },
+            },
+            {
+                "diagnosis_type": "parameter_drift",
+                "recommendation": {
+                    "action": "restore_frozen_baseline",
+                    "parameter_name": "query_ranking.purpose_boost",
+                    "target_value": 3.25,
+                },
+            },
+        ],
+        "latest_eval": {"metrics": {"strict_recall_at_k": 0.70}},
+    }
+
+    result = RuntimeTuningService().auto_tune(wiki, diagnosis)
+
+    assert result["status"] == "changed"
+    assert result["parameter_name"] == "query_ranking.topic_alignment_boost"
+    assert result["old_value"] == 6.5
+    assert result["new_value"] == 7.0
+    runtime = json.loads((runtime_root / "runtime_tuning.json").read_text(encoding="utf-8"))
+    assert runtime["query_ranking"]["topic_alignment_boost"] == 7.0
+    history = [json.loads(line) for line in (runtime_root / "param_history.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert history[-1]["trigger"] == "auto_tune:retrieval_ranking_shift"
+
+
+def test_auto_tune_skips_without_eval_baseline(temp_wiki_root: Path) -> None:
+    wiki = _wiki(temp_wiki_root)
+    diagnosis = {
+        "diagnoses": [
+            {
+                "diagnosis_type": "retrieval_ranking_shift",
+                "recommendation": {
+                    "action": "adjust_parameter",
+                    "parameter_name": "query_ranking.topic_alignment_boost",
+                    "direction": "increase",
+                    "step": 0.5,
+                    "expected_effect": "recover topic recall",
+                },
+            }
+        ],
+        "latest_eval": None,
+    }
+
+    result = RuntimeTuningService().auto_tune(wiki, diagnosis)
+
+    assert result == {"status": "skipped", "reason": "missing_eval_baseline"}
+    assert not (temp_wiki_root / ".agent-wiki" / "runtime_tuning.json").exists()
+
+
+def test_auto_tune_rolls_back_when_strict_recall_drops_more_than_two_percent(temp_wiki_root: Path) -> None:
+    wiki = _wiki(temp_wiki_root)
+    service = RuntimeTuningService()
+    diagnosis = {
+        "diagnoses": [
+            {
+                "diagnosis_type": "retrieval_ranking_shift",
+                "recommendation": {
+                    "action": "adjust_parameter",
+                    "parameter_name": "query_ranking.topic_alignment_boost",
+                    "direction": "increase",
+                    "step": 0.5,
+                    "expected_effect": "recover topic recall",
+                },
+            }
+        ],
+        "latest_eval": {"metrics": {"strict_recall_at_k": 0.80}},
+    }
+
+    result = service.auto_tune(
+        wiki,
+        diagnosis,
+        eval_after={"metrics": {"strict_recall_at_k": 0.77}},
+    )
+
+    assert result["status"] == "rolled_back"
+    assert result["parameter_name"] == "query_ranking.topic_alignment_boost"
+    assert service.load(wiki).query_ranking.topic_alignment_boost == 6.5
+    history = [json.loads(line) for line in (temp_wiki_root / ".agent-wiki" / "param_history.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert history[-1]["trigger"] == "auto_tune_rollback"

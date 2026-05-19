@@ -672,12 +672,13 @@ def maintain(
     workspace: str | None = typer.Option(None, "--workspace"),
     registry: str | None = typer.Option(None, "--registry"),
     wiki_id: str | None = typer.Option(None, "--wiki-id"),
+    auto_tune: bool = typer.Option(False, "--auto-tune"),
 ) -> None:
     """Run the slow self-evolution loop and print the quality report."""
     def _command() -> None:
         wiki = _load_wiki(registry, workspace, wiki_id)
 
-        summary = MaintenanceService().run(wiki)
+        summary = MaintenanceService().run(wiki, auto_tune=auto_tune)
         typer.echo("maintenance summary:")
         for key, value in summary.items():
             typer.echo(f"  {key}={value}")

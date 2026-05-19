@@ -1,12 +1,16 @@
+import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-from collections import defaultdict
+from collections import Counter, defaultdict
 import re
 
 from agent_wiki.application.compile_suggest import CompileSuggestService
+from agent_wiki.application.diagnosis import DiagnosisService
 from agent_wiki.application.eval_retrieval import EvalRetrievalService
 from agent_wiki.application.fast_feedback import FastFeedbackService
 from agent_wiki.application.relations import RelationsService
+from agent_wiki.application.runtime_tuning import RuntimeTuningService
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.infrastructure.repair.raw_metadata_repair import RawMetadataRepairService
@@ -22,7 +26,7 @@ _MAINTAIN_EVAL_TIMEOUT_SECONDS = 30
 
 
 class MaintenanceService:
-    def run(self, wiki: WikiConfig) -> dict:
+    def run(self, wiki: WikiConfig, auto_tune: bool = False) -> dict:
         queue_timeouts_recovered = ReviewQueueRepository(Path(wiki.workspace_path)).recover_assigned_timeouts()
         repair_summary = RawMetadataRepairService().repair(wiki)
         orphan_cleanup_count = self._clean_orphan_authority_entries(wiki)
@@ -74,11 +78,22 @@ class MaintenanceService:
             "co_occurrence_candidates": len(co_occurrences),
             "cross_reference_candidates": len(cross_references),
             "duplicate_atom_warnings": duplicate_atom_warnings,
+            "compile_strategy_counts": self._compile_strategy_counts(compile_suggestions),
+            "value_metrics": self._value_metrics(Path(wiki.workspace_path)),
+            "staleness_governance": self._staleness_governance(wiki),
             "action_items": action_items,
         }
         for warning in self._duplicate_warning_action_items(Path(wiki.workspace_path)):
             summary["action_items"].append(warning)
         self._run_eval_if_available(wiki, summary)
+        if auto_tune:
+            summary["auto_tune"] = RuntimeTuningService().auto_tune(
+                wiki,
+                DiagnosisService().analyze(wiki),
+                evaluate_after=lambda: self._run_eval_report_if_available(wiki),
+            )
+        else:
+            summary["auto_tune"] = {"status": "disabled"}
         return summary
 
     def _clean_orphan_authority_entries(self, wiki: WikiConfig) -> int:
@@ -119,10 +134,19 @@ class MaintenanceService:
         return len([doc_id for doc_id in orphan_doc_ids if doc_id])
 
     def _run_eval_if_available(self, wiki: WikiConfig, summary: dict) -> None:
+        try:
+            report = self._run_eval_report_if_available(wiki)
+        except FuturesTimeoutError:
+            summary["eval_timeout"] = True
+            return
+        if report is not None:
+            summary["eval_baseline"] = report
+
+    def _run_eval_report_if_available(self, wiki: WikiConfig) -> dict | None:
         wiki_root = Path(wiki.workspace_path)
         eval_file = wiki_root / "eval" / "retrieval_queries.jsonl"
         if not eval_file.exists():
-            return
+            return None
         actor = ResolvedActor(actor_type="agent", actor_id="system-maintenance", transport="maintenance")
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(
@@ -134,9 +158,9 @@ class MaintenanceService:
                 page_types=None,
             )
             try:
-                summary["eval_baseline"] = future.result(timeout=_MAINTAIN_EVAL_TIMEOUT_SECONDS)
+                return future.result(timeout=_MAINTAIN_EVAL_TIMEOUT_SECONDS)
             except FuturesTimeoutError:
-                summary["eval_timeout"] = True
+                raise
 
     def _detect_duplicate_atom_warnings(self, wiki: WikiConfig) -> int:
         wiki_root = Path(wiki.workspace_path)
@@ -205,3 +229,99 @@ class MaintenanceService:
                 continue
             actions.append(f"Review duplicate atom warning: {doc_ids[0]} <-> {doc_ids[1]}")
         return actions
+
+    def _compile_strategy_counts(self, compile_suggestions: list[dict]) -> dict[str, int]:
+        counts = {"Light": 0, "Standard": 0, "Deep": 0}
+        for candidate in compile_suggestions:
+            strategy = str(candidate.get("compile_strategy") or "Standard")
+            counts[strategy] = counts.get(strategy, 0) + 1
+        return counts
+
+    def _value_metrics(self, wiki_root: Path) -> dict:
+        eval_history = self._read_jsonl(wiki_root / ".agent-wiki" / "eval_history.jsonl")
+        post_compile_query_uplift = 0.0
+        if len(eval_history) >= 2:
+            previous = eval_history[-2].get("metrics") or {}
+            latest = eval_history[-1].get("metrics") or {}
+            post_compile_query_uplift = round(
+                float(latest.get("strict_recall_at_k", 0.0) or 0.0)
+                - float(previous.get("strict_recall_at_k", 0.0) or 0.0),
+                3,
+            )
+
+        manifest = ManifestRepository(wiki_root)
+        atom_doc_ids = {str(entry.get("doc_id")) for entry in manifest.read_all() if entry.get("page_type") == "atom" and entry.get("doc_id")}
+        referenced_atoms: set[str] = set()
+        for entry in self._read_jsonl(wiki_root / "query_outcomes.jsonl"):
+            for doc_id in entry.get("accepted_doc_ids") or []:
+                doc_id = str(doc_id)
+                if doc_id in atom_doc_ids:
+                    referenced_atoms.add(doc_id)
+        atom_reference_rate = round(len(referenced_atoms) / len(atom_doc_ids), 3) if atom_doc_ids else 0.0
+        return {
+            "post_compile_query_uplift": post_compile_query_uplift,
+            "atom_reference_rate": atom_reference_rate,
+        }
+
+    def _staleness_governance(self, wiki: WikiConfig) -> dict:
+        wiki_root = Path(wiki.workspace_path)
+        hot_doc_counts = self._accepted_doc_counts(wiki_root)
+        if not hot_doc_counts:
+            return {"hot_stale_doc_ids": [], "queued_refreshes": 0}
+        staleness_days = int(getattr(wiki.dream_cycle.quality, "staleness_days", 30))
+        cutoff = datetime.now(UTC) - timedelta(days=staleness_days)
+        manifest = ManifestRepository(wiki_root)
+        hot_stale_doc_ids: list[str] = []
+        for doc_id, count in hot_doc_counts.items():
+            if count < 3:
+                continue
+            entry = manifest.find(doc_id)
+            if not entry or entry.get("page_type") not in {"atom", "synthesis"}:
+                continue
+            if not self._is_stale(entry.get("updated_at") or entry.get("updated"), cutoff):
+                continue
+            hot_stale_doc_ids.append(doc_id)
+        hot_stale_doc_ids.sort()
+        queue_entries = []
+        for doc_id in hot_stale_doc_ids:
+            entry = manifest.find(doc_id) or {}
+            queue_entries.append(
+                {
+                    "item_id": f"staleness_refresh:{doc_id}",
+                    "item_type": "staleness_refresh",
+                    "doc_id": doc_id,
+                    "topic": entry.get("topic"),
+                    "problem_cluster": entry.get("problem_cluster"),
+                    "reason": "hot compiled page is stale and should be refreshed",
+                    "content_state": {
+                        "accepted_count": hot_doc_counts[doc_id],
+                        "staleness_days": staleness_days,
+                    },
+                    "status": "open",
+                }
+            )
+        queued = ReviewQueueRepository(wiki_root).append_many(queue_entries)
+        return {"hot_stale_doc_ids": hot_stale_doc_ids, "queued_refreshes": queued}
+
+    def _accepted_doc_counts(self, wiki_root: Path) -> dict[str, int]:
+        counts: Counter[str] = Counter()
+        for entry in self._read_jsonl(wiki_root / "query_outcomes.jsonl"):
+            for doc_id in entry.get("accepted_doc_ids") or []:
+                counts[str(doc_id)] += 1
+        return dict(counts)
+
+    def _is_stale(self, updated_value: str | None, cutoff: datetime) -> bool:
+        if not updated_value:
+            return False
+        try:
+            parsed = datetime.fromisoformat(str(updated_value).replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC) < cutoff
+
+    def _read_jsonl(self, path: Path) -> list[dict]:
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]

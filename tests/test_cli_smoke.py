@@ -1108,3 +1108,34 @@ def test_cli_compile_execute_apply_prints_fallback_priority(monkeypatch, temp_wi
     assert result.exit_code == 0
     assert "status=committed" in result.stdout
     assert "fallback_priority=P1" in result.stdout
+
+
+def test_cli_maintain_auto_tune_flag_forwards_to_service(monkeypatch, temp_wiki_root) -> None:
+    import agent_wiki.transports.cli.app as cli_app
+
+    captured: dict[str, object] = {}
+
+    class FakeMaintenanceService:
+        def run(self, wiki, auto_tune=False):
+            captured["workspace_path"] = wiki.workspace_path
+            captured["auto_tune"] = auto_tune
+            return {"status": "ok"}
+
+    monkeypatch.setattr(cli_app, "MaintenanceService", lambda: FakeMaintenanceService())
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "maintain",
+            "--auto-tune",
+            "--workspace",
+            str(temp_wiki_root),
+            "--registry",
+            "tests/fixtures/registry.yaml",
+        ],
+        env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"},
+    )
+
+    assert result.exit_code == 0
+    assert captured["workspace_path"] == str(temp_wiki_root)
+    assert captured["auto_tune"] is True
