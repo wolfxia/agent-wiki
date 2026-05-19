@@ -399,3 +399,77 @@ def test_maintenance_recovers_timed_out_assigned_queue_items(temp_wiki_root: Pat
     item = next(entry for entry in items if entry["item_id"] == "compile_suggestion:maint-stale")
     assert item["status"] == "open"
     assert item["previous_assigned_to"] == "hermes"
+
+
+def test_maintenance_enqueues_duplicate_atom_warnings(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-dup-1",
+            topic="dup",
+            problem_cluster="cluster-dup",
+            content="# Raw dup one",
+            source_refs=[],
+        ),
+    )
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-dup-2",
+            topic="dup",
+            problem_cluster="cluster-dup",
+            content="# Raw dup two",
+            source_refs=[],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-dup-1",
+            page_type="atom",
+            topic="dup",
+            problem_cluster="cluster-dup",
+            summary="The agent caches compile summaries for repeated query ranking diagnosis.",
+            aliases=["dup"],
+            confidence="high",
+            wikilinks=["[[raw-dup-1]]"],
+            content="# Atom dup one\n\n## Claims\n- Claim.\n\n## Evidence\n- Evidence.",
+            source_refs=["personal-1:raw-dup-1"],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-dup-2",
+            page_type="atom",
+            topic="dup",
+            problem_cluster="cluster-dup",
+            summary="The agent caches compile summaries for repeated query ranking diagnosis flows.",
+            aliases=["dup-two"],
+            confidence="high",
+            wikilinks=["[[raw-dup-2]]"],
+            content="# Atom dup two\n\n## Claims\n- Claim.\n\n## Evidence\n- Evidence.",
+            source_refs=["personal-1:raw-dup-2"],
+        ),
+    )
+
+    summary = MaintenanceService().run(wiki)
+
+    assert summary["duplicate_atom_warnings"] == 1
+    queue_entries = [
+        json.loads(line)
+        for line in (temp_wiki_root / "review_queue.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    duplicate_item = next(entry for entry in queue_entries if entry.get("item_type") == "duplicate_atom_warning")
+    assert duplicate_item["content_state"]["doc_ids"] == ["atom-dup-1", "atom-dup-2"]

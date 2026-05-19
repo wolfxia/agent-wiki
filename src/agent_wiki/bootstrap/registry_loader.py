@@ -72,6 +72,20 @@ class DreamCycleConfig(BaseModel):
     orphan: DreamCycleOrphanConfig = Field(default_factory=DreamCycleOrphanConfig)
 
 
+class QueryRankingTuningConfig(BaseModel):
+    atom_page_type_boost: float = 4.0
+    synthesis_page_type_boost: float = 4.0
+    principle_page_type_boost: float = 2.0
+    purpose_boost: float = 1.5
+    topic_alignment_boost: float = 5.0
+    topic_seed_score: float = 8.0
+    rerank_candidate_multiplier: int = 3
+
+
+class RuntimeTuningConfig(BaseModel):
+    query_ranking: QueryRankingTuningConfig = Field(default_factory=QueryRankingTuningConfig)
+
+
 class WikiConfig(BaseModel):
     wiki_id: str
     type: str
@@ -84,6 +98,7 @@ class WikiConfig(BaseModel):
     retrieval: RetrievalConfig
     compile: CompileConfig = Field(default_factory=CompileConfig)
     dream_cycle: DreamCycleConfig = Field(default_factory=DreamCycleConfig)
+    tuning_defaults: RuntimeTuningConfig = Field(default_factory=RuntimeTuningConfig)
     permissions: list[PermissionConfig] = Field(default_factory=list)
 
 

@@ -4,11 +4,12 @@ import re
 import time
 import uuid
 
-from agent_wiki.bootstrap.registry_loader import WikiConfig
+from agent_wiki.bootstrap.registry_loader import QueryRankingTuningConfig, WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor, RetrievalHit
 from agent_wiki.domain.enums import PageType, Sensitivity
 from agent_wiki.domain.models import QueryInput, QueryResult
 from agent_wiki.application.retrieval_router import RetrievalRouter
+from agent_wiki.application.runtime_tuning import RuntimeTuningService
 from agent_wiki.infrastructure.query.classifier import RuleBasedQueryClassifier
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 from agent_wiki.infrastructure.storage.purpose_reader import PurposeReader
@@ -16,16 +17,15 @@ from agent_wiki.infrastructure.retrieval.topic_index import TopicIndexRepository
 
 
 class QueryService:
-    _RERANK_CANDIDATE_MULTIPLIER = 3
-    _TOPIC_SEED_SCORE = 8.0
-
     def __init__(self) -> None:
         self._classifier = RuleBasedQueryClassifier()
+        self._runtime_tuning = RuntimeTuningService()
 
     def execute(self, wiki: WikiConfig, actor: ResolvedActor, data: QueryInput, *, write_outcome: bool = True) -> QueryResult:
         start_time = time.monotonic()
         query_type = self._classifier.classify(data.query)
         wiki_root = Path(wiki.workspace_path)
+        query_ranking = self._runtime_tuning.load(wiki).query_ranking
         manifest = ManifestRepository(wiki_root)
         manifest_entries = manifest.read_all()
         manifest_by_doc_id = {
@@ -36,13 +36,19 @@ class QueryService:
         router = RetrievalRouter(wiki_root, wiki_id=wiki.wiki_id)
 
         filters = {"page_types": data.page_types} if data.page_types else None
-        hits = router.search(data.query, top_k=self._rerank_top_k(data), filters=filters)
+        hits = router.search(data.query, top_k=self._rerank_top_k(data, query_ranking.rerank_candidate_multiplier), filters=filters)
         if data.include_pending:
             hits.extend(self._search_pending_truth_zone(wiki_root, wiki.wiki_id, data.query))
         purpose_reader = PurposeReader(wiki_root)
         hits = self._merge_hits(
             hits,
-            self._seed_purpose_topic_hits(manifest_entries, purpose_reader, data.query, manifest_by_doc_id),
+            self._seed_purpose_topic_hits(
+                manifest_entries,
+                purpose_reader,
+                data.query,
+                manifest_by_doc_id,
+                query_ranking.topic_seed_score,
+            ),
         )
 
         filtered_hits = [
@@ -60,7 +66,7 @@ class QueryService:
             hit for hit in filtered_hits
             if self._sensitivity_allowed(manifest, hit.doc_id, max_sensitivity, manifest_by_doc_id)
         ]
-        filtered_hits = self._apply_ranking(manifest, purpose_reader, filtered_hits, manifest_by_doc_id)
+        filtered_hits = self._apply_ranking(manifest, purpose_reader, filtered_hits, manifest_by_doc_id, query_ranking)
         l2_context = self._build_l2_context(manifest, filtered_hits, manifest_by_doc_id)
         l3_proof = self._build_l3_proof(manifest, filtered_hits, manifest_by_doc_id)
         topic_index_entries = {
@@ -138,13 +144,20 @@ class QueryService:
             return 2
         return 1
 
-    def _purpose_boost(self, manifest: ManifestRepository, purpose_reader: PurposeReader, doc_id: str, manifest_by_doc_id: dict[str, dict] | None = None) -> float:
+    def _purpose_boost(
+        self,
+        manifest: ManifestRepository,
+        purpose_reader: PurposeReader,
+        doc_id: str,
+        boost: float,
+        manifest_by_doc_id: dict[str, dict] | None = None,
+    ) -> float:
         entry = (manifest_by_doc_id or {}).get(doc_id) or manifest.find(doc_id)
         if entry is None:
             return 0.0
         topic = entry.get("topic", "")
         if topic and purpose_reader.is_aligned(topic):
-            return 1.5
+            return boost
         return 0.0
 
     def _topic_alignment_boost(
@@ -152,6 +165,7 @@ class QueryService:
         manifest: ManifestRepository,
         purpose_reader: PurposeReader,
         doc_id: str,
+        boost: float,
         manifest_by_doc_id: dict[str, dict] | None = None,
     ) -> float:
         entry = (manifest_by_doc_id or {}).get(doc_id) or manifest.find(doc_id)
@@ -161,20 +175,42 @@ class QueryService:
         if not topic:
             return 0.0
         if purpose_reader.is_aligned(topic):
-            return 5.0
+            return boost
         return 0.0
 
-    def _apply_ranking(self, manifest: ManifestRepository, purpose_reader: PurposeReader, hits: list[RetrievalHit], manifest_by_doc_id: dict[str, dict] | None = None) -> list[RetrievalHit]:
+    def _apply_ranking(
+        self,
+        manifest: ManifestRepository,
+        purpose_reader: PurposeReader,
+        hits: list[RetrievalHit],
+        manifest_by_doc_id: dict[str, dict] | None = None,
+        query_ranking=None,
+    ) -> list[RetrievalHit]:
+        query_ranking = query_ranking or QueryRankingTuningConfig()
         ranked: list[RetrievalHit] = []
         for hit in hits:
             manifest_entry = (manifest_by_doc_id or {}).get(hit.doc_id) or manifest.find(hit.doc_id) or {}
             page_type_boost = 0.0
-            if manifest_entry.get("page_type") in {PageType.ATOM.value, PageType.SYNTHESIS.value}:
-                page_type_boost = 4.0
+            if manifest_entry.get("page_type") == PageType.ATOM.value:
+                page_type_boost = float(query_ranking.atom_page_type_boost)
+            elif manifest_entry.get("page_type") == PageType.SYNTHESIS.value:
+                page_type_boost = float(query_ranking.synthesis_page_type_boost)
             elif manifest_entry.get("page_type") == PageType.PRINCIPLE.value:
-                page_type_boost = 2.0
-            purpose_boost = self._purpose_boost(manifest, purpose_reader, hit.doc_id, manifest_by_doc_id)
-            topic_alignment_boost = self._topic_alignment_boost(manifest, purpose_reader, hit.doc_id, manifest_by_doc_id)
+                page_type_boost = float(query_ranking.principle_page_type_boost)
+            purpose_boost = self._purpose_boost(
+                manifest,
+                purpose_reader,
+                hit.doc_id,
+                float(query_ranking.purpose_boost),
+                manifest_by_doc_id,
+            )
+            topic_alignment_boost = self._topic_alignment_boost(
+                manifest,
+                purpose_reader,
+                hit.doc_id,
+                float(query_ranking.topic_alignment_boost),
+                manifest_by_doc_id,
+            )
             freshness = float(manifest_entry.get("updated_at_score") or 0.0)
             manifest_priority = float(self._manifest_priority(manifest, hit.doc_id, manifest_by_doc_id))
             final_score = hit.score + page_type_boost + purpose_boost + topic_alignment_boost + freshness + manifest_priority
@@ -289,9 +325,9 @@ class QueryService:
             )
         return breakdown
 
-    def _rerank_top_k(self, data: QueryInput) -> int:
+    def _rerank_top_k(self, data: QueryInput, multiplier: int) -> int:
         base = data.page_types and 20 or 30
-        return max(30, base * self._RERANK_CANDIDATE_MULTIPLIER)
+        return max(30, base * multiplier)
 
     def _seed_purpose_topic_hits(
         self,
@@ -299,6 +335,7 @@ class QueryService:
         purpose_reader: PurposeReader,
         query: str,
         manifest_by_doc_id: dict[str, dict],
+        topic_seed_score: float,
     ) -> list[RetrievalHit]:
         purpose = purpose_reader.read()
         matched_topics = [topic for topic in purpose.get("topics", []) if self._query_mentions_topic(query, str(topic))]
@@ -323,9 +360,9 @@ class QueryService:
                 RetrievalHit(
                     wiki_id=str(entry.get("wiki_id") or ""),
                     doc_id=doc_id,
-                    score=self._TOPIC_SEED_SCORE,
+                    score=topic_seed_score,
                     metadata={
-                        "lexical_score": self._TOPIC_SEED_SCORE,
+                        "lexical_score": topic_seed_score,
                         "structured_score": 0.0,
                         "topic_seeded": True,
                     },

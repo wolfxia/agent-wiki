@@ -1,5 +1,7 @@
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from collections import defaultdict
+import re
 
 from agent_wiki.application.compile_suggest import CompileSuggestService
 from agent_wiki.application.eval_retrieval import EvalRetrievalService
@@ -33,6 +35,7 @@ class MaintenanceService:
         relations = RelationsService()
         co_occurrences = relations.detect_and_enqueue_co_occurrences(wiki)
         cross_references = relations.detect_and_enqueue_cross_references(wiki)
+        duplicate_atom_warnings = self._detect_duplicate_atom_warnings(wiki)
 
         metadata_repair_candidates = [c for c in compile_candidates if c["kind"] == "needs_metadata_repair"]
         compile_suggestions = [c for c in compile_candidates if c["kind"] != "needs_metadata_repair"]
@@ -70,8 +73,11 @@ class MaintenanceService:
             "quality_signals": len(quality_signals),
             "co_occurrence_candidates": len(co_occurrences),
             "cross_reference_candidates": len(cross_references),
+            "duplicate_atom_warnings": duplicate_atom_warnings,
             "action_items": action_items,
         }
+        for warning in self._duplicate_warning_action_items(Path(wiki.workspace_path)):
+            summary["action_items"].append(warning)
         self._run_eval_if_available(wiki, summary)
         return summary
 
@@ -131,3 +137,71 @@ class MaintenanceService:
                 summary["eval_baseline"] = future.result(timeout=_MAINTAIN_EVAL_TIMEOUT_SECONDS)
             except FuturesTimeoutError:
                 summary["eval_timeout"] = True
+
+    def _detect_duplicate_atom_warnings(self, wiki: WikiConfig) -> int:
+        wiki_root = Path(wiki.workspace_path)
+        manifest = ManifestRepository(wiki_root)
+        atoms_by_cluster: defaultdict[tuple[str, str], list[dict]] = defaultdict(list)
+        for entry in manifest.read_all():
+            if entry.get("page_type") != "atom":
+                continue
+            summary = str(entry.get("summary") or "").strip()
+            topic = str(entry.get("topic") or "").strip()
+            problem_cluster = str(entry.get("problem_cluster") or "").strip()
+            if not summary or not topic or not problem_cluster:
+                continue
+            atoms_by_cluster[(topic, problem_cluster)].append(entry)
+
+        queue_entries: list[dict] = []
+        for (topic, problem_cluster), atoms in atoms_by_cluster.items():
+            for left_index in range(len(atoms)):
+                for right_index in range(left_index + 1, len(atoms)):
+                    left = atoms[left_index]
+                    right = atoms[right_index]
+                    similarity = self._summary_jaccard(
+                        str(left.get("summary") or ""),
+                        str(right.get("summary") or ""),
+                    )
+                    if similarity <= 0.8:
+                        continue
+                    doc_ids = sorted([str(left.get("doc_id") or ""), str(right.get("doc_id") or "")])
+                    queue_entries.append(
+                        {
+                            "item_id": f"duplicate_atom_warning:{topic}:{problem_cluster}:{doc_ids[0]}:{doc_ids[1]}",
+                            "item_type": "duplicate_atom_warning",
+                            "doc_id": doc_ids[0],
+                            "topic": topic,
+                            "problem_cluster": problem_cluster,
+                            "content_state": {
+                                "doc_ids": doc_ids,
+                                "similarity": round(similarity, 3),
+                            },
+                            "reason": "near-duplicate atom summaries in the same cluster",
+                            "status": "open",
+                        }
+                    )
+        return ReviewQueueRepository(wiki_root).append_many(queue_entries)
+
+    def _summary_jaccard(self, left: str, right: str) -> float:
+        left_tokens = self._summary_tokens(left)
+        right_tokens = self._summary_tokens(right)
+        if not left_tokens or not right_tokens:
+            return 0.0
+        intersection = len(left_tokens & right_tokens)
+        union = len(left_tokens | right_tokens)
+        return intersection / union if union else 0.0
+
+    def _summary_tokens(self, value: str) -> set[str]:
+        return {token for token in re.findall(r"[A-Za-z0-9\u4e00-\u9fff]+", value.lower()) if token}
+
+    def _duplicate_warning_action_items(self, wiki_root: Path) -> list[str]:
+        queue = ReviewQueueRepository(wiki_root)
+        actions: list[str] = []
+        for item in queue.read_all():
+            if item.get("item_type") != "duplicate_atom_warning" or item.get("status") != "open":
+                continue
+            doc_ids = (item.get("content_state") or {}).get("doc_ids") or []
+            if len(doc_ids) < 2:
+                continue
+            actions.append(f"Review duplicate atom warning: {doc_ids[0]} <-> {doc_ids[1]}")
+        return actions
