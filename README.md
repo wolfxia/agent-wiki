@@ -1,14 +1,14 @@
 # Agent Wiki
 
-> Version: v0.2.0
-> Date: 2026-05-17
-> Status: working multi-agent knowledge system with MCP, CLI, REST, Obsidian sync, FTS5 retrieval, and graph visualization.
+> Version: v0.4.0
+> Date: 2026-05-19
+> Status: working multi-agent knowledge system with MCP, CLI, REST, Obsidian sync, FTS5 retrieval, graph visualization, compile quality gate, diagnosis engine, and controlled self-evolution.
 >
 > One knowledge base, many agent frontends: Hermes, Claude Code, Codex, OpenClaw, and other agents can query, capture, compile, lint, and sync through shared core services.
 
 Agent Wiki is an agent-agnostic knowledge system for long-lived AI memory. It treats the workspace as the single source of truth, exposes a real FastMCP stdio server for agents, and keeps human-facing tools such as Obsidian as read-write views over the same authority model.
 
-Current data baseline: **1472 workspace pages**, **1488 manifest entries**, **383 indexed topics**, and **345 passing tests**.
+Current data baseline: **5204 workspace pages**, **4724 manifest entries**, **4723 indexed entries**, and **387 passing tests**.
 
 ## Quick Integration Guide
 
@@ -115,7 +115,7 @@ Agent Wiki follows this authority chain:
 workspace SSOT -> local runtime indexes -> external human views
 ```
 
-Core decisions in v0.2.0:
+Core decisions in v0.4.0:
 
 - **Workspace = SSOT**: committed pages, `MANIFEST.jsonl`, `retrieval_index.jsonl`, `topic_index.md`, logs, and review records live in the workspace.
 - **Obsidian = display/read-write view**: Obsidian is for humans. `pull-view` imports edits into the workspace; `push-view` exports workspace pages back to the vault.
@@ -124,6 +124,10 @@ Core decisions in v0.2.0:
 - **Team expansion model**: the architecture supports N personal workspaces plus M team workspaces, with permission tiers per actor, wiki, operation, page type, and A/B/C gate.
 - **Compile and retrieval are one loop**: intake metadata feeds compile candidates, compiled schema feeds retrieval, query misses feed feedback and weekly review.
 - **Typed graph is configurable**: `relation_schema.yaml` defines zero-LLM relation extraction, `maintain` rebuilds `knowledge_graph.jsonl`, graph relations carry `confidence_label` / `confidence_score` / `source_refs`, ambiguous relations are routed to `relation_review` items, and query ranking weights extracted vs inferred relations when graph hits are available.
+- **v0.4 Compile quality gate**: 4-layer gate (schema validation → required sections → claim coverage → source fidelity) with retry pipeline (transport retry → output repair → quality rewrite → human review).
+- **v0.4 Diagnosis engine**: pure-rule attribution (5 types: `parameter_drift`, `retrieval_ranking_shift`, `compile_quality_degradation`, `coverage_gap`, `staleness`) — no LLM dependency.
+- **v0.4 Runtime tuning**: two-layer config (`registry.yaml` stable defaults + `runtime_tuning.json` dynamic overrides) with `param_history.jsonl` audit trail and `frozen_baseline.json` for auto-rollback.
+- **v0.4 Controlled self-evolution**: `auto_tune` (whitelist, single-variable, step constraint, recall-drop rollback), `compile_strategy` (Light/Standard/Deep via `priority_score`), `value_metrics` (post-compile query uplift, atom reference rate), `staleness_governance`.
 
 ### Compile Pipeline
 
@@ -136,6 +140,9 @@ raw intake
   -> aw compile-execute
        -> claims compile_suggestion and emits compile_prepare JSON
        -> external agent writes content and calls back with --input-file
+  -> compile quality gate (v0.4)
+       -> 4-layer check: schema, sections, claim coverage, source fidelity
+       -> retry: transport → output repair → quality rewrite → human review
   -> agent-authored compile_update
        -> atom / synthesis truth zone
   -> retrieval indexes
@@ -163,18 +170,40 @@ compile:
     concurrency: 1
 ```
 
-## What Is New In v0.2.0
+## What Is New In v0.4.0
 
-- FTS5 full-text search through `SQLiteFTSIndexProvider`, stored in `.agent-wiki/retrieval.db`, with topic/problem-cluster/summary weighted above body content and prefix fallback for short queries.
-- Query ranking now exposes debug scores: `page_type_boost`, `lexical_score`, `structured_score`, `purpose_boost`, `topic_alignment_boost`, and `freshness`; `QueryInput.page_types` can filter retrieval to page types such as `atom` and `synthesis`.
-- `aw eval-retrieval` runs JSONL retrieval eval sets and reports recall@k, precision@k, MRR, compiled hit ratio, and latency stats without writing query outcomes.
-- Query outcome logging records latency, page-type distribution, score breakdown, and empty feedback hooks (`accepted_doc_ids`, `rejected_doc_ids`) for later evaluation loops.
-- Index consistency health checks cover manifest, `retrieval_index.jsonl`, FTS, pages, and topic index consistency.
-- `aw migrate --normalize-doc-ids` lowercases and hyphenates old `doc_id`s, renames page files, updates source refs, and backs up `MANIFEST.jsonl`.
-- Obsidian `push-view` exports workspace pages with configurable `push_view_routing`; generic defaults are `raw`, `atoms`, `synthesis`, `principles`, and `knowledge-graph`.
-- Obsidian frontmatter dates are sanitized so YAML dates do not break JSON serialization during `pull-view`.
-- Knowledge graph visualizer ships as `knowledge-graph.html`, using sigma.js, graphology, and ForceAtlas2.
-- MCP `wiki.capture_raw` bug fix prevents the previous `name summary not defined` failure.
+### Phase A: Evaluation Baseline
+- `aw eval` / `aw eval-retrieval` now computes strict recall, loose recall, must-not violation, MRR, and compiled hit ratio against `eval/retrieval_queries.jsonl`.
+- `eval_history.jsonl` records each eval run with full metrics, per-query results, and runtime tuning snapshot for regression detection.
+- `quality_report` extended: `atom_field_completeness`, `section_structure_compliance`, `source_ref_coverage`, `eval_baseline`.
+- Real baseline: strict_recall@5=0.479, loose_recall@5=0.542, must_not_violation@5=0.0, MRR=0.371.
+
+### Phase B: Compile Quality Gate
+- New `CompileQualityGate` service: 4-layer checks on every compile output (schema → required sections → claim coverage → source fidelity).
+- `compile_prepare` enhanced: dynamic token budget, existing atom context injection, sentence-level evidence extraction.
+- Retry pipeline: invalid output → output repair; quality rejected → quality rewrite; then human review.
+
+### Phase C: Diagnosis and Tuning Loop
+- New `DiagnosisService`: pure-rule attribution engine with 5 types — `parameter_drift`, `retrieval_ranking_shift`, `compile_quality_degradation`, `coverage_gap`, `staleness`.
+- New `RuntimeTuningService`: two-layer config (`registry.yaml` defaults + `runtime_tuning.json` overrides). All param changes recorded in `param_history.jsonl`.
+- `frozen_baseline.json`: snapshot of eval metrics at baseline time, used for rollback detection.
+- Negative feedback creates `feedback_issue` items in review queue and back-writes to `query_outcomes.jsonl`.
+- Duplicate atom detection in maintain: near-duplicate atoms flagged as warnings.
+
+### Phase D: Controlled Automation
+- `compile_strategy`: Light (summary only), Standard (default), Deep (3-round) — selected by `priority_score`.
+- `auto_tune`: single-variable, whitelist-constrained, step-limited. Rollback when recall drops >2%. Disabled by default; requires `--auto-tune`.
+- `value_metrics`: post-compile query uplift, atom reference rate, staleness governance.
+- `staleness_governance`: hot stale docs auto-queued for refresh.
+
+### Infrastructure Improvements
+- `aw rebuild-index`: removes orphan index entries, rebuilds FTS from manifest.
+- `aw maintain` performance: 5min+ → 8s (batch writes, FTS transactions, O(n²)→O(n) relations).
+- Atomic manifest writes (temp+fsync+rename), NUL-tolerant reads, read cache.
+
+### v0.2.0 Features (retained)
+- FTS5 full-text search, query ranking debug scores, query outcome logging.
+- Index consistency health checks, doc_id migration, Obsidian push-view routing, knowledge graph visualizer.
 
 ## Runtime Surfaces
 
@@ -186,7 +215,8 @@ compile:
 | `aw health` | Registry load, actor resolution, and tool-list self-check |
 | `aw serve` | Start FastMCP stdio server |
 | `aw query` | Query the knowledge base |
-| `aw eval-retrieval` | Run retrieval quality evals from `eval/retrieval_queries.jsonl` or a custom JSONL file |
+| `aw eval` / `aw eval-retrieval` | Run retrieval quality evals with strict/loose recall, must-not violation, MRR metrics |
+| `aw rebuild-index` | Remove orphan index entries and rebuild FTS from manifest (v0.4) |
 | `aw capture-raw` | Capture raw source or learning note |
 | `aw compile-prepare` | Prepare agent-facing raw evidence packets for compilation |
 | `aw compile-execute` | Claim compile suggestions, emit JSON packets, apply generated content from `--input-file`, or run one-command LLM compile with `--apply` |
@@ -203,7 +233,7 @@ compile:
 | `aw approvals propose/approve/reject` | C-level proposal workflow; `reject` is currently a placeholder and exits with code 1 |
 | `aw migrate --slugify-doc-ids` | Preserve vault relative path in doc ids |
 | `aw migrate --normalize-doc-ids` | Normalize doc ids to lowercase hyphen form |
-| `aw maintain` | Run maintenance checks and queue generation |
+| `aw maintain` | Run self-evolution loop: repair, compile suggestions, relations, quality report, diagnosis, tuning (v0.4: `--auto-tune` flag) |
 | `aw-agent` | Alias entrypoint for the same CLI/service package |
 
 ### MCP
@@ -299,7 +329,7 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
-Current verified suite: **319 passed**.
+Current verified suite: **387 passed**.
 
 Useful operational checks:
 
@@ -315,6 +345,7 @@ aw sync status --registry /Users/chao/agent-wiki-data/registry.yaml --wiki-id ma
 - `docs/design.md` — current baseline vs target design.
 - `docs/requirements-and-architecture.md` — requirements, phase boundaries, and architecture constraints.
 - `docs/ROADMAP.md` — v0.2+ execution order and known issues.
+- `docs/superpowers/specs/2026-05-19-v0.4-compile-quality-and-self-evolution-design.md` — v0.4 compile quality gate and self-evolution design spec.
 - `docs/deployment/hermes-mcp.md` — Hermes MCP sidecar configuration.
 - `core/schema.md` — operation and schema contract.
 

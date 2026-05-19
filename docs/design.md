@@ -1,8 +1,8 @@
 # Agent-Wiki Architecture Design
 
 > Universal Knowledge System for Multi-Agent Environments  
-> v0.2.0 — 2026-05-17  
-> Status: Design baseline aligned against the current Phase 1 implementation, including real FastMCP transport, shared access policy, explicit Obsidian push-view, and the unified knowledge-system architecture spec
+> v0.4.0 — 2026-05-19  
+> Status: Design baseline aligned against the current Phase 1 + v0.4 implementation, including real FastMCP transport, shared access policy, explicit Obsidian push-view, compile quality gate, diagnosis engine, runtime tuning, and controlled self-evolution
 
 > Authority note: `docs/specs/knowledge-system-architecture.md` is the authoritative end-state architecture spec. This document must distinguish current baseline from target design explicitly.
 
@@ -58,6 +58,10 @@ The current implementation in `src/agent_wiki/` delivers a filesystem- and JSONL
 - `src/agent_wiki/application/feedback.py`
 - `src/agent_wiki/application/weekly_review.py`
 - `src/agent_wiki/application/approvals.py`
+- `src/agent_wiki/application/compile_quality_gate.py` (v0.4 Phase B)
+- `src/agent_wiki/application/diagnosis.py` (v0.4 Phase C)
+- `src/agent_wiki/application/runtime_tuning.py` (v0.4 Phase C)
+- `src/agent_wiki/application/eval_retrieval.py` (v0.4 Phase A)
 - `src/agent_wiki/application/propagation.py`
 - `src/agent_wiki/application/retrieval_router.py`
 - `src/agent_wiki/application/migration.py`
@@ -1362,4 +1366,142 @@ The seven DFX dimensions are intentionally coupled:
 - **Maintainability** defines whether the architecture can evolve without losing clarity.
 - **Extensibility** defines whether new tools can join the system without forking the core.
 
-For Agent Wiki, these are not secondary concerns layered on top of the product. They are part of the product definition itself, because the system’s value depends on trusted multi-agent knowledge operations rather than simple file storage.
+For Agent Wiki, these are not secondary concerns layered on top of the product. They are part of the product definition itself, because the system's value depends on trusted multi-agent knowledge operations rather than simple file storage.
+
+---
+
+## 13. v0.4: Compile Quality Gate, Diagnosis, and Self-Evolution
+
+> Added: 2026-05-19 | Spec: `docs/superpowers/specs/2026-05-19-v0.4-compile-quality-and-self-evolution-design.md`
+
+### 13.1 Architecture Overview
+
+v0.4 adds three interconnected subsystems on top of the existing compile pipeline:
+
+```text
+                    ┌─────────────────────┐
+                    │   aw maintain --auto-tune   │
+                    └──────────┬──────────┘
+                               │
+              ┌────────────────┼────────────────┐
+              ▼                ▼                ▼
+     ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+     │  Diagnosis    │ │ RuntimeTuning│ │  Eval        │
+     │  Service      │ │  Service     │ │  Retrieval   │
+     └──────┬───────┘ └──────┬───────┘ └──────┬───────┘
+            │                │                │
+            ▼                ▼                ▼
+     param_history    runtime_tuning    eval_history
+     diagnosis_report  .json            .jsonl
+                      frozen_baseline
+                      .json
+```
+
+### 13.2 Phase A: Evaluation Baseline
+
+**Purpose**: Establish ground truth for retrieval quality measurement.
+
+- `EvalRetrievalService` computes: strict_recall@k, loose_recall@k, must_not_violation@k, MRR, compiled_hit_ratio
+- `eval_history.jsonl`: append-only log of eval runs with metrics + tuning snapshot
+- `quality_report` extensions: `atom_field_completeness`, `section_structure_compliance`, `source_ref_coverage`, `eval_baseline`
+- Eval queries in `eval/retrieval_queries.jsonl` with `expected_doc_ids`, `acceptable_doc_ids`, `must_not_doc_ids`
+
+### 13.3 Phase B: Compile Quality Gate
+
+**Purpose**: Prevent low-quality compiled atoms from entering the knowledge base.
+
+4-layer gate applied to every compile output:
+
+| Layer | Check | Failure Action |
+|-------|-------|---------------|
+| 1 | Schema validation | output_repair retry |
+| 2 | Required sections (Claims, Evidence) | output_repair retry |
+| 3 | Claim coverage ≥ 50% of source claims | quality_rewrite retry |
+| 4 | Source fidelity (no fabrication) | quality_rewrite retry |
+
+Retry pipeline: `transport_retry → output_repair → quality_rewrite → human_review`
+
+`compile_prepare` enhancements:
+- Dynamic token budget based on raw content size
+- Existing atom context injection (same topic summaries)
+- Sentence-level evidence extraction (not just "Claim"-prefixed lines)
+
+### 13.4 Phase C: Diagnosis and Tuning
+
+**Purpose**: Detect and diagnose quality degradation without LLM dependency.
+
+**DiagnosisService** — pure-rule decision tree:
+
+| Attribution Type | Detection Method |
+|-----------------|------------------|
+| `parameter_drift` | Compare current param values vs frozen_baseline |
+| `retrieval_ranking_shift` | Query outcome hit rate change over time window |
+| `compile_quality_degradation` | Quality gate failure rate increase |
+| `coverage_gap` | Topic clusters with raw but no compiled pages |
+| `staleness` | Pages not updated beyond threshold |
+
+**RuntimeTuningService** — two-layer config:
+
+```text
+registry.yaml (stable defaults)
+    ↓ overlay
+runtime_tuning.json (dynamic overrides)
+    ↓ audit
+param_history.jsonl (every change with trigger source)
+    ↓ safety
+frozen_baseline.json (eval snapshot for rollback)
+```
+
+### 13.5 Phase D: Controlled Automation
+
+**Purpose**: Allow safe self-evolution with bounded parameter adjustment.
+
+**auto_tune** guards:
+- Whitelist: only 7 low-risk parameters (topic_alignment_boost, purpose_boost, etc.)
+- Single-variable: one param per maintain cycle
+- Step constraint: max step = 1.0 per adjustment
+- Baseline required: must have eval_before snapshot
+- Rollback: recall drops >2% → auto-revert
+- Default: disabled; requires `--auto-tune` CLI flag
+
+**compile_strategy** — priority-based:
+
+| Strategy | Score Range | Behavior |
+|----------|-----------|----------|
+| Light | < 5 | Summary extraction only |
+| Standard | 5-12 | Default compile |
+| Deep | ≥ 12 | 3-round recompile |
+
+`priority_score = raw_count×0.15 + query_hits×2.0 + query_misses×0.8 + purpose×3.0 - compiled×0.3 + failures×1.5 + staleness×0.1 + conflicts×2.0`
+
+**value_metrics**: post_compile_query_uplift, atom_reference_rate, staleness_governance.
+
+### 13.6 Performance Improvements
+
+| Operation | Before | After | Technique |
+|-----------|--------|-------|-----------|
+| maintain (full) | 5min+ timeout | 8s | Batch manifest writes, FTS transactions |
+| manifest repair | 143s (per-entry) | <1s (batch) | `batch_upsert()` instead of loop |
+| FTS rebuild | 250s (per-entry) | <1s (batch) | `BEGIN IMMEDIATE` + `executemany()` |
+| relation computation | O(n²) | O(n) | Bucket-based `(topic, cluster)` grouping |
+| manifest read | 4MB full read | cache hit | `(mtime_ns, size)` keyed cache |
+| manifest write | direct `open("w")` | atomic | temp + fsync + rename |
+
+### 13.7 New CLI Commands
+
+| Command | Purpose |
+|---------|---------|
+| `aw eval` | Run eval with strict/loose recall metrics |
+| `aw rebuild-index` | Remove orphan index entries, rebuild FTS |
+| `aw maintain --auto-tune` | Enable controlled parameter adjustment |
+
+### 13.8 Known Issues (v0.4 Review)
+
+From code review (2026-05-19):
+
+1. **feedback.py** appends to `query_outcomes.jsonl` instead of separate file → pollutes hit_rate metrics
+2. **compile_prepare._existing_atom_summaries** logic may skip same-cluster atoms (under investigation)
+3. **runtime_tuning._nested_set** crashes on malformed JSON (needs defensive type check)
+4. **maintenance.py** growing into a god module (9 services, 12+ steps) — needs decomposition
+5. **auto_tune** lacks frequency limit and value range constraints
+6. New v0.4 modules return bare `dict` instead of Pydantic models
