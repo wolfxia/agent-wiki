@@ -107,6 +107,24 @@ aw query "How should Hermes connect to agent-wiki?" \
   --wiki-id main
 ```
 
+### System Overview
+
+![v0.4 System Overview](docs/architecture/v0.4-system-overview.svg)
+
+### Compile Pipeline & Self-Evolution
+
+![v0.4 Compile Pipeline and Self-Evolution](docs/architecture/v0.4-compile-pipeline-and-self-evolution.svg)
+
+The compile pipeline turns raw evidence into agent working memory. v0.4 adds a 4-layer quality gate with retry pipeline, and feeds compiled results into the self-evolution loop: eval → diagnosis → tuning → verify → compile strategy → value metrics → next cycle.
+
+### Write Propagation
+
+![Write Propagation](docs/architecture/write-propagation.png)
+
+### Query and Retrieval
+
+![Query and Retrieval](docs/architecture/query-retrieval.png)
+
 ## Architecture Decisions
 
 Agent Wiki follows this authority chain:
