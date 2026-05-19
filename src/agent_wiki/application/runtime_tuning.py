@@ -204,6 +204,8 @@ class RuntimeTuningService:
             if isinstance(value, dict) and isinstance(target.get(key), dict):
                 self._deep_merge(target[key], value)
                 continue
+            if isinstance(target.get(key), dict) and not isinstance(value, dict):
+                continue
             target[key] = value
 
     def _nested_get(self, payload: dict[str, Any], parameter_name: str) -> Any:
@@ -219,7 +221,10 @@ class RuntimeTuningService:
         current: dict[str, Any] = updated
         parts = parameter_name.split(".")
         for part in parts[:-1]:
-            current = current.setdefault(part, {})
+            next_value = current.get(part)
+            if not isinstance(next_value, dict):
+                current[part] = {}
+            current = current[part]
         current[parts[-1]] = new_value
         return updated
 

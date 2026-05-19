@@ -121,6 +121,29 @@ def test_runtime_tuning_update_writes_history_and_freezes_baseline(temp_wiki_roo
     assert frozen == baseline.model_dump(mode="json")
 
 
+def test_runtime_tuning_update_recovers_malformed_nested_object(temp_wiki_root: Path) -> None:
+    wiki = _wiki(temp_wiki_root)
+    runtime_root = temp_wiki_root / ".agent-wiki"
+    runtime_root.mkdir(exist_ok=True)
+    (runtime_root / "runtime_tuning.json").write_text(
+        json.dumps({"query_ranking": "corrupt"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    updated = RuntimeTuningService().update_parameter(
+        wiki=wiki,
+        parameter_name="query_ranking.topic_alignment_boost",
+        new_value=7.0,
+        trigger="manual_repair",
+        expected_effect="recover malformed runtime tuning",
+        eval_before={"strict_recall_at_k": 0.8},
+    )
+
+    assert updated.query_ranking.topic_alignment_boost == 7.0
+    runtime = json.loads((runtime_root / "runtime_tuning.json").read_text(encoding="utf-8"))
+    assert runtime["query_ranking"]["topic_alignment_boost"] == 7.0
+
+
 def test_auto_tune_applies_single_low_risk_small_step_when_eval_exists(temp_wiki_root: Path) -> None:
     wiki = _wiki(temp_wiki_root)
     runtime_root = temp_wiki_root / ".agent-wiki"
