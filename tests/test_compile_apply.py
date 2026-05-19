@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from agent_wiki.application.compile_apply import CompileApplyService
 from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
 from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
@@ -203,3 +204,29 @@ def test_compile_apply_persists_retrieval_ready_metadata(temp_wiki_root: Path) -
     assert "confidence" in manifest
     assert "aliases" in manifest
     assert "wikilinks" in manifest
+
+
+def test_parse_structured_output_extracts_json_from_preamble_and_code_fence() -> None:
+    service = CompileApplyService()
+
+    result = service._parse_structured_output(
+        """前置说明\n<think>reasoning</think>\n```json
+{
+  \"content\": \"# 标题\\n\\n## Claims\\n- claim\\n\\n## Evidence\\n- evidence\",
+  \"summary\": \"摘要\",
+  \"confidence\": \"high\"
+}
+```\n后置说明"""
+    )
+
+    assert result is not None
+    assert result.summary == "摘要"
+    assert result.confidence == "high"
+
+
+def test_parse_structured_output_returns_none_for_garbage() -> None:
+    service = CompileApplyService()
+
+    result = service._parse_structured_output("not json at all")
+
+    assert result is None

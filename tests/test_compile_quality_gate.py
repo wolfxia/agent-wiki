@@ -66,3 +66,55 @@ def test_compile_quality_gate_passes_retrieval_ready_content() -> None:
     assert result["quality_status"] == "pass"
     assert result["critical_fact_coverage"] == 1.0
     assert result["source_ref_coverage"] == 1.0
+
+
+def test_compile_quality_gate_covers_chinese_content_with_doc_id_substring() -> None:
+    gate = CompileQualityGate()
+
+    result = gate.evaluate(
+        CompileGeneratedInput(
+            item_id="compile_suggestion:test:0001",
+            doc_id="atom-agent-os-scheduling",
+            page_type="atom",
+            topic="agent-os",
+            problem_cluster="调度",
+            content=(
+                "# Agent OS 调度\n\n"
+                "## Claims\n"
+                "- 这条中文总结来自 agent-os_2026-05-03-agent-scheduling-notes。\n\n"
+                "## Evidence\n"
+                "- source_ref 保留为 agent-os_2026-05-03-agent-scheduling-notes。"
+            ),
+            source_refs=["personal-1:agent-os_2026-05-03-agent-scheduling-notes"],
+            summary="中文调度总结。",
+            confidence="high",
+        )
+    )
+
+    assert result["critical_fact_coverage"] == 1.0
+
+
+def test_compile_quality_gate_covers_mixed_chinese_doc_id_by_bigram_overlap() -> None:
+    gate = CompileQualityGate()
+
+    result = gate.evaluate(
+        CompileGeneratedInput(
+            item_id="compile_suggestion:test:0001",
+            doc_id="atom-chinese-mixed",
+            page_type="atom",
+            topic="agent-os",
+            problem_cluster="调度",
+            content=(
+                "# 中文混合来源\n\n"
+                "## Claims\n"
+                "- 该结论覆盖 智能体调度 的上下文，并保留 agent-os 主题。\n\n"
+                "## Evidence\n"
+                "- 原始资料讨论智能体调度策略。"
+            ),
+            source_refs=["personal-1:智能体调度-agent-os-notes"],
+            summary="智能体调度总结。",
+            confidence="high",
+        )
+    )
+
+    assert result["critical_fact_coverage"] == 1.0
