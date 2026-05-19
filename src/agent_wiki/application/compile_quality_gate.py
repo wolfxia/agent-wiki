@@ -48,9 +48,33 @@ class CompileQualityGate:
         for source_ref in source_refs:
             _, _, doc_id = source_ref.partition(":")
             tokens = set(re.findall(r"[a-z0-9_-]+", doc_id.lower()))
-            if tokens and tokens.issubset(content_tokens):
+            if self._doc_id_covered(doc_id, content, content_tokens, tokens):
                 covered += 1
         return covered / len(source_refs)
+
+    def _doc_id_covered(self, doc_id: str, content: str, content_tokens: set[str], doc_id_tokens: set[str]) -> bool:
+        lowered_content = content.lower()
+        lowered_doc_id = doc_id.lower()
+
+        if lowered_doc_id and lowered_doc_id in lowered_content:
+            return True
+
+        if doc_id_tokens and doc_id_tokens.issubset(content_tokens):
+            return True
+
+        content_bigrams = self._cjk_bigrams(content)
+        doc_id_bigrams = self._cjk_bigrams(doc_id)
+        if doc_id_bigrams:
+            overlap = len(content_bigrams & doc_id_bigrams) / len(doc_id_bigrams)
+            if overlap >= 0.5:
+                return True
+        return False
+
+    def _cjk_bigrams(self, value: str) -> set[str]:
+        chars = re.findall(r"[\u4e00-\u9fff]", value)
+        if len(chars) < 2:
+            return set()
+        return {"".join(chars[index:index + 2]) for index in range(len(chars) - 1)}
 
     def _increment_warning(self, content: str, source_refs: list[str]) -> bool:
         words = re.findall(r"[a-z0-9_-]+", content.lower())

@@ -198,16 +198,56 @@ class CompileApplyService:
         return content
 
     def _parse_structured_output(self, content: str) -> CompileStructuredOutput | None:
+        content = self._strip_thinking(content)
+        if content.startswith("```"):
+            content = self._strip_code_fence(content)
         try:
             payload = json.loads(content)
         except json.JSONDecodeError:
-            return None
+            payload = self._extract_json_object(content)
+            if payload is None:
+                return None
         if not isinstance(payload, dict):
             return None
         try:
             return CompileStructuredOutput.model_validate(payload)
         except ValueError:
             return None
+
+    def _extract_json_object(self, content: str) -> dict[str, Any] | None:
+        start = content.find("{")
+        while start != -1:
+            depth = 0
+            in_string = False
+            escaping = False
+            for index in range(start, len(content)):
+                char = content[index]
+                if in_string:
+                    if escaping:
+                        escaping = False
+                    elif char == "\\":
+                        escaping = True
+                    elif char == '"':
+                        in_string = False
+                    continue
+                if char == '"':
+                    in_string = True
+                    continue
+                if char == "{":
+                    depth += 1
+                elif char == "}":
+                    depth -= 1
+                    if depth == 0:
+                        candidate = content[start:index + 1]
+                        try:
+                            payload = json.loads(candidate)
+                        except json.JSONDecodeError:
+                            break
+                        if isinstance(payload, dict):
+                            return payload
+                        break
+            start = content.find("{", start + 1)
+        return None
 
     def _strip_thinking(self, content: str) -> str:
         """Remove LLM thinking/reasoning blocks that leak into output.
