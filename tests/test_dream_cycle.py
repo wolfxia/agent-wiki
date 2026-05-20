@@ -267,6 +267,28 @@ def test_cross_reference_applies_cross_topic_strength_boost(temp_wiki_root: Path
     assert groups[0].strength >= 0.8
 
 
+def test_cross_reference_filters_out_same_topic_pairs(temp_wiki_root: Path) -> None:
+    wiki = _wiki(temp_wiki_root)
+    for doc_id in ["atom-same-topic-a", "atom-same-topic-b"]:
+        _write_page(temp_wiki_root, doc_id, f"# {doc_id}\n\nconstraint schedule")
+        _manifest_upsert(
+            temp_wiki_root,
+            {
+                "doc_id": doc_id,
+                "page_type": "atom",
+                "topic": "agent-os",
+                "problem_cluster": "same-topic-cluster",
+                "summary": doc_id,
+                "keywords": ["constraint", "schedule"],
+                "source_refs": [],
+            },
+        )
+
+    groups = DreamCycleService().cross_reference(wiki)
+
+    assert groups == []
+
+
 def test_synthesis_generate_dry_run_skips_loading_atom_pages(temp_wiki_root: Path) -> None:
     wiki = _wiki(temp_wiki_root)
 

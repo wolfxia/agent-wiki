@@ -135,6 +135,8 @@ class DreamCycleService:
         entry_by_doc_id = {str(entry["doc_id"]): entry for entry in atom_entries}
         groups: list[CandidateGroup] = []
         for first, second in combinations(sorted(entry_by_doc_id), 2):
+            if entry_by_doc_id[first].get("topic") == entry_by_doc_id[second].get("topic"):
+                continue
             first_terms = atom_terms.get(first, set())
             second_terms = atom_terms.get(second, set())
             shared = sorted(first_terms & second_terms)
