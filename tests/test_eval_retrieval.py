@@ -254,3 +254,58 @@ def test_eval_retrieval_history_uses_defaults_when_runtime_tuning_missing(temp_w
     history_path = temp_wiki_root / ".agent-wiki" / "eval_history.jsonl"
     entries = [json.loads(line) for line in history_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert entries[-1]["runtime_tuning"] == "defaults"
+
+
+def test_eval_retrieval_history_preserves_embedding_runtime_tuning_snapshot(temp_wiki_root: Path, tmp_path: Path) -> None:
+    wiki = _wiki(temp_wiki_root)
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-embedding-history-1",
+            topic="retrieval",
+            problem_cluster="embedding-history",
+            content="# Raw embedding history\n\nsemantic runtime tuning evidence",
+            source_refs=[],
+        ),
+    )
+    eval_file = tmp_path / "retrieval_queries.jsonl"
+    eval_file.write_text(
+        json.dumps(
+            {
+                "query": "semantic runtime tuning evidence",
+                "query_type": "fact",
+                "expected_doc_ids": ["raw-embedding-history-1"],
+                "acceptable_doc_ids": [],
+                "must_not_doc_ids": [],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    runtime_dir = temp_wiki_root / ".agent-wiki"
+    runtime_dir.mkdir(exist_ok=True)
+    (runtime_dir / "runtime_tuning.json").write_text(
+        json.dumps(
+            {
+                "query_ranking": {
+                    "freshness_penalty": {"enabled": True, "stale_days": 30, "penalty_weight": 0.2},
+                    "confidence_penalty": {"enabled": True, "ambiguous_penalty_weight": 0.1},
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    EvalRetrievalService().run(wiki=wiki, actor=actor, eval_file=eval_file, k=5)
+
+    entries = [json.loads(line) for line in (runtime_dir / "eval_history.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert entries[-1]["runtime_tuning"] == {
+        "query_ranking": {
+            "freshness_penalty": {"enabled": True, "stale_days": 30, "penalty_weight": 0.2},
+            "confidence_penalty": {"enabled": True, "ambiguous_penalty_weight": 0.1},
+        }
+    }

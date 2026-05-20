@@ -422,6 +422,7 @@ def lint(
 
 @app.command("rebuild-index")
 def rebuild_index(
+    include_embedding: bool = typer.Option(False, "--include-embedding"),
     workspace: str | None = typer.Option(None, "--workspace"),
     registry: str | None = typer.Option(None, "--registry"),
     wiki_id: str | None = typer.Option(None, "--wiki-id"),
@@ -429,9 +430,11 @@ def rebuild_index(
     """Rebuild retrieval indexes from current manifest entries."""
     def _command() -> None:
         wiki = _load_wiki(registry, workspace, wiki_id)
-        result = MaintenanceService().rebuild_index(wiki)
+        result = MaintenanceService().rebuild_index(wiki, include_embedding=include_embedding)
         typer.echo(f"removed_count={result['removed_count']}")
         typer.echo(f"rebuilt_count={result['rebuilt_count']}")
+        if "embedded_count" in result:
+            typer.echo(f"embedded_count={result['embedded_count']}")
 
     _run_cli(_command)
 

@@ -641,6 +641,75 @@ def test_maintenance_runs_capped_incremental_claim_annotation(temp_wiki_root: Pa
     assert len(annotations) == 50
 
 
+def test_maintenance_rebuild_index_optionally_builds_vector_index(monkeypatch, temp_wiki_root: Path) -> None:
+    from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+    from agent_wiki.domain.contracts import ResolvedActor
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-embed-rebuild-1",
+            topic="embedding",
+            problem_cluster="rebuild",
+            content="# Raw embed rebuild",
+            source_refs=[],
+        ),
+    )
+
+    captured: dict[str, int] = {"embedded_count": 0}
+
+    class FakeVectorIndex:
+        def rebuild_from_manifest(self, manifest_entries, embedding_provider=None):
+            captured["embedded_count"] = len(manifest_entries)
+            return len(manifest_entries)
+
+    monkeypatch.setattr("agent_wiki.application.maintenance.SQLiteVectorIndexProvider", lambda *args, **kwargs: FakeVectorIndex())
+
+    result = MaintenanceService().rebuild_index(wiki, include_embedding=True)
+
+    assert result["embedded_count"] == 1
+    assert captured["embedded_count"] == 1
+
+
+def test_maintenance_incrementally_embeds_updated_manifest_entries(monkeypatch, temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    pages = temp_wiki_root / "pages"
+    pages.mkdir(exist_ok=True)
+    (pages / "atom-embed-1.md").write_text("# Atom\n\nsemantic retrieval content", encoding="utf-8")
+    ManifestRepository(temp_wiki_root).upsert({
+        "wiki_id": "personal-1",
+        "doc_id": "atom-embed-1",
+        "page_type": "atom",
+        "canonical_uri": "pages/atom-embed-1.md",
+        "updated_at": "2026-05-20T00:00:00Z",
+    })
+
+    captured: list[tuple[str, str]] = []
+
+    class FakeVectorIndex:
+        def upsert(self, doc_id: str, payload: dict) -> None:
+            captured.append((doc_id, payload.get("updated_at") or ""))
+
+    class FakeEmbeddingProvider:
+        def embed_texts(self, texts: list[str]) -> list[list[float]]:
+            return [[1.0, 0.0] for _ in texts]
+
+    monkeypatch.setattr("agent_wiki.application.maintenance.SQLiteVectorIndexProvider", lambda *args, **kwargs: FakeVectorIndex())
+    monkeypatch.setattr(MaintenanceService, "_embedding_provider_from_wiki", lambda self, wiki: FakeEmbeddingProvider())
+
+    first = MaintenanceService().run(wiki)
+    second = MaintenanceService().run(wiki)
+
+    assert first["embedding_maintenance"]["embedded_count"] == 1
+    assert second["embedding_maintenance"]["embedded_count"] == 0
+    assert captured == [("atom-embed-1", "2026-05-20T00:00:00Z")]
 
 
 def test_maintenance_auto_tune_runs_post_change_eval_and_rolls_back(monkeypatch, temp_wiki_root: Path) -> None:

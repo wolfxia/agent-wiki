@@ -240,6 +240,35 @@ def test_cli_rebuild_index_removes_stale_entries_and_rebuilds_fts(temp_wiki_root
     assert "rebuilt_count=1" in second.stdout
 
 
+def test_cli_rebuild_index_with_embedding_flag_forwards_include_embedding(monkeypatch, temp_wiki_root) -> None:
+    import agent_wiki.transports.cli.app as cli_app
+
+    captured: dict[str, object] = {}
+
+    class FakeMaintenanceService:
+        def rebuild_index(self, wiki, include_embedding=False):
+            captured["include_embedding"] = include_embedding
+            return {"removed_count": 0, "rebuilt_count": 0, "embedded_count": 0}
+
+    monkeypatch.setattr(cli_app, "MaintenanceService", lambda: FakeMaintenanceService())
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "rebuild-index",
+            "--include-embedding",
+            "--workspace",
+            str(temp_wiki_root),
+            "--registry",
+            "tests/fixtures/registry.yaml",
+        ],
+        env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"},
+    )
+
+    assert result.exit_code == 0
+    assert captured["include_embedding"] is True
+
+
 def test_cli_eval_retrieval_outputs_json_report(monkeypatch, tmp_path) -> None:
     import agent_wiki.transports.cli.app as cli_app
 

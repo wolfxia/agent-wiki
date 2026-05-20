@@ -16,9 +16,11 @@ from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.infrastructure.repair.raw_metadata_repair import RawMetadataRepairService
 from agent_wiki.infrastructure.retrieval.knowledge_graph import KnowledgeGraphRepository
+from agent_wiki.infrastructure.retrieval.embedding import SiliconFlowEmbeddingProvider
 from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRepository
 from agent_wiki.infrastructure.retrieval.sqlite_fts import SQLiteFTSIndexProvider
 from agent_wiki.infrastructure.retrieval.topic_index import TopicIndexRepository
+from agent_wiki.infrastructure.retrieval.vector_index import SQLiteVectorIndexProvider
 from agent_wiki.infrastructure.runtime.operation_log import OperationLogRepository
 from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
@@ -27,7 +29,7 @@ _MAINTAIN_EVAL_TIMEOUT_SECONDS = 30
 
 
 class MaintenanceService:
-    def rebuild_index(self, wiki: WikiConfig) -> dict[str, int]:
+    def rebuild_index(self, wiki: WikiConfig, include_embedding: bool = False) -> dict[str, int]:
         wiki_root = Path(wiki.workspace_path)
         manifest_entries = ManifestRepository(wiki_root).read_all()
         manifest_doc_ids = {
@@ -49,23 +51,104 @@ class MaintenanceService:
 
         RetrievalIndexRepository(wiki_root).rebuild_from_manifest(manifest_entries)
         SQLiteFTSIndexProvider(wiki_root, wiki_id=wiki.wiki_id).rebuild_from_manifest(manifest_entries)
-        return {"removed_count": removed_count, "rebuilt_count": len(manifest_doc_ids)}
+        embedded_count = 0
+        if include_embedding:
+            vector_provider = SQLiteVectorIndexProvider(wiki_root, wiki_id=wiki.wiki_id)
+            embedding_provider = self._embedding_provider_from_wiki(wiki)
+            embedded_count = vector_provider.rebuild_from_manifest(manifest_entries, embedding_provider=embedding_provider)
+        return {"removed_count": removed_count, "rebuilt_count": len(manifest_doc_ids), "embedded_count": embedded_count}
+
+    def _embedding_provider_from_wiki(self, wiki: WikiConfig):
+        config = wiki.retrieval.embedding
+        if config is None:
+            return None
+        if "embedding" not in set(wiki.retrieval.optional_providers or []):
+            return None
+        if config.provider != "siliconflow":
+            return None
+        return SiliconFlowEmbeddingProvider(
+            base_url=config.base_url,
+            api_key_env=config.api_key_env,
+            model=config.model,
+            dimension=config.dimension,
+            batch_size=config.batch_size,
+            timeout_seconds=config.timeout_seconds,
+        )
+
+    def _embed_incremental(self, wiki_root: Path, wiki: WikiConfig) -> dict[str, int]:
+        embedding_provider = self._embedding_provider_from_wiki(wiki)
+        if embedding_provider is None:
+            return {"embedded_count": 0}
+
+        state_path = wiki_root / ".agent-wiki" / "vector_index_state.json"
+        state = self._read_json_dict(state_path)
+        manifest_entries = ManifestRepository(wiki_root).read_all()
+        vector_index = SQLiteVectorIndexProvider(
+            wiki_root,
+            wiki_id=wiki.wiki_id,
+            dimension=wiki.retrieval.embedding.dimension if wiki.retrieval.embedding is not None else 1024,
+        )
+
+        embedded_count = 0
+        for entry in manifest_entries:
+            doc_id = str(entry.get("doc_id") or "")
+            canonical_uri = str(entry.get("canonical_uri") or "")
+            updated_at = str(entry.get("updated_at") or "")
+            if not doc_id or not canonical_uri or state.get(doc_id) == updated_at:
+                continue
+            page_path = wiki_root / canonical_uri
+            if not page_path.exists() or not page_path.is_file():
+                continue
+
+            content = self._embedding_content(page_path.read_text(encoding="utf-8"))
+            embedding = embedding_provider.embed_texts([content])[0]
+            vector_index.upsert(
+                doc_id,
+                {
+                    "wiki_id": entry.get("wiki_id") or wiki.wiki_id,
+                    "page_type": entry.get("page_type") or "",
+                    "embedding": embedding,
+                    "updated_at": updated_at,
+                },
+            )
+            state[doc_id] = updated_at
+            embedded_count += 1
+
+        if embedded_count > 0 or not state_path.exists():
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return {"embedded_count": embedded_count}
+
+    def _embedding_content(self, content: str) -> str:
+        tokens = content.split()
+        return " ".join(tokens[:512]) if tokens else content[:4096]
+
+    def _read_json_dict(self, path: Path) -> dict[str, str]:
+        if not path.exists():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
 
     def run(self, wiki: WikiConfig, auto_tune: bool = False) -> dict:
-        queue_timeouts_recovered = ReviewQueueRepository(Path(wiki.workspace_path)).recover_assigned_timeouts()
+        wiki_root = Path(wiki.workspace_path)
+        queue_timeouts_recovered = ReviewQueueRepository(wiki_root).recover_assigned_timeouts()
         repair_summary = RawMetadataRepairService().repair(wiki)
         orphan_cleanup_count = self._clean_orphan_authority_entries(wiki)
         compile_candidates = CompileSuggestService().detect_and_enqueue(wiki)
         quality_signals = FastFeedbackService().detect_and_enqueue(wiki)
-        graph_repository = KnowledgeGraphRepository(Path(wiki.workspace_path), wiki_id=wiki.wiki_id)
+        graph_repository = KnowledgeGraphRepository(wiki_root, wiki_id=wiki.wiki_id)
         typed_relations = graph_repository.rebuild_from_raw_pages()
         graph_repository.backfill_confidence_labels()
-        relation_reviews = graph_repository.enqueue_ambiguous_reviews(ReviewQueueRepository(Path(wiki.workspace_path)))
+        relation_reviews = graph_repository.enqueue_ambiguous_reviews(ReviewQueueRepository(wiki_root))
         relations = RelationsService()
         co_occurrences = relations.detect_and_enqueue_co_occurrences(wiki)
         cross_references = relations.detect_and_enqueue_cross_references(wiki)
         duplicate_atom_warnings = self._detect_duplicate_atom_warnings(wiki)
-        claim_annotations = ClaimAnnotationService().annotate_incremental(Path(wiki.workspace_path), limit=50)
+        claim_annotations = ClaimAnnotationService().annotate_incremental(wiki_root, limit=50)
+        embedding_maintenance = self._embed_incremental(wiki_root, wiki)
 
         metadata_repair_candidates = [c for c in compile_candidates if c["kind"] == "needs_metadata_repair"]
         compile_suggestions = [c for c in compile_candidates if c["kind"] != "needs_metadata_repair"]
@@ -105,12 +188,13 @@ class MaintenanceService:
             "cross_reference_candidates": len(cross_references),
             "duplicate_atom_warnings": duplicate_atom_warnings,
             "claim_annotations": claim_annotations,
+            "embedding_maintenance": embedding_maintenance,
             "compile_strategy_counts": self._compile_strategy_counts(compile_suggestions),
-            "value_metrics": self._value_metrics(Path(wiki.workspace_path)),
+            "value_metrics": self._value_metrics(wiki_root),
             "staleness_governance": self._staleness_governance(wiki),
             "action_items": action_items,
         }
-        for warning in self._duplicate_warning_action_items(Path(wiki.workspace_path)):
+        for warning in self._duplicate_warning_action_items(wiki_root):
             summary["action_items"].append(warning)
         self._run_eval_if_available(wiki, summary)
         if auto_tune:
