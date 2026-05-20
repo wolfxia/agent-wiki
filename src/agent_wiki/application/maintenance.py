@@ -101,7 +101,13 @@ class MaintenanceService:
                 continue
 
             content = self._embedding_content(page_path.read_text(encoding="utf-8"))
-            embedding = embedding_provider.embed_texts([content])[0]
+            try:
+                embeddings = embedding_provider.embed_texts([content])
+            except Exception:
+                continue
+            if not embeddings:
+                continue
+            embedding = embeddings[0]
             vector_index.upsert(
                 doc_id,
                 {

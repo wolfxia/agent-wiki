@@ -528,7 +528,7 @@ def test_query_ranking_expands_candidate_pool_before_topic_rerank(temp_wiki_root
     )
 
     class FakeRouter:
-        def __init__(self, wiki_root, wiki_id):
+        def __init__(self, wiki_root, wiki_id, wiki=None):
             self.wiki_root = wiki_root
             self.wiki_id = wiki_id
 
@@ -607,7 +607,7 @@ def test_query_ranking_seeds_likely_purpose_topic_atom_candidates(temp_wiki_root
     (pages_dir / "raw-noise-0001.md").write_text("# Noise\n\nNoise result.", encoding="utf-8")
 
     class FakeRouter:
-        def __init__(self, wiki_root, wiki_id):
+        def __init__(self, wiki_root, wiki_id, wiki=None):
             self.wiki_root = wiki_root
             self.wiki_id = wiki_id
 

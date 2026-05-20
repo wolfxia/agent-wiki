@@ -52,8 +52,16 @@ class RetrievalRouter:
             )
 
         if self.embedding_provider is not None and self.vector_index is not None:
-            query_embedding = self.embedding_provider.embed_texts([query])[0]
-            semantic_hits = self.vector_index.search(query_embedding, top_k=top_k, filters=filters)
+            try:
+                embeddings = self.embedding_provider.embed_texts([query])
+                query_embedding = embeddings[0] if embeddings else None
+                semantic_hits = (
+                    self.vector_index.search(query_embedding, top_k=top_k, filters=filters)
+                    if query_embedding is not None
+                    else []
+                )
+            except Exception:
+                semantic_hits = []
             for hit in semantic_hits:
                 semantic_ranked.append(hit)
                 existing = merged.get(hit.doc_id)

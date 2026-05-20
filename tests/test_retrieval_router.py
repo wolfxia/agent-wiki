@@ -190,3 +190,40 @@ def test_retrieval_router_keeps_fts_only_behavior_without_embedding_config(temp_
     assert [hit.doc_id for hit in hits] == ["fts-only"]
     assert hits[0].metadata["lexical_score"] == 6.0
     assert hits[0].metadata.get("semantic_score", 0.0) == 0.0
+
+
+def test_retrieval_router_falls_back_when_embedding_query_fails(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    router = RetrievalRouter(temp_wiki_root, wiki_id="personal-1", wiki=wiki)
+    router.graph.search = lambda query, top_k=10: []  # type: ignore[method-assign]
+    router.structured.search = lambda query, top_k=10: []  # type: ignore[method-assign]
+    router.fts.search = lambda query, top_k=10, filters=None: [  # type: ignore[method-assign]
+        RetrievalHit(wiki_id="personal-1", doc_id="fts-only", score=6.0, section="fts5", metadata={}),
+    ]
+    router.lexical.search = lambda wiki_root, query: []  # type: ignore[method-assign]
+
+    class FailingEmbeddingProvider:
+        def embed_texts(self, texts: list[str]) -> list[list[float]]:
+            raise RuntimeError("embedding unavailable")
+
+    class TrackingVectorIndex:
+        def __init__(self) -> None:
+            self.called = False
+
+        def search(self, query_embedding, top_k, filters=None):
+            self.called = True
+            return []
+
+    vector_index = TrackingVectorIndex()
+    router.embedding_provider = FailingEmbeddingProvider()
+    router.vector_index = vector_index
+
+    hits = router.search("no embedding", top_k=3)
+
+    assert [hit.doc_id for hit in hits] == ["fts-only"]
+    assert hits[0].metadata["lexical_score"] == 6.0
+    assert hits[0].metadata.get("semantic_score", 0.0) == 0.0
+    assert "rrf_score" not in hits[0].metadata
+    assert vector_index.called is False

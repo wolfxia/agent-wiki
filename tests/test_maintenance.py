@@ -712,6 +712,34 @@ def test_maintenance_incrementally_embeds_updated_manifest_entries(monkeypatch, 
     assert captured == [("atom-embed-1", "2026-05-20T00:00:00Z")]
 
 
+def test_maintenance_incremental_embedding_failure_falls_back_without_crash(monkeypatch, temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    pages = temp_wiki_root / "pages"
+    pages.mkdir(exist_ok=True)
+    (pages / "atom-embed-fail-1.md").write_text("# Atom\n\nsemantic retrieval content", encoding="utf-8")
+    ManifestRepository(temp_wiki_root).upsert({
+        "wiki_id": "personal-1",
+        "doc_id": "atom-embed-fail-1",
+        "page_type": "atom",
+        "canonical_uri": "pages/atom-embed-fail-1.md",
+        "updated_at": "2026-05-20T00:00:00Z",
+    })
+
+    class FailingEmbeddingProvider:
+        def embed_texts(self, texts: list[str]) -> list[list[float]]:
+            raise RuntimeError("embedding unavailable")
+
+    monkeypatch.setattr(MaintenanceService, "_embedding_provider_from_wiki", lambda self, wiki: FailingEmbeddingProvider())
+
+    summary = MaintenanceService().run(wiki)
+
+    assert summary["embedding_maintenance"]["embedded_count"] == 0
+
+
+
+
 def test_maintenance_auto_tune_runs_post_change_eval_and_rolls_back(monkeypatch, temp_wiki_root: Path) -> None:
     import agent_wiki.application.maintenance as maintenance_module
 
