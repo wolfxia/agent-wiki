@@ -82,7 +82,9 @@ def test_identity_resolver_falls_back_to_metadata_when_cli_explicit_identity_mis
     assert actor.actor_id == "aw-agent"
 
 
-def test_identity_resolver_raises_when_identity_missing() -> None:
+def test_identity_resolver_raises_when_identity_missing(monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_WIKI_ACTOR_TYPE", raising=False)
+    monkeypatch.delenv("AGENT_WIKI_ACTOR_ID", raising=False)
     resolver = IdentityResolver()
 
     try:
