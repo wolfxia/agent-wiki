@@ -615,6 +615,58 @@ def test_query_l1_prefers_summary_from_topic_index(temp_wiki_root: Path) -> None
     assert result.l1_answer == "Preferred summary answer."
 
 
+def test_query_l1_skips_topic_index_metadata_summary(temp_wiki_root: Path) -> None:
+    doc_id = "raw-topic-index-metadata"
+
+    l1_answer = QueryService()._build_l1_answer(
+        [RetrievalHit(wiki_id="personal-1", doc_id=doc_id, score=1.0, page_type="raw")],
+        temp_wiki_root,
+        ManifestRepository(temp_wiki_root),
+        manifest_by_doc_id={
+            doc_id: {
+                "doc_id": doc_id,
+                "page_type": "raw",
+                "summary": "端侧AI影像流水线通过本地推理减少云端依赖。",
+            }
+        },
+        topic_index_entries={
+            doc_id: {
+                "doc_id": doc_id,
+                "summary": "> 学习日期：2026-05-02 | 方向：端侧AI影像 | 深度：深",
+            }
+        },
+    )
+
+    assert l1_answer == "端侧AI影像流水线通过本地推理减少云端依赖。"
+
+
+def test_query_l1_skips_manifest_metadata_summary(temp_wiki_root: Path) -> None:
+    pages_dir = temp_wiki_root / "pages"
+    pages_dir.mkdir(exist_ok=True)
+    doc_id = "raw-manifest-metadata"
+    (pages_dir / f"{doc_id}.md").write_text(
+        "# 端侧AI影像\n\n"
+        "端侧AI影像链路在设备侧完成感知、增强和轻量推理。\n",
+        encoding="utf-8",
+    )
+
+    l1_answer = QueryService()._build_l1_answer(
+        [RetrievalHit(wiki_id="personal-1", doc_id=doc_id, score=1.0, page_type="raw")],
+        temp_wiki_root,
+        ManifestRepository(temp_wiki_root),
+        manifest_by_doc_id={
+            doc_id: {
+                "doc_id": doc_id,
+                "page_type": "raw",
+                "summary": "> 学习日期：2026-05-02 | 方向：端侧AI影像 | 深度：深",
+            }
+        },
+        topic_index_entries={},
+    )
+
+    assert l1_answer == "端侧AI影像链路在设备侧完成感知、增强和轻量推理。"
+
+
 def test_query_l1_skips_raw_metadata_blockquote_when_using_page_body(temp_wiki_root: Path) -> None:
     pages_dir = temp_wiki_root / "pages"
     pages_dir.mkdir(exist_ok=True)
