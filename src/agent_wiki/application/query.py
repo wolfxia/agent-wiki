@@ -36,7 +36,7 @@ class QueryService:
             for entry in manifest_entries
             if entry.get("doc_id")
         }
-        router = RetrievalRouter(wiki_root, wiki_id=wiki.wiki_id)
+        router = RetrievalRouter(wiki_root, wiki_id=wiki.wiki_id, wiki=wiki)
 
         filters = {"page_types": data.page_types} if data.page_types else None
         hits = router.search(data.query, top_k=self._rerank_top_k(data, query_ranking.rerank_candidate_multiplier), filters=filters)

@@ -1,6 +1,8 @@
 from pathlib import Path
 
 from agent_wiki.application.retrieval_router import RetrievalRouter
+from agent_wiki.bootstrap.registry_loader import RegistryLoader
+from agent_wiki.domain.contracts import RetrievalHit
 from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRepository
 from agent_wiki.infrastructure.retrieval.topic_index import TopicIndexRepository
 
@@ -106,8 +108,6 @@ def test_retrieval_router_merges_lexical_and_structured_debug_scores(temp_wiki_r
 
 
 def test_retrieval_router_caps_graph_score_below_structured_relevance(temp_wiki_root: Path) -> None:
-    from agent_wiki.domain.contracts import RetrievalHit
-
     router = RetrievalRouter(temp_wiki_root, wiki_id="personal-1")
 
     graph_only = RetrievalHit(
@@ -137,3 +137,56 @@ def test_retrieval_router_caps_graph_score_below_structured_relevance(temp_wiki_
     assert [hit.doc_id for hit in hits[:2]] == ["atom-topic-relevant", "raw-graph-edge-only"]
     graph_hit = next(hit for hit in hits if hit.doc_id == "raw-graph-edge-only")
     assert graph_hit.metadata["graph_score"] <= 5.0
+
+
+def test_retrieval_router_rrf_fuses_fts_and_semantic_ranks(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    router = RetrievalRouter(temp_wiki_root, wiki_id="personal-1", wiki=wiki)
+
+    router.graph.search = lambda query, top_k=10: []  # type: ignore[method-assign]
+    router.structured.search = lambda query, top_k=10: []  # type: ignore[method-assign]
+    router.fts.search = lambda query, top_k=10, filters=None: [  # type: ignore[method-assign]
+        RetrievalHit(wiki_id="personal-1", doc_id="doc-fts-1", score=9.0, section="fts5", metadata={}),
+        RetrievalHit(wiki_id="personal-1", doc_id="doc-both", score=8.0, section="fts5", metadata={}),
+    ]
+    router.lexical.search = lambda wiki_root, query: []  # type: ignore[method-assign]
+
+    class FakeEmbeddingProvider:
+        def embed_texts(self, texts: list[str]) -> list[list[float]]:
+            return [[1.0, 0.0]]
+
+    class FakeVectorIndex:
+        def search(self, query_embedding, top_k, filters=None):
+            return [
+                RetrievalHit(wiki_id="personal-1", doc_id="doc-sem-1", score=0.91, section="vector", metadata={"semantic_score": 0.91}),
+                RetrievalHit(wiki_id="personal-1", doc_id="doc-both", score=0.85, section="vector", metadata={"semantic_score": 0.85}),
+            ]
+
+    router.embedding_provider = FakeEmbeddingProvider()
+    router.vector_index = FakeVectorIndex()
+
+    hits = router.search("camera trend", top_k=3)
+
+    assert [hit.doc_id for hit in hits] == ["doc-both", "doc-fts-1", "doc-sem-1"]
+    both = hits[0]
+    assert both.metadata["rrf_score"] > 0.0
+    assert both.metadata["lexical_score"] > 0.0
+    assert both.metadata["semantic_score"] > 0.0
+
+
+def test_retrieval_router_keeps_fts_only_behavior_without_embedding_config(temp_wiki_root: Path) -> None:
+    router = RetrievalRouter(temp_wiki_root, wiki_id="personal-1")
+    router.graph.search = lambda query, top_k=10: []  # type: ignore[method-assign]
+    router.structured.search = lambda query, top_k=10: []  # type: ignore[method-assign]
+    router.fts.search = lambda query, top_k=10, filters=None: [  # type: ignore[method-assign]
+        RetrievalHit(wiki_id="personal-1", doc_id="fts-only", score=6.0, section="fts5", metadata={}),
+    ]
+    router.lexical.search = lambda wiki_root, query: []  # type: ignore[method-assign]
+
+    hits = router.search("no embedding", top_k=3)
+
+    assert [hit.doc_id for hit in hits] == ["fts-only"]
+    assert hits[0].metadata["lexical_score"] == 6.0
+    assert hits[0].metadata.get("semantic_score", 0.0) == 0.0

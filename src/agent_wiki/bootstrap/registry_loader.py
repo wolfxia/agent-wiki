@@ -18,6 +18,17 @@ class RetrievalConfig(BaseModel):
     coarse_provider: str
     optional_providers: list[str] = Field(default_factory=list)
     route_priority: int
+    embedding: "EmbeddingConfig | None" = None
+
+
+class EmbeddingConfig(BaseModel):
+    provider: str
+    base_url: str
+    api_key_env: str
+    model: str
+    dimension: int = 1024
+    batch_size: int = 32
+    timeout_seconds: int = 30
 
 
 class PushViewRoutingConfig(BaseModel):
