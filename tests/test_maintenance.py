@@ -876,3 +876,56 @@ def test_maintenance_reports_quality_metrics(temp_wiki_root: Path) -> None:
     assert metrics["freshness_distribution"]["stale"] >= 1
     assert metrics["synthesis_directions"] >= 1
     assert 0.0 <= metrics["claim_annotation_coverage"] <= 1.0
+
+
+def test_maintenance_quality_metrics_freshness_prefers_created_at(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-created-at-metrics",
+            topic="metrics",
+            problem_cluster="created-at",
+            content="# Raw metrics",
+            source_refs=[],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-created-at-metrics",
+            page_type="atom",
+            topic="metrics",
+            problem_cluster="created-at",
+            content="# Atom metrics\n\n## Claims\n- raw-created-at-metrics\n\n## Evidence\n- source.",
+            summary="Atom metrics",
+            source_refs=["personal-1:raw-created-at-metrics"],
+        ),
+    )
+
+    stale_created_at = (datetime.now(UTC) - timedelta(days=45)).isoformat().replace("+00:00", "Z")
+    recent_updated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    manifest_entries = [
+        json.loads(line)
+        for line in (temp_wiki_root / "MANIFEST.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    for entry in manifest_entries:
+        if entry.get("doc_id") == "atom-created-at-metrics":
+            entry["created_at"] = stale_created_at
+            entry["updated_at"] = recent_updated_at
+    (temp_wiki_root / "MANIFEST.jsonl").write_text(
+        "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in manifest_entries),
+        encoding="utf-8",
+    )
+
+    summary = MaintenanceService().run(wiki)
+
+    metrics = summary["quality_metrics"]
+    assert metrics["freshness_distribution"]["stale"] >= 1

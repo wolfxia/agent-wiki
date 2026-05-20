@@ -407,11 +407,13 @@ class MaintenanceService:
                 if topic:
                     synthesis_topics.add(topic)
             if entry.get("page_type") in {"atom", "synthesis"}:
-                updated_at = self._parse_timestamp(entry.get("updated_at") or entry.get("updated"))
-                if updated_at is None:
+                created_or_updated_at = self._parse_timestamp(
+                    entry.get("created_at") or entry.get("updated_at") or entry.get("updated")
+                )
+                if created_or_updated_at is None:
                     freshness_distribution["stale"] += 1
                     continue
-                age_days = max((now - updated_at).days, 0)
+                age_days = max((now - created_or_updated_at).days, 0)
                 if age_days <= 7:
                     freshness_distribution["recent"] += 1
                 elif age_days <= 30:
