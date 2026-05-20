@@ -169,10 +169,14 @@ def test_synthesis_generate_writes_synthesis_from_atom_sources(temp_wiki_root: P
     assert result["status"] == "committed"
     manifest_entry = ManifestRepository(temp_wiki_root).find(result["doc_id"])
     assert manifest_entry["page_type"] == "synthesis"
+    assert manifest_entry["topic"] == "ops-ops"
+    assert manifest_entry["problem_cluster"] == "constraint-first"
     assert manifest_entry["source_refs"] == ["personal-1:atom-synth-a", "personal-1:atom-synth-b"]
     content = (temp_wiki_root / "pages" / f"{result['doc_id']}.md").read_text(encoding="utf-8")
     assert "generated_by: dream-cycle" in content
     assert "source_atoms:" in content
+    assert "topic: ops-ops" in content
+    assert "problem_cluster: constraint-first" in content
     assert "# Cross-domain Constraint First" in content
 
 
@@ -201,6 +205,18 @@ def test_synthesis_generate_dry_run_returns_plan_without_writing(temp_wiki_root:
 
     assert results[0]["status"] == "planned"
     assert not (temp_wiki_root / "pages" / f"{results[0]['doc_id']}.md").exists()
+
+
+def test_synthesis_generate_defaults_to_three_results(temp_wiki_root: Path) -> None:
+    wiki = _wiki(temp_wiki_root)
+    groups = [
+        CandidateGroup(atom_ids=[f"atom-limit-{i}", f"atom-limit-{i+100}"], shared_keywords=[], graph_relations=[], strength=0.9)
+        for i in range(5)
+    ]
+
+    results = DreamCycleService().synthesis_generate(wiki, _actor(), groups, dry_run=True)
+
+    assert len(results) == 3
 
 
 def test_cross_reference_skips_external_sync_atoms(temp_wiki_root: Path) -> None:

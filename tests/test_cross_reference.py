@@ -1,8 +1,11 @@
 import json
 from pathlib import Path
 
+import numpy as np
+
 from agent_wiki.application.dream_cycle import DreamCycleService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
+from agent_wiki.infrastructure.retrieval.vector_index import SQLiteVectorIndexProvider
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 
 
@@ -128,3 +131,51 @@ def test_cross_reference_filters_weak_keyword_overlap(temp_wiki_root: Path) -> N
     groups = DreamCycleService().cross_reference(wiki)
 
     assert groups == []
+
+
+def test_cross_reference_uses_hybrid_embedding_strength_and_limits_candidates(temp_wiki_root: Path) -> None:
+    wiki = _wiki(temp_wiki_root)
+    _write_atom(
+        temp_wiki_root,
+        "atom-hybrid-a",
+        topic="agent-os",
+        problem_cluster="pc-a",
+        keywords=["constraint", "schedule"],
+        content="# Atom hybrid A\n\nconstraint schedule",
+    )
+    _write_atom(
+        temp_wiki_root,
+        "atom-hybrid-b",
+        topic="ai-harness",
+        problem_cluster="pc-b",
+        keywords=["constraint", "schedule"],
+        content="# Atom hybrid B\n\nconstraint schedule",
+    )
+    _write_atom(
+        temp_wiki_root,
+        "atom-hybrid-c",
+        topic="imaging-os",
+        problem_cluster="pc-c",
+        keywords=["mesh", "shader"],
+        content="# Atom hybrid C\n\nmesh shader",
+    )
+
+    vector = SQLiteVectorIndexProvider(temp_wiki_root, wiki_id="personal-1", dimension=4)
+    vector.upsert(
+        "atom-hybrid-a",
+        {"wiki_id": "personal-1", "page_type": "atom", "embedding": np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)},
+    )
+    vector.upsert(
+        "atom-hybrid-b",
+        {"wiki_id": "personal-1", "page_type": "atom", "embedding": np.array([0.99, 0.01, 0.0, 0.0], dtype=np.float32)},
+    )
+    vector.upsert(
+        "atom-hybrid-c",
+        {"wiki_id": "personal-1", "page_type": "atom", "embedding": np.array([0.0, 1.0, 0.0, 0.0], dtype=np.float32)},
+    )
+
+    groups = DreamCycleService().cross_reference(wiki)
+
+    assert len(groups) == 1
+    assert groups[0].atom_ids == ["atom-hybrid-a", "atom-hybrid-b"]
+    assert groups[0].strength >= 0.95

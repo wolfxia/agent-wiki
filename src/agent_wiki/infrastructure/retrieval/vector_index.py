@@ -51,6 +51,18 @@ class SQLiteVectorIndexProvider:
         with self._connect() as connection:
             connection.execute("DELETE FROM vectors WHERE doc_id = ?", (doc_id,))
 
+    def get_embedding(self, doc_id: str) -> np.ndarray | None:
+        if not self.db_path.exists():
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT embedding FROM vectors WHERE doc_id = ?",
+                (doc_id,),
+            ).fetchone()
+        if row is None or row["embedding"] is None:
+            return None
+        return np.frombuffer(row["embedding"], dtype=np.float32)
+
     def rebuild_from_manifest(self, manifest_entries: list[dict], embedding_provider=None) -> int:
         self._ensure_schema()
         with self._connect() as connection:

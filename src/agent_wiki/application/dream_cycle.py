@@ -23,6 +23,7 @@ from agent_wiki.infrastructure.doc_id import normalize_doc_id
 from agent_wiki.infrastructure.identity.permissions import PermissionService
 from agent_wiki.infrastructure.retrieval.knowledge_graph import KnowledgeGraphRepository
 from agent_wiki.infrastructure.retrieval.tokenizer import tokenize
+from agent_wiki.infrastructure.retrieval.vector_index import SQLiteVectorIndexProvider
 from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 
@@ -30,8 +31,10 @@ from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 _REQUIRED_COMPILED_FIELDS = ("doc_id", "page_type", "topic", "problem_cluster", "summary", "source_refs")
 _DEFAULT_STALENESS_DAYS = 30
 _DEFAULT_STRENGTH_THRESHOLD = 0.3
-_DEFAULT_MAX_SYNTHESIS = 10
+_DEFAULT_MAX_SYNTHESIS = 3
 _DEFAULT_REPORT_PATH = ".agent-wiki/dream_cycle_orphans.jsonl"
+_DEFAULT_MAX_CANDIDATES = 500
+_DEFAULT_EMBEDDING_COSINE_THRESHOLD = 0.5
 
 
 class DreamCycleService:
@@ -129,8 +132,15 @@ class DreamCycleService:
             and not str(entry.get("doc_id")).startswith("atom-external-sync-")
         ]
         atom_terms = {str(entry["doc_id"]): self._atom_keywords(wiki_root, entry) for entry in atom_entries}
+        vector_index = SQLiteVectorIndexProvider(wiki_root, wiki_id=wiki.wiki_id)
+        atom_embeddings = {
+            str(entry["doc_id"]): vector_index.get_embedding(str(entry["doc_id"]))
+            for entry in atom_entries
+        }
         graph_relations = self._graph_relation_index(wiki_root, wiki)
         threshold = self._dream_config_value(wiki, "synthesis", "strength_threshold", _DEFAULT_STRENGTH_THRESHOLD)
+        cosine_threshold = float(self._dream_config_value(wiki, "synthesis", "embedding_cosine_threshold", _DEFAULT_EMBEDDING_COSINE_THRESHOLD))
+        max_candidates = int(self._dream_config_value(wiki, "synthesis", "max_candidates", _DEFAULT_MAX_CANDIDATES))
 
         entry_by_doc_id = {str(entry["doc_id"]): entry for entry in atom_entries}
         groups: list[CandidateGroup] = []
@@ -141,8 +151,18 @@ class DreamCycleService:
             second_terms = atom_terms.get(second, set())
             shared = sorted(first_terms & second_terms)
             jaccard = self._jaccard(first_terms, second_terms)
+            first_embedding = atom_embeddings.get(first)
+            second_embedding = atom_embeddings.get(second)
+            has_embeddings = first_embedding is not None and second_embedding is not None
+            cosine_sim = (
+                vector_index._cosine_similarity(first_embedding, second_embedding)
+                if has_embeddings
+                else 0.0
+            )
+            if has_embeddings and cosine_sim < cosine_threshold:
+                continue
             graph_matches = sorted(set(graph_relations.get((first, second), [])))
-            strength = jaccard
+            strength = (cosine_sim * 0.7 + jaccard * 0.3) if has_embeddings else jaccard
             if graph_matches:
                 strength += 0.3
             if self._same_problem_cluster_different_topic(entry_by_doc_id[first], entry_by_doc_id[second]):
@@ -165,7 +185,7 @@ class DreamCycleService:
             )
 
         groups.sort(key=lambda group: (-group.strength, group.atom_ids))
-        return groups
+        return groups[:max_candidates]
 
     def synthesis_generate(
         self,
@@ -182,13 +202,20 @@ class DreamCycleService:
         for group in candidate_groups[:max_synthesis]:
             doc_id = self._synthesis_doc_id(group)
             source_refs = [f"{wiki.wiki_id}:{atom_id}" for atom_id in group.atom_ids]
+            topic, problem_cluster = self._infer_synthesis_metadata(manifest, group.atom_ids)
             if dry_run:
-                results.append({"status": "planned", "doc_id": doc_id, "source_refs": source_refs})
+                results.append({
+                    "status": "planned",
+                    "doc_id": doc_id,
+                    "source_refs": source_refs,
+                    "topic": topic,
+                    "problem_cluster": problem_cluster,
+                })
                 continue
             atom_pages = self._load_atom_pages(wiki_root, manifest, group.atom_ids)
             if len(atom_pages) < 2:
                 continue
-            content = self._build_synthesis_page(wiki, group, atom_pages)
+            content = self._build_synthesis_page(wiki, manifest, group, atom_pages)
 
             validate_doc_id(doc_id)
             decision = PermissionService().check(actor, "compile_update", wiki, "synthesis")
@@ -201,8 +228,8 @@ class DreamCycleService:
                 data=CompileUpdateInput(
                     doc_id=doc_id,
                     page_type="synthesis",
-                    topic="cross-domain",
-                    problem_cluster="meta-principles",
+                    topic=topic,
+                    problem_cluster=problem_cluster,
                     summary=f"Dream Cycle synthesis across {len(group.atom_ids)} atom pages",
                     aliases=group.shared_keywords,
                     confidence="medium",
@@ -383,18 +410,27 @@ class DreamCycleService:
         seed = "-".join(group.atom_ids[:3])
         return f"synthesis-dream-cycle-{normalize_doc_id(seed)[:80]}"
 
-    def _build_synthesis_page(self, wiki: WikiConfig, group: CandidateGroup, atom_pages: dict[str, str]) -> str:
+    def _build_synthesis_page(self, wiki: WikiConfig, manifest: ManifestRepository, group: CandidateGroup, atom_pages: dict[str, str]) -> str:
         generated_at = self._now()
+        topic, problem_cluster = self._infer_synthesis_metadata(manifest, group.atom_ids)
         body = self._generate_synthesis_body(wiki, group, atom_pages)
         frontmatter = {
             "page_type": "synthesis",
             "source_atoms": group.atom_ids,
-            "topic": "cross-domain",
-            "problem_cluster": "meta-principles",
+            "topic": topic,
+            "problem_cluster": problem_cluster,
             "generated_by": "dream-cycle",
             "generated_at": generated_at,
         }
         return "---\n" + yaml.dump(frontmatter, allow_unicode=True, sort_keys=False) + "---\n" + body.strip() + "\n"
+
+    def _infer_synthesis_metadata(self, manifest: ManifestRepository, atom_ids: list[str]) -> tuple[str, str]:
+        entries = [manifest.find(atom_id) or {} for atom_id in atom_ids[:2]]
+        topics = [str(entry.get("topic") or "unknown") for entry in entries]
+        clusters = [str(entry.get("problem_cluster") or "") for entry in entries]
+        topic = "-".join(topics) if len(topics) >= 2 else (topics[0] if topics else "cross-domain")
+        problem_cluster = clusters[0] if len(clusters) >= 2 and clusters[0] and clusters[0] == clusters[1] else "cross-domain"
+        return topic, problem_cluster
 
     def _generate_synthesis_body(self, wiki: WikiConfig, group: CandidateGroup, atom_pages: dict[str, str]) -> str:
         if self._llm_generate is not None:

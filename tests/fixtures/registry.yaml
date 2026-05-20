@@ -31,7 +31,7 @@ wikis:
       schedule: "0 3 * * *"
       synthesis:
         min_atoms: 2
-        max_synthesis_per_run: 10
+        max_synthesis_per_run: 3
         strength_threshold: 0.3
       quality:
         min_score: 50
