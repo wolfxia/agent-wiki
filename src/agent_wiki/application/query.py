@@ -270,9 +270,19 @@ class QueryService:
         if not page_path.exists():
             return f"Top match: {top_hit.doc_id}"
         lines = [line.strip() for line in page_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-        if len(lines) >= 2:
-            return lines[1]
-        return lines[0] if lines else f"Top match: {top_hit.doc_id}"
+        for line in lines:
+            if self._is_l1_content_line(line):
+                return line
+        return f"Top match: {top_hit.doc_id}"
+
+    def _is_l1_content_line(self, line: str) -> bool:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            return False
+        unquoted = stripped.lstrip("> ").strip()
+        if stripped.startswith(">") and re.search(r"(学习日期|日期|时间|方向|深度|source|date|tags?)\s*[：:]", unquoted, re.IGNORECASE):
+            return False
+        return True
 
     def _append_query_outcome(
         self,

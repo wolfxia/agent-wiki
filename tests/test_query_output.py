@@ -615,6 +615,29 @@ def test_query_l1_prefers_summary_from_topic_index(temp_wiki_root: Path) -> None
     assert result.l1_answer == "Preferred summary answer."
 
 
+def test_query_l1_skips_raw_metadata_blockquote_when_using_page_body(temp_wiki_root: Path) -> None:
+    pages_dir = temp_wiki_root / "pages"
+    pages_dir.mkdir(exist_ok=True)
+    doc_id = "raw-iot-ai-note"
+    (pages_dir / f"{doc_id}.md").write_text(
+        "# 端侧AI笔记\n\n"
+        "> 学习日期：2026-04-17 / 方向：影像OS架构 / 深度：深\n\n"
+        "端侧AI在IoT场景中通过本地感知、轻量模型和NPU加速降低云端依赖。\n",
+        encoding="utf-8",
+    )
+
+    l1_answer = QueryService()._build_l1_answer(
+        [RetrievalHit(wiki_id="personal-1", doc_id=doc_id, score=1.0, page_type="raw")],
+        temp_wiki_root,
+        ManifestRepository(temp_wiki_root),
+        manifest_by_doc_id={doc_id: {"doc_id": doc_id, "page_type": "raw"}},
+        topic_index_entries={},
+    )
+
+    assert "学习日期" not in l1_answer
+    assert l1_answer == "端侧AI在IoT场景中通过本地感知、轻量模型和NPU加速降低云端依赖。"
+
+
 def test_query_hits_include_ranking_debug_metadata(temp_wiki_root: Path) -> None:
     wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
         update={"workspace_path": str(temp_wiki_root)}
