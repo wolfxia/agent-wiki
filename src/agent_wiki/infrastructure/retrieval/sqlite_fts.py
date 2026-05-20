@@ -131,7 +131,9 @@ class SQLiteFTSIndexProvider:
         ]
 
     def _score_from_rank(self, rank: float) -> float:
-        return max(-rank * 1_000_000.0, 0.0)
+        strength = max(-rank, 0.0)
+        reference_rank = 0.00001
+        return 20.0 * strength / (strength + reference_rank) if strength else 0.0
 
     def _ensure_schema(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
