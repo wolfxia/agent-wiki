@@ -19,6 +19,7 @@ class RetrievalConfig(BaseModel):
     optional_providers: list[str] = Field(default_factory=list)
     route_priority: int
     embedding: "EmbeddingConfig | None" = None
+    external_sync_penalty: float = 1.0
 
 
 class EmbeddingConfig(BaseModel):

@@ -19,6 +19,7 @@ class RetrievalRouter:
         self.fts = SQLiteFTSIndexProvider(wiki_root, wiki_id=wiki_id)
         self.lexical = LexicalRetrievalProvider(RetrievalIndexRepository)
         self.wiki_root = wiki_root
+        self.external_sync_penalty = self._external_sync_penalty(wiki)
         self.embedding_provider = self._build_embedding_provider(wiki)
         self.vector_index = self._build_vector_index(wiki_root, wiki_id, wiki)
 
@@ -97,6 +98,8 @@ class RetrievalRouter:
         if semantic_ranked:
             self._apply_rrf(merged, lexical_ranked, semantic_ranked)
 
+        self._apply_source_penalties(merged)
+
         hits = list(merged.values())
         hits.sort(key=lambda hit: hit.score, reverse=True)
         return hits[:top_k]
@@ -124,6 +127,30 @@ class RetrievalRouter:
                 "final_score": rrf_score,
             }
             merged[doc_id] = hit.model_copy(update={"score": rrf_score, "metadata": metadata})
+
+    def _apply_source_penalties(self, merged: dict[str, RetrievalHit]) -> None:
+        for doc_id, hit in list(merged.items()):
+            source_type = self._source_type_for_doc_id(doc_id)
+            penalty = self.external_sync_penalty if source_type == "external_sync" else 1.0
+            final_score = hit.score * penalty
+            metadata = {
+                **hit.metadata,
+                "source_type": source_type,
+                "external_sync_penalty_applied": penalty,
+                "final_score": final_score,
+            }
+            merged[doc_id] = hit.model_copy(update={"score": final_score, "metadata": metadata})
+
+    def _external_sync_penalty(self, wiki: WikiConfig | None) -> float:
+        if wiki is None:
+            return 1.0
+        raw = float(getattr(wiki.retrieval, "external_sync_penalty", 1.0))
+        if raw <= 0:
+            return 1.0
+        return raw
+
+    def _source_type_for_doc_id(self, doc_id: str) -> str:
+        return "external_sync" if str(doc_id).startswith("atom-external-sync-") else "own"
 
     def _build_embedding_provider(self, wiki: WikiConfig | None):
         if wiki is None or wiki.retrieval.embedding is None:
