@@ -31,10 +31,11 @@ from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 _REQUIRED_COMPILED_FIELDS = ("doc_id", "page_type", "topic", "problem_cluster", "summary", "source_refs")
 _DEFAULT_STALENESS_DAYS = 30
 _DEFAULT_STRENGTH_THRESHOLD = 0.3
-_DEFAULT_MAX_SYNTHESIS = 3
+_DEFAULT_MAX_SYNTHESIS = 5
 _DEFAULT_REPORT_PATH = ".agent-wiki/dream_cycle_orphans.jsonl"
 _DEFAULT_MAX_CANDIDATES = 500
 _DEFAULT_EMBEDDING_COSINE_THRESHOLD = 0.5
+_DEFAULT_MAX_SYNTHESIS_PER_DIRECTION = 2
 
 
 class DreamCycleService:
@@ -198,11 +199,22 @@ class DreamCycleService:
         wiki_root = Path(wiki.workspace_path)
         manifest = ManifestRepository(wiki_root)
         max_synthesis = int(self._dream_config_value(wiki, "synthesis", "max_synthesis_per_run", _DEFAULT_MAX_SYNTHESIS))
+        max_per_direction = int(
+            self._dream_config_value(
+                wiki,
+                "synthesis",
+                "max_synthesis_per_direction",
+                _DEFAULT_MAX_SYNTHESIS_PER_DIRECTION,
+            )
+        )
+        direction_counts = self._existing_synthesis_direction_counts(manifest)
         results: list[dict] = []
         for group in candidate_groups[:max_synthesis]:
             doc_id = self._synthesis_doc_id(group)
             source_refs = [f"{wiki.wiki_id}:{atom_id}" for atom_id in group.atom_ids]
             topic, problem_cluster = self._infer_synthesis_metadata(manifest, group.atom_ids)
+            if direction_counts.get(topic, 0) >= max_per_direction:
+                continue
             if dry_run:
                 results.append({
                     "status": "planned",
@@ -211,6 +223,7 @@ class DreamCycleService:
                     "topic": topic,
                     "problem_cluster": problem_cluster,
                 })
+                direction_counts[topic] = direction_counts.get(topic, 0) + 1
                 continue
             atom_pages = self._load_atom_pages(wiki_root, manifest, group.atom_ids)
             if len(atom_pages) < 2:
@@ -241,6 +254,7 @@ class DreamCycleService:
                 ),
             )
             results.append({"status": result.status, "doc_id": result.doc_id, "source_refs": source_refs})
+            direction_counts[topic] = direction_counts.get(topic, 0) + 1
         return results
 
     def quality_review(self, wiki: WikiConfig, *, dry_run: bool = False) -> list[dict]:
@@ -431,6 +445,17 @@ class DreamCycleService:
         topic = "-".join(topics) if len(topics) >= 2 else (topics[0] if topics else "cross-domain")
         problem_cluster = clusters[0] if len(clusters) >= 2 and clusters[0] and clusters[0] == clusters[1] else "cross-domain"
         return topic, problem_cluster
+
+    def _existing_synthesis_direction_counts(self, manifest: ManifestRepository) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for entry in manifest.read_all():
+            if entry.get("page_type") != "synthesis":
+                continue
+            topic = str(entry.get("topic") or "").strip()
+            if not topic:
+                continue
+            counts[topic] = counts.get(topic, 0) + 1
+        return counts
 
     def _generate_synthesis_body(self, wiki: WikiConfig, group: CandidateGroup, atom_pages: dict[str, str]) -> str:
         if self._llm_generate is not None:

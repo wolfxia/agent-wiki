@@ -208,7 +208,22 @@ def test_synthesis_generate_dry_run_returns_plan_without_writing(temp_wiki_root:
 
 
 def test_synthesis_generate_defaults_to_three_results(temp_wiki_root: Path) -> None:
-    wiki = _wiki(temp_wiki_root)
+    wiki = _wiki(temp_wiki_root).model_copy(update={"dream_cycle": {"enabled": True, "schedule": "0 3 * * *", "synthesis": {"min_atoms": 2, "max_synthesis_per_run": 5, "strength_threshold": 0.3}, "quality": {"min_score": 50, "staleness_days": 30}, "orphan": {"report_path": ".agent-wiki/dream_cycle_orphans.jsonl"}}})
+    for index in range(5):
+        for suffix, topic in [(index, f"topic-{index}"), (index + 100, f"topic-{index + 100}")]:
+            doc_id = f"atom-limit-{suffix}"
+            _write_page(temp_wiki_root, doc_id, f"# {doc_id}\n")
+            _manifest_upsert(
+                temp_wiki_root,
+                {
+                    "doc_id": doc_id,
+                    "page_type": "atom",
+                    "topic": topic,
+                    "problem_cluster": f"cluster-{suffix}",
+                    "summary": doc_id,
+                    "source_refs": [],
+                },
+            )
     groups = [
         CandidateGroup(atom_ids=[f"atom-limit-{i}", f"atom-limit-{i+100}"], shared_keywords=[], graph_relations=[], strength=0.9)
         for i in range(5)
@@ -216,7 +231,51 @@ def test_synthesis_generate_defaults_to_three_results(temp_wiki_root: Path) -> N
 
     results = DreamCycleService().synthesis_generate(wiki, _actor(), groups, dry_run=True)
 
-    assert len(results) == 3
+    assert len(results) == 5
+
+
+def test_synthesis_generate_skips_overrepresented_topic_direction(temp_wiki_root: Path) -> None:
+    wiki = _wiki(temp_wiki_root)
+    for doc_id, topic, cluster in [
+        ("atom-agent-os-a", "agent-os", "cluster-a"),
+        ("atom-ai-harness-b", "ai-harness", "cluster-b"),
+        ("atom-imaging-os-c", "imaging-os", "cluster-c"),
+    ]:
+        _write_page(temp_wiki_root, doc_id, f"# {doc_id}\n")
+        _manifest_upsert(
+            temp_wiki_root,
+            {
+                "doc_id": doc_id,
+                "page_type": "atom",
+                "topic": topic,
+                "problem_cluster": cluster,
+                "summary": doc_id,
+                "source_refs": [],
+            },
+        )
+
+    for index in range(2):
+        _manifest_upsert(
+            temp_wiki_root,
+            {
+                "doc_id": f"synthesis-existing-{index}",
+                "page_type": "synthesis",
+                "topic": "agent-os-ai-harness",
+                "problem_cluster": "cross-domain",
+                "summary": "existing synthesis",
+                "source_refs": ["personal-1:atom-agent-os-a", "personal-1:atom-ai-harness-b"],
+            },
+        )
+
+    groups = [
+        CandidateGroup(atom_ids=["atom-agent-os-a", "atom-ai-harness-b"], shared_keywords=[], graph_relations=[], strength=0.95),
+        CandidateGroup(atom_ids=["atom-agent-os-a", "atom-imaging-os-c"], shared_keywords=[], graph_relations=[], strength=0.90),
+    ]
+
+    results = DreamCycleService().synthesis_generate(wiki, _actor(), groups, dry_run=True)
+
+    assert len(results) == 1
+    assert results[0]["topic"] == "agent-os-imaging-os"
 
 
 def test_cross_reference_skips_external_sync_atoms(temp_wiki_root: Path) -> None:
