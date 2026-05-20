@@ -86,6 +86,12 @@ class RuntimeTuningConfig(BaseModel):
     query_ranking: QueryRankingTuningConfig = Field(default_factory=QueryRankingTuningConfig)
 
 
+class FreshnessConfig(BaseModel):
+    default_stale_days: int | None = 30
+    volatile_topics: dict[str, int | None] = Field(default_factory=dict)
+    freshness_class_thresholds: dict[str, int | None] = Field(default_factory=lambda: {"volatile": 14, "evergreen": 90})
+
+
 class WikiConfig(BaseModel):
     wiki_id: str
     type: str
@@ -99,6 +105,7 @@ class WikiConfig(BaseModel):
     compile: CompileConfig = Field(default_factory=CompileConfig)
     dream_cycle: DreamCycleConfig = Field(default_factory=DreamCycleConfig)
     tuning_defaults: RuntimeTuningConfig = Field(default_factory=RuntimeTuningConfig)
+    freshness: FreshnessConfig = Field(default_factory=FreshnessConfig)
     permissions: list[PermissionConfig] = Field(default_factory=list)
 
 

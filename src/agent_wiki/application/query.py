@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import UTC, datetime, timedelta
 import json
 import re
 import time
@@ -67,7 +68,7 @@ class QueryService:
             if self._sensitivity_allowed(manifest, hit.doc_id, max_sensitivity, manifest_by_doc_id)
         ]
         filtered_hits = self._apply_ranking(manifest, purpose_reader, filtered_hits, manifest_by_doc_id, query_ranking)
-        l2_context = self._build_l2_context(manifest, filtered_hits, manifest_by_doc_id)
+        l2_context = self._build_l2_context(manifest, filtered_hits, manifest_by_doc_id, wiki)
         l3_proof = self._build_l3_proof(manifest, filtered_hits, manifest_by_doc_id)
         topic_index_entries = {
             row["doc_id"]: row for row in TopicIndexRepository(wiki_root).read_all()
@@ -238,16 +239,66 @@ class QueryService:
         doc_level = self._SENSITIVITY_ORDER[doc_sensitivity]
         return doc_level <= max_level
 
-    def _build_l2_context(self, manifest: ManifestRepository, hits: list[RetrievalHit], manifest_by_doc_id: dict[str, dict] | None = None) -> list[dict]:
+    def _build_l2_context(
+        self,
+        manifest: ManifestRepository,
+        hits: list[RetrievalHit],
+        manifest_by_doc_id: dict[str, dict] | None = None,
+        wiki: WikiConfig | None = None,
+    ) -> list[dict]:
         context = []
         for hit in hits[:3]:
             entry = (manifest_by_doc_id or {}).get(hit.doc_id) or manifest.find(hit.doc_id) or {}
-            caveat = ""
+            caveats = []
             if entry.get("review_status") == "disputed":
                 dispute_reason = entry.get("dispute_reason", "unknown dispute")
-                caveat = f"disputed: {dispute_reason}"
-            context.append({"wiki_id": hit.wiki_id, "doc_id": hit.doc_id, "score": hit.score, "caveat": caveat})
+                caveats.append(f"disputed: {dispute_reason}")
+            freshness = self._freshness_state(entry, wiki)
+            if freshness["status"] == "possibly_stale":
+                caveats.append("possibly_stale")
+            context.append({
+                "wiki_id": hit.wiki_id,
+                "doc_id": hit.doc_id,
+                "score": hit.score,
+                "caveat": "; ".join(caveats),
+                "freshness": freshness,
+                "possibly_stale": freshness["status"] == "possibly_stale",
+            })
         return context
+
+    def _freshness_state(self, entry: dict, wiki: WikiConfig | None = None) -> dict:
+        threshold_days = self._stale_threshold_days(entry, wiki)
+        updated_at = entry.get("updated_at") or entry.get("updated")
+        state = {"status": "unknown", "updated_at": updated_at or None, "stale_threshold_days": threshold_days}
+        if threshold_days is None:
+            state["status"] = "fresh" if updated_at else "unknown"
+            return state
+        if not updated_at:
+            return state
+        try:
+            parsed = datetime.fromisoformat(str(updated_at).replace("Z", "+00:00"))
+        except ValueError:
+            return state
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        if parsed.astimezone(UTC) < datetime.now(UTC) - timedelta(days=threshold_days):
+            state["status"] = "possibly_stale"
+        else:
+            state["status"] = "fresh"
+        return state
+
+    def _stale_threshold_days(self, entry: dict, wiki: WikiConfig | None = None) -> int | None:
+        freshness = getattr(wiki, "freshness", None) if wiki is not None else None
+        default = getattr(freshness, "default_stale_days", 30) if freshness is not None else 30
+        topic = str(entry.get("topic") or "")
+        volatile_topics = getattr(freshness, "volatile_topics", {}) if freshness is not None else {}
+        if topic in volatile_topics:
+            return volatile_topics[topic]
+        freshness_class = str(entry.get("freshness_class") or "")
+        thresholds = getattr(freshness, "freshness_class_thresholds", {}) if freshness is not None else {}
+        if freshness_class and freshness_class in thresholds:
+            return thresholds[freshness_class]
+        return default
 
     def _build_l3_proof(self, manifest: ManifestRepository, hits: list[RetrievalHit], manifest_by_doc_id: dict[str, dict] | None = None) -> list[dict]:
         proof = []

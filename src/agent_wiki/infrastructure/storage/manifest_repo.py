@@ -4,6 +4,7 @@ import logging
 import os
 from pathlib import Path
 import tempfile
+from datetime import UTC, datetime
 
 
 logger = logging.getLogger(__name__)
@@ -52,7 +53,7 @@ class ManifestRepository:
             entries = self.read_all()
             if any(existing["doc_id"] == entry["doc_id"] for existing in entries):
                 raise ValueError(f"duplicate doc_id: {entry['doc_id']}")
-            entries.append(entry)
+            entries.append(self._with_timestamps(entry))
             self._write_all(entries)
         finally:
             self._release_lock()
@@ -71,12 +72,36 @@ class ManifestRepository:
                 existing_index = entry_indexes.get(entry["doc_id"])
                 if existing_index is None:
                     entry_indexes[entry["doc_id"]] = len(entries)
-                    entries.append(entry)
+                    entries.append(self._with_timestamps(entry))
                     continue
-                entries[existing_index] = {**entries[existing_index], **entry}
+                existing = entries[existing_index]
+                entries[existing_index] = self._with_timestamps({**existing, **entry}, existing=existing)
             self._write_all(entries)
         finally:
             self._release_lock()
+
+    def _with_timestamps(self, entry: dict, existing: dict | None = None) -> dict:
+        normalized = dict(entry)
+        fallback = self._timestamp_fallback(normalized)
+        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        if existing is None:
+            created_at = normalized.get("created_at") or normalized.get("updated_at") or fallback or now
+            updated_at = normalized.get("updated_at") or created_at
+        else:
+            created_at = existing.get("created_at") or normalized.get("created_at") or fallback or now
+            updated_at = normalized.get("updated_at") or now
+        normalized["created_at"] = created_at
+        normalized["updated_at"] = updated_at
+        return normalized
+
+    def _timestamp_fallback(self, entry: dict) -> str | None:
+        canonical_uri = entry.get("canonical_uri")
+        if not canonical_uri:
+            return None
+        page_path = self.wiki_root / str(canonical_uri)
+        if not page_path.exists() or not page_path.is_file():
+            return None
+        return datetime.fromtimestamp(page_path.stat().st_mtime, UTC).isoformat().replace("+00:00", "Z")
 
     def _write_all(self, entries: list[dict]) -> None:
         self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -140,10 +165,21 @@ class ManifestRepository:
                         self.manifest_path,
                     )
                     continue
-                entries.append(entry)
+                entries.append(self._with_read_timestamps(entry))
         self._cache_stat = cache_stat
         self._cache_entries = [dict(entry) for entry in entries]
         return entries
+
+    def _with_read_timestamps(self, entry: dict) -> dict:
+        if entry.get("created_at") and entry.get("updated_at"):
+            return entry
+        fallback = self._timestamp_fallback(entry)
+        if fallback is None:
+            return entry
+        normalized = dict(entry)
+        normalized.setdefault("created_at", fallback)
+        normalized.setdefault("updated_at", normalized["created_at"])
+        return normalized
 
     def find(self, doc_id: str) -> dict | None:
         for entry in self.read_all():

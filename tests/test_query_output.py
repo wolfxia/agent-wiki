@@ -58,6 +58,59 @@ def test_query_returns_l1_l2_l3_layers_and_dispute_caveat(temp_wiki_root: Path) 
     assert "conflicting evidence" in result.l2_context[0]["caveat"]
 
 
+def test_query_l2_context_marks_stale_timestamped_atom_with_caveat(temp_wiki_root: Path) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    stale_updated_at = (datetime.now(UTC) - timedelta(days=45)).isoformat().replace("+00:00", "Z")
+    ManifestRepository(temp_wiki_root).upsert({
+        "wiki_id": "personal-1",
+        "doc_id": "atom-stale-caveat",
+        "page_type": "atom",
+        "topic": "industry",
+        "problem_cluster": "stale",
+        "updated_at": stale_updated_at,
+    })
+
+    context = QueryService()._build_l2_context(
+        ManifestRepository(temp_wiki_root),
+        [RetrievalHit(wiki_id="personal-1", doc_id="atom-stale-caveat", score=1.0)],
+    )
+
+    assert context[0]["freshness"] == {
+        "status": "possibly_stale",
+        "updated_at": stale_updated_at,
+        "stale_threshold_days": 30,
+    }
+    assert context[0]["possibly_stale"] is True
+    assert "possibly_stale" in context[0]["caveat"]
+
+
+def test_query_l2_context_keeps_unknown_freshness_for_legacy_atom_without_timestamp(temp_wiki_root: Path) -> None:
+    (temp_wiki_root / "MANIFEST.jsonl").write_text(
+        json.dumps({
+            "wiki_id": "personal-1",
+            "doc_id": "atom-legacy-no-time",
+            "page_type": "atom",
+            "topic": "legacy",
+            "problem_cluster": "unknown",
+        }, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    context = QueryService()._build_l2_context(
+        ManifestRepository(temp_wiki_root),
+        [RetrievalHit(wiki_id="personal-1", doc_id="atom-legacy-no-time", score=1.0)],
+    )
+
+    assert context[0]["freshness"] == {
+        "status": "unknown",
+        "updated_at": None,
+        "stale_threshold_days": 30,
+    }
+    assert context[0]["possibly_stale"] is False
+    assert context[0]["caveat"] == ""
+
+
 def test_query_execution_appends_query_outcome(temp_wiki_root: Path) -> None:
     wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
         update={"workspace_path": str(temp_wiki_root)}

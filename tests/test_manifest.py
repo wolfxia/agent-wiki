@@ -91,6 +91,77 @@ def test_manifest_repository_batch_upserts_entries(temp_wiki_root: Path) -> None
     assert len(repository.read_all()) == 2
 
 
+def test_manifest_repository_adds_timestamps_and_preserves_created_at_on_upsert(temp_wiki_root: Path) -> None:
+    from datetime import datetime
+
+    repository = ManifestRepository(temp_wiki_root)
+
+    repository.upsert({"wiki_id": "personal-1", "doc_id": "atom-time", "page_type": "atom"})
+    created_entry = repository.find("atom-time")
+
+    assert created_entry["created_at"]
+    assert created_entry["updated_at"]
+    datetime.fromisoformat(created_entry["created_at"].replace("Z", "+00:00"))
+    datetime.fromisoformat(created_entry["updated_at"].replace("Z", "+00:00"))
+
+    repository.upsert({"wiki_id": "personal-1", "doc_id": "atom-time", "page_type": "atom", "summary": "updated"})
+    updated_entry = repository.find("atom-time")
+
+    assert updated_entry["created_at"] == created_entry["created_at"]
+    assert updated_entry["updated_at"] >= created_entry["updated_at"]
+    assert updated_entry["summary"] == "updated"
+
+
+def test_manifest_repository_uses_file_mtime_for_legacy_entry_missing_timestamps(temp_wiki_root: Path) -> None:
+    from datetime import datetime, UTC
+    import os
+
+    pages_dir = temp_wiki_root / "pages"
+    pages_dir.mkdir(exist_ok=True)
+    page_path = pages_dir / "raw-legacy.md"
+    page_path.write_text("# Legacy", encoding="utf-8")
+    os.utime(page_path, (1_700_000_000, 1_700_000_000))
+
+    repository = ManifestRepository(temp_wiki_root)
+    repository.upsert({
+        "wiki_id": "personal-1",
+        "doc_id": "raw-legacy",
+        "page_type": "raw",
+        "canonical_uri": "pages/raw-legacy.md",
+    })
+
+    entry = repository.find("raw-legacy")
+
+    assert entry["created_at"] == datetime.fromtimestamp(1_700_000_000, UTC).isoformat().replace("+00:00", "Z")
+    assert entry["updated_at"] == entry["created_at"]
+
+
+def test_manifest_repository_read_all_uses_file_mtime_fallback_for_existing_legacy_entry(temp_wiki_root: Path) -> None:
+    from datetime import datetime, UTC
+    import json
+    import os
+
+    pages_dir = temp_wiki_root / "pages"
+    pages_dir.mkdir(exist_ok=True)
+    page_path = pages_dir / "atom-existing-legacy.md"
+    page_path.write_text("# Existing legacy", encoding="utf-8")
+    os.utime(page_path, (1_700_000_100, 1_700_000_100))
+    (temp_wiki_root / "MANIFEST.jsonl").write_text(
+        json.dumps({
+            "wiki_id": "personal-1",
+            "doc_id": "atom-existing-legacy",
+            "page_type": "atom",
+            "canonical_uri": "pages/atom-existing-legacy.md",
+        }, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    entry = ManifestRepository(temp_wiki_root).find("atom-existing-legacy")
+
+    assert entry["created_at"] == datetime.fromtimestamp(1_700_000_100, UTC).isoformat().replace("+00:00", "Z")
+    assert entry["updated_at"] == entry["created_at"]
+
+
 def test_manifest_repository_skips_corrupt_lines_with_warning(temp_wiki_root: Path, caplog) -> None:
     manifest_path = temp_wiki_root / "MANIFEST.jsonl"
     manifest_path.write_bytes(
