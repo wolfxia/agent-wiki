@@ -123,12 +123,15 @@ class SQLiteFTSIndexProvider:
             RetrievalHit(
                 wiki_id=row["wiki_id"] or self.wiki_id,
                 doc_id=row["doc_id"],
-                score=1.0 / (1.0 + max(float(row["rank"]), 0.0)),
+                score=self._score_from_rank(float(row["rank"])),
                 section="fts5",
                 metadata={"fts_rank": float(row["rank"])},
             )
             for row in rows
         ]
+
+    def _score_from_rank(self, rank: float) -> float:
+        return max(-rank * 1_000_000.0, 0.0)
 
     def _ensure_schema(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
