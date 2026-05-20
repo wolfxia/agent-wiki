@@ -16,6 +16,7 @@ from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 from agent_wiki.infrastructure.storage.purpose_reader import PurposeReader
 from agent_wiki.infrastructure.retrieval.topic_index import TopicIndexRepository
 from agent_wiki.infrastructure.runtime.claim_annotations import ClaimAnnotationRepository
+from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 
 
 class QueryService:
@@ -70,7 +71,8 @@ class QueryService:
         ]
         filtered_hits = self._apply_ranking(manifest, purpose_reader, filtered_hits, manifest_by_doc_id, query_ranking)
         l2_context = self._build_l2_context(manifest, filtered_hits, manifest_by_doc_id, wiki)
-        l3_proof = self._build_l3_proof(manifest, filtered_hits, manifest_by_doc_id)
+        l3_proof = self._build_l3_proof(manifest, filtered_hits, manifest_by_doc_id, wiki)
+        self._enqueue_ambiguous_claim_reviews(wiki_root, filtered_hits)
         topic_index_entries = {
             row["doc_id"]: row for row in TopicIndexRepository(wiki_root).read_all()
             if row.get("doc_id")
@@ -271,7 +273,12 @@ class QueryService:
         return context
 
 
-    def _claim_context(self, repository: ClaimAnnotationRepository | None, doc_id: str) -> list[dict]:
+    def _claim_context(
+        self,
+        repository: ClaimAnnotationRepository | None,
+        doc_id: str,
+        manifest: ManifestRepository | None = None,
+    ) -> list[dict]:
         if repository is None:
             return []
         annotation = repository.find(doc_id)
@@ -279,14 +286,32 @@ class QueryService:
             return []
         claims = []
         for claim in annotation.get("claims") or []:
-            claims.append(
+            evidence_refs = [str(ref) for ref in claim.get("evidence_refs") or []]
+            item = {
+                "text": str(claim.get("text") or ""),
+                "confidence": str(claim.get("confidence_label") or "INFERRED"),
+                "evidence_refs": evidence_refs,
+            }
+            if manifest is not None:
+                item["evidence_pages"] = self._evidence_pages(manifest, evidence_refs)
+            claims.append(item)
+        return claims
+
+    def _evidence_pages(self, manifest: ManifestRepository, evidence_refs: list[str]) -> list[dict]:
+        pages = []
+        for ref in evidence_refs:
+            doc_id = ref.split(":", maxsplit=1)[-1]
+            entry = manifest.find(doc_id)
+            if entry is None:
+                continue
+            pages.append(
                 {
-                    "text": str(claim.get("text") or ""),
-                    "confidence": str(claim.get("confidence_label") or "INFERRED"),
-                    "evidence_refs": [str(ref) for ref in claim.get("evidence_refs") or []],
+                    "doc_id": doc_id,
+                    "page_type": str(entry.get("page_type") or ""),
+                    "summary": str(entry.get("summary") or ""),
                 }
             )
-        return claims
+        return pages
 
     def _freshness_state(self, entry: dict, wiki: WikiConfig | None = None) -> dict:
         threshold_days = self._stale_threshold_days(entry, wiki)
@@ -322,7 +347,13 @@ class QueryService:
             return thresholds[freshness_class]
         return default
 
-    def _build_l3_proof(self, manifest: ManifestRepository, hits: list[RetrievalHit], manifest_by_doc_id: dict[str, dict] | None = None) -> list[dict]:
+    def _build_l3_proof(
+        self,
+        manifest: ManifestRepository,
+        hits: list[RetrievalHit],
+        manifest_by_doc_id: dict[str, dict] | None = None,
+        wiki: WikiConfig | None = None,
+    ) -> list[dict]:
         proof = []
         wiki_root = getattr(manifest, "wiki_root", None)
         claim_repository = ClaimAnnotationRepository(wiki_root) if wiki_root is not None else None
@@ -331,7 +362,8 @@ class QueryService:
             proof.append({
                 "doc_id": hit.doc_id,
                 "source_refs": entry.get("source_refs", []),
-                "claims": self._claim_context(claim_repository, hit.doc_id),
+                "freshness": self._freshness_state(entry, wiki),
+                "claims": self._claim_context(claim_repository, hit.doc_id, manifest),
             })
         return proof
 
@@ -366,6 +398,39 @@ class QueryService:
         if stripped.startswith(">") and re.search(r"(学习日期|日期|时间|方向|深度|source|date|tags?)\s*[：:]", unquoted, re.IGNORECASE):
             return False
         return True
+
+
+    def _enqueue_ambiguous_claim_reviews(self, wiki_root: Path, hits: list[RetrievalHit]) -> None:
+        if not hits:
+            return
+        annotations = ClaimAnnotationRepository(wiki_root)
+        queue = ReviewQueueRepository(wiki_root)
+        entries = []
+        for hit in hits[:10]:
+            annotation = annotations.find(hit.doc_id)
+            if annotation is None:
+                continue
+            for index, claim in enumerate(annotation.get("claims") or []):
+                confidence = str(claim.get("confidence_label") or "INFERRED").upper()
+                if confidence != "AMBIGUOUS":
+                    continue
+                claim_text = str(claim.get("text") or "")
+                entries.append(
+                    {
+                        "item_id": f"ambiguous_claim:{hit.doc_id}:{index}",
+                        "item_type": "claim_review",
+                        "doc_id": hit.doc_id,
+                        "review_reason": "ambiguous_claim",
+                        "reason": "ambiguous claim confidence returned in query results",
+                        "content_state": {
+                            "claim_text": claim_text,
+                            "confidence": confidence,
+                            "evidence_refs": [str(ref) for ref in claim.get("evidence_refs") or []],
+                        },
+                        "status": "open",
+                    }
+                )
+        queue.append_many(entries)
 
     def _append_query_outcome(
         self,

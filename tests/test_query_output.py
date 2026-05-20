@@ -109,7 +109,12 @@ def test_query_l3_proof_includes_claim_confidence_annotations(temp_wiki_root: Pa
     )
 
     assert proof[0]["claims"] == [
-        {"text": "Proof-backed claim.", "confidence": "EXTRACTED", "evidence_refs": ["personal-1:raw-paper"]}
+        {
+            "text": "Proof-backed claim.",
+            "confidence": "EXTRACTED",
+            "evidence_refs": ["personal-1:raw-paper"],
+            "evidence_pages": [],
+        }
     ]
 
 
@@ -880,3 +885,146 @@ def test_query_can_filter_to_compiled_page_types(temp_wiki_root: Path) -> None:
 
     assert result.hits
     assert {hit.doc_id for hit in result.hits} == {"atom-filter-query-1"}
+
+
+def test_query_l3_proof_includes_source_page_trace_and_freshness(temp_wiki_root: Path) -> None:
+    from datetime import UTC, datetime, timedelta
+    from agent_wiki.infrastructure.runtime.claim_annotations import ClaimAnnotationRepository
+
+    stale_updated_at = (datetime.now(UTC) - timedelta(days=45)).isoformat().replace("+00:00", "Z")
+    ManifestRepository(temp_wiki_root).upsert({
+        "wiki_id": "personal-1",
+        "doc_id": "raw-proof-source",
+        "page_type": "raw",
+        "summary": "Primary paper evidence.",
+    })
+    ManifestRepository(temp_wiki_root).upsert({
+        "wiki_id": "personal-1",
+        "doc_id": "atom-proof-chain",
+        "page_type": "atom",
+        "source_refs": ["personal-1:raw-proof-source"],
+        "updated_at": stale_updated_at,
+    })
+    ClaimAnnotationRepository(temp_wiki_root).upsert({
+        "doc_id": "atom-proof-chain",
+        "annotation_method": "rule",
+        "claims": [
+            {
+                "text": "Proof-backed claim.",
+                "confidence_label": "EXTRACTED",
+                "evidence_refs": ["personal-1:raw-proof-source"],
+            }
+        ],
+    })
+
+    proof = QueryService()._build_l3_proof(
+        ManifestRepository(temp_wiki_root),
+        [RetrievalHit(wiki_id="personal-1", doc_id="atom-proof-chain", score=1.0)],
+    )
+
+    assert proof[0]["freshness"] == {
+        "status": "possibly_stale",
+        "updated_at": stale_updated_at,
+        "stale_threshold_days": 30,
+    }
+    assert proof[0]["claims"] == [
+        {
+            "text": "Proof-backed claim.",
+            "confidence": "EXTRACTED",
+            "evidence_refs": ["personal-1:raw-proof-source"],
+            "evidence_pages": [
+                {"doc_id": "raw-proof-source", "page_type": "raw", "summary": "Primary paper evidence."}
+            ],
+        }
+    ]
+
+
+def test_query_enqueues_ambiguous_claim_reviews_only_for_ambiguous_claims(temp_wiki_root: Path) -> None:
+    from agent_wiki.infrastructure.runtime.claim_annotations import ClaimAnnotationRepository
+    from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-ambiguous-review",
+            topic="quality",
+            problem_cluster="claims",
+            content="# Raw ambiguous review\n\nquality claims conflict",
+            source_refs=[],
+        ),
+    )
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-extracted-review",
+            topic="quality",
+            problem_cluster="claims",
+            content="# Raw extracted review\n\nquality claims paper",
+            source_refs=[],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-ambiguous-review",
+            page_type="atom",
+            topic="quality",
+            problem_cluster="claims",
+            summary="Ambiguous claim atom.",
+            content="# Atom ambiguous review\n\nquality claims conflict",
+            source_refs=["personal-1:raw-ambiguous-review"],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-extracted-review",
+            page_type="atom",
+            topic="quality",
+            problem_cluster="claims",
+            summary="Extracted claim atom.",
+            content="# Atom extracted review\n\nquality claims paper",
+            source_refs=["personal-1:raw-extracted-review"],
+        ),
+    )
+    ClaimAnnotationRepository(temp_wiki_root).upsert({
+        "doc_id": "atom-ambiguous-review",
+        "annotation_method": "rule",
+        "claims": [
+            {"text": "Evidence is conflicting.", "confidence_label": "AMBIGUOUS", "evidence_refs": []}
+        ],
+    })
+    ClaimAnnotationRepository(temp_wiki_root).upsert({
+        "doc_id": "atom-extracted-review",
+        "annotation_method": "rule",
+        "claims": [
+            {"text": "Paper-backed claim.", "confidence_label": "EXTRACTED", "evidence_refs": ["personal-1:raw-extracted-review"]}
+        ],
+    })
+
+    service = QueryService()
+    result = service.execute(
+        wiki=wiki,
+        actor=actor,
+        data=QueryInput(query="quality claims", include_pending=False),
+        write_outcome=False,
+    )
+
+    assert any(hit.doc_id == "atom-ambiguous-review" for hit in result.hits)
+    queue_items = ReviewQueueRepository(temp_wiki_root).read_all()
+    ambiguous_items = [item for item in queue_items if item.get("review_reason") == "ambiguous_claim"]
+
+    assert len(ambiguous_items) == 1
+    assert ambiguous_items[0]["doc_id"] == "atom-ambiguous-review"
+    assert ambiguous_items[0]["item_type"] == "claim_review"
+    assert ambiguous_items[0]["content_state"]["claim_text"] == "Evidence is conflicting."
+    assert all(item.get("doc_id") != "atom-extracted-review" for item in ambiguous_items)
