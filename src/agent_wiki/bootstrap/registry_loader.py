@@ -72,6 +72,17 @@ class DreamCycleConfig(BaseModel):
     orphan: DreamCycleOrphanConfig = Field(default_factory=DreamCycleOrphanConfig)
 
 
+class FreshnessPenaltyConfig(BaseModel):
+    enabled: bool = False
+    stale_days: int = 30
+    penalty_weight: float = 0.1
+
+
+class ConfidencePenaltyConfig(BaseModel):
+    enabled: bool = False
+    ambiguous_penalty_weight: float = 0.05
+
+
 class QueryRankingTuningConfig(BaseModel):
     atom_page_type_boost: float = 4.0
     synthesis_page_type_boost: float = 4.0
@@ -80,6 +91,8 @@ class QueryRankingTuningConfig(BaseModel):
     topic_alignment_boost: float = 5.0
     topic_seed_score: float = 8.0
     rerank_candidate_multiplier: int = 3
+    freshness_penalty: FreshnessPenaltyConfig = Field(default_factory=FreshnessPenaltyConfig)
+    confidence_penalty: ConfidencePenaltyConfig = Field(default_factory=ConfidencePenaltyConfig)
 
 
 class RuntimeTuningConfig(BaseModel):

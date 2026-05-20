@@ -16,9 +16,12 @@ _LOW_RISK_PARAMETERS = {
     "query_ranking.topic_alignment_boost",
     "query_ranking.topic_seed_score",
     "query_ranking.rerank_candidate_multiplier",
+    "query_ranking.freshness_penalty.penalty_weight",
+    "query_ranking.confidence_penalty.ambiguous_penalty_weight",
 }
 _MAX_AUTO_TUNE_STEP = 1.0
 _AUTO_TUNE_ROLLBACK_DROP_THRESHOLD = 0.02
+_PENALTY_ROLLBACK_DROP_THRESHOLD = 0.05
 
 
 class RuntimeTuningService:
@@ -128,7 +131,7 @@ class RuntimeTuningService:
         if after_report is None and evaluate_after is not None:
             after_report = evaluate_after()
 
-        if self._strict_recall_regressed(eval_before, after_report):
+        if self._strict_recall_regressed(eval_before, after_report, parameter_name=parameter_name):
             self.update_parameter(
                 wiki=wiki,
                 parameter_name=parameter_name,
@@ -152,6 +155,71 @@ class RuntimeTuningService:
             "new_value": new_value,
             "eval_after": after_report,
         }
+
+
+    def enable_ranking_penalties(
+        self,
+        wiki: WikiConfig,
+        *,
+        eval_before: dict[str, Any],
+        eval_after: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        before = self.load(wiki)
+        before_payload = before.model_dump(mode="json")
+        updated_payload = json.loads(json.dumps(before_payload))
+        updated_payload["query_ranking"]["freshness_penalty"]["enabled"] = True
+        updated_payload["query_ranking"]["confidence_penalty"]["enabled"] = True
+        updated = RuntimeTuningConfig.model_validate(updated_payload)
+
+        runtime_root = self._runtime_root(wiki)
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        self._runtime_path(wiki).write_text(
+            json.dumps(updated.model_dump(mode="json"), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        self._append_history(
+            wiki,
+            {
+                "timestamp": self._timestamp(),
+                "parameter_name": "query_ranking.penalties.enabled",
+                "old_value": {
+                    "freshness_penalty": before.query_ranking.freshness_penalty.enabled,
+                    "confidence_penalty": before.query_ranking.confidence_penalty.enabled,
+                },
+                "new_value": {"freshness_penalty": True, "confidence_penalty": True},
+                "trigger": "ranking_penalty_enable",
+                "expected_effect": "deprioritize stale and ambiguous atoms",
+                "eval_before": eval_before,
+            },
+        )
+
+        if self._strict_recall_regressed(
+            eval_before,
+            eval_after,
+            parameter_name="query_ranking.freshness_penalty.enabled",
+        ):
+            self._runtime_path(wiki).write_text(
+                json.dumps(before_payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            self._append_history(
+                wiki,
+                {
+                    "timestamp": self._timestamp(),
+                    "parameter_name": "query_ranking.penalties.enabled",
+                    "old_value": {"freshness_penalty": True, "confidence_penalty": True},
+                    "new_value": {
+                        "freshness_penalty": before.query_ranking.freshness_penalty.enabled,
+                        "confidence_penalty": before.query_ranking.confidence_penalty.enabled,
+                    },
+                    "trigger": "ranking_penalty_rollback",
+                    "expected_effect": "restore previous penalty enablement after strict recall regression",
+                    "eval_before": (eval_after or {}).get("metrics") or {},
+                },
+            )
+            return {"status": "rolled_back", "eval_after": eval_after}
+
+        return {"status": "changed", "eval_after": eval_after}
 
     def _defaults(self, wiki: WikiConfig) -> RuntimeTuningConfig:
         return RuntimeTuningConfig.model_validate(self._as_payload(getattr(wiki, "tuning_defaults", {})))
@@ -186,13 +254,25 @@ class RuntimeTuningService:
             return int(round(candidate))
         return round(candidate, 3)
 
-    def _strict_recall_regressed(self, eval_before: dict[str, Any], eval_after: dict[str, Any] | None) -> bool:
+    def _strict_recall_regressed(
+        self,
+        eval_before: dict[str, Any],
+        eval_after: dict[str, Any] | None,
+        *,
+        parameter_name: str = "",
+    ) -> bool:
         if not eval_after:
             return False
         after_metrics = eval_after.get("metrics") or {}
         before_strict = float(eval_before.get("strict_recall_at_k", 0.0) or 0.0)
         after_strict = float(after_metrics.get("strict_recall_at_k", 0.0) or 0.0)
-        return (before_strict - after_strict) > _AUTO_TUNE_ROLLBACK_DROP_THRESHOLD
+        threshold = (
+            _PENALTY_ROLLBACK_DROP_THRESHOLD
+            if parameter_name.startswith("query_ranking.freshness_penalty")
+            or parameter_name.startswith("query_ranking.confidence_penalty")
+            else _AUTO_TUNE_ROLLBACK_DROP_THRESHOLD
+        )
+        return (before_strict - after_strict) > threshold
 
     def _merge(self, defaults: RuntimeTuningConfig, override: dict) -> RuntimeTuningConfig:
         merged = defaults.model_dump(mode="json")

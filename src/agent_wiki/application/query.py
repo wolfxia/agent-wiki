@@ -217,7 +217,10 @@ class QueryService:
             )
             freshness = float(manifest_entry.get("updated_at_score") or 0.0)
             manifest_priority = float(self._manifest_priority(manifest, hit.doc_id, manifest_by_doc_id))
-            final_score = hit.score + page_type_boost + purpose_boost + topic_alignment_boost + freshness + manifest_priority
+            freshness_penalty = self._freshness_penalty(manifest_entry, query_ranking)
+            confidence_penalty = self._confidence_penalty(manifest, hit.doc_id, query_ranking)
+            total_penalty = freshness_penalty + confidence_penalty
+            final_score = hit.score + page_type_boost + purpose_boost + topic_alignment_boost + freshness + manifest_priority - total_penalty
             metadata = {
                 **hit.metadata,
                 "page_type_boost": page_type_boost,
@@ -225,11 +228,52 @@ class QueryService:
                 "topic_alignment_boost": topic_alignment_boost,
                 "freshness": freshness,
                 "manifest_priority": manifest_priority,
+                "freshness_penalty": freshness_penalty,
+                "confidence_penalty": confidence_penalty,
+                "ranking_penalty": total_penalty,
                 "final_score": final_score,
             }
             ranked.append(hit.model_copy(update={"score": final_score, "metadata": metadata}))
         ranked.sort(key=lambda hit: hit.score, reverse=True)
         return ranked
+
+
+    def _freshness_penalty(self, manifest_entry: dict, query_ranking: QueryRankingTuningConfig) -> float:
+        config = query_ranking.freshness_penalty
+        if not config.enabled:
+            return 0.0
+        if manifest_entry.get("page_type") != PageType.ATOM.value:
+            return 0.0
+        updated_at = manifest_entry.get("updated_at") or manifest_entry.get("updated")
+        if not updated_at:
+            return 0.0
+        try:
+            parsed = datetime.fromisoformat(str(updated_at).replace("Z", "+00:00"))
+        except ValueError:
+            return 0.0
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        if parsed.astimezone(UTC) < datetime.now(UTC) - timedelta(days=int(config.stale_days)):
+            return float(config.penalty_weight)
+        return 0.0
+
+    def _confidence_penalty(self, manifest: ManifestRepository, doc_id: str, query_ranking: QueryRankingTuningConfig) -> float:
+        config = query_ranking.confidence_penalty
+        if not config.enabled:
+            return 0.0
+        wiki_root = getattr(manifest, "wiki_root", None)
+        if wiki_root is None:
+            return 0.0
+        annotation = ClaimAnnotationRepository(wiki_root).find(doc_id)
+        if annotation is None:
+            return 0.0
+        labels = [str(claim.get("confidence_label") or "INFERRED").upper() for claim in annotation.get("claims") or []]
+        if not labels:
+            return 0.0
+        ambiguous_count = sum(1 for label in labels if label == "AMBIGUOUS")
+        if ambiguous_count > len(labels) / 2:
+            return float(config.ambiguous_penalty_weight)
+        return 0.0
 
     _SENSITIVITY_ORDER = {Sensitivity.PUBLIC: 0, Sensitivity.INTERNAL: 1, Sensitivity.CONFIDENTIAL: 2}
 

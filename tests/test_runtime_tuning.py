@@ -250,3 +250,110 @@ def test_auto_tune_rolls_back_when_strict_recall_drops_more_than_two_percent(tem
     assert service.load(wiki).query_ranking.topic_alignment_boost == 6.5
     history = [json.loads(line) for line in (temp_wiki_root / ".agent-wiki" / "param_history.jsonl").read_text(encoding="utf-8").splitlines()]
     assert history[-1]["trigger"] == "auto_tune_rollback"
+
+
+
+def test_query_ranking_penalties_default_off_and_configurable_with_eval_gate(temp_wiki_root: Path) -> None:
+    from agent_wiki.domain.contracts import RetrievalHit
+    from agent_wiki.infrastructure.runtime.claim_annotations import ClaimAnnotationRepository
+    from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
+    from agent_wiki.infrastructure.storage.purpose_reader import PurposeReader
+
+    wiki = _wiki(temp_wiki_root)
+    manifest = ManifestRepository(temp_wiki_root)
+    manifest.upsert({
+        "wiki_id": "personal-1",
+        "doc_id": "atom-fresh",
+        "page_type": "atom",
+        "topic": "ranking",
+        "problem_cluster": "penalties",
+        "updated_at": "2026-05-20T00:00:00Z",
+    })
+    manifest.upsert({
+        "wiki_id": "personal-1",
+        "doc_id": "atom-stale",
+        "page_type": "atom",
+        "topic": "ranking",
+        "problem_cluster": "penalties",
+        "updated_at": "2026-03-01T00:00:00Z",
+    })
+    ClaimAnnotationRepository(temp_wiki_root).upsert({
+        "doc_id": "atom-fresh",
+        "annotation_method": "rule",
+        "claims": [{"text": "Fresh claim.", "confidence_label": "EXTRACTED", "evidence_refs": []}],
+    })
+    ClaimAnnotationRepository(temp_wiki_root).upsert({
+        "doc_id": "atom-stale",
+        "annotation_method": "rule",
+        "claims": [{"text": "Ambiguous claim.", "confidence_label": "AMBIGUOUS", "evidence_refs": []}],
+    })
+    hits = [
+        RetrievalHit(wiki_id="personal-1", doc_id="atom-stale", score=10.0),
+        RetrievalHit(wiki_id="personal-1", doc_id="atom-fresh", score=10.0),
+    ]
+
+    default_tuning = RuntimeTuningService().load(wiki).query_ranking
+    default_ranked = QueryService()._apply_ranking(manifest, PurposeReader(temp_wiki_root), hits, query_ranking=default_tuning)
+
+    assert default_ranked[0].doc_id == "atom-stale"
+    assert default_ranked[0].metadata["freshness_penalty"] == 0.0
+    assert default_ranked[0].metadata["confidence_penalty"] == 0.0
+
+    runtime_root = temp_wiki_root / ".agent-wiki"
+    runtime_root.mkdir(exist_ok=True)
+    (runtime_root / "runtime_tuning.json").write_text(
+        json.dumps({
+            "query_ranking": {
+                "freshness_penalty": {"enabled": True, "stale_days": 30, "penalty_weight": 2.0},
+                "confidence_penalty": {"enabled": True, "ambiguous_penalty_weight": 3.0},
+            }
+        }, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    tuned = RuntimeTuningService().load(wiki).query_ranking
+    tuned_ranked = QueryService()._apply_ranking(manifest, PurposeReader(temp_wiki_root), hits, query_ranking=tuned)
+
+    assert tuned_ranked[0].doc_id == "atom-fresh"
+    stale_hit = next(hit for hit in tuned_ranked if hit.doc_id == "atom-stale")
+    assert stale_hit.metadata["freshness_penalty"] == 2.0
+    assert stale_hit.metadata["confidence_penalty"] == 3.0
+
+    diagnosis = {
+        "diagnoses": [{
+            "diagnosis_type": "ranking_penalty_candidate",
+            "recommendation": {
+                "action": "adjust_parameter",
+                "parameter_name": "query_ranking.freshness_penalty.penalty_weight",
+                "direction": "increase",
+                "step": 0.1,
+                "expected_effect": "deprioritize stale atoms",
+                "current_value": 2.0,
+            },
+        }],
+        "latest_eval": {"eval_file": "eval/retrieval_queries_v2.jsonl", "metrics": {"strict_recall_at_k": 0.80}},
+    }
+    result = RuntimeTuningService().auto_tune(
+        wiki,
+        diagnosis,
+        eval_after={"metrics": {"strict_recall_at_k": 0.74}},
+    )
+
+    assert result["status"] == "rolled_back"
+    assert result["parameter_name"] == "query_ranking.freshness_penalty.penalty_weight"
+
+
+def test_enable_ranking_penalties_rolls_back_when_eval_recall_drops_over_five_percent(temp_wiki_root: Path) -> None:
+    wiki = _wiki(temp_wiki_root)
+    service = RuntimeTuningService()
+
+    result = service.enable_ranking_penalties(
+        wiki,
+        eval_before={"strict_recall_at_k": 0.80},
+        eval_after={"metrics": {"strict_recall_at_k": 0.74}},
+    )
+
+    assert result["status"] == "rolled_back"
+    tuning = service.load(wiki).query_ranking
+    assert tuning.freshness_penalty.enabled is False
+    assert tuning.confidence_penalty.enabled is False
