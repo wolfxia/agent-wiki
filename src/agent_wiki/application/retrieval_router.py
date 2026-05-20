@@ -70,12 +70,14 @@ class RetrievalRouter:
         graph_score: float = 0.0,
         section: str,
     ) -> RetrievalHit:
-        final_score = lexical_score + structured_score + graph_score
+        capped_graph_score = min(graph_score, 5.0)
+        final_score = lexical_score + structured_score + capped_graph_score
         metadata = {
             **hit.metadata,
             "lexical_score": lexical_score,
             "structured_score": structured_score,
-            "graph_score": graph_score,
+            "graph_score": capped_graph_score,
+            "raw_graph_score": graph_score,
             "final_score": final_score,
         }
         return hit.model_copy(update={"score": final_score, "section": section, "metadata": metadata})
