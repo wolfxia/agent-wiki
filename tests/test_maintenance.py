@@ -861,8 +861,9 @@ def test_maintenance_reports_quality_metrics(temp_wiki_root: Path) -> None:
         if line.strip()
     ]
     for entry in manifest_entries:
-        if entry.get("doc_id") == "atom-metrics-covered":
-            entry["updated_at"] = stale_ts
+            if entry.get("doc_id") == "atom-metrics-covered":
+                entry["created_at"] = stale_ts
+                entry["updated_at"] = stale_ts
     (temp_wiki_root / "MANIFEST.jsonl").write_text(
         "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in manifest_entries),
         encoding="utf-8",
