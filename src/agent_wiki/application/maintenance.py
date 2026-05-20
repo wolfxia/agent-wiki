@@ -21,6 +21,7 @@ from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRe
 from agent_wiki.infrastructure.retrieval.sqlite_fts import SQLiteFTSIndexProvider
 from agent_wiki.infrastructure.retrieval.topic_index import TopicIndexRepository
 from agent_wiki.infrastructure.retrieval.vector_index import SQLiteVectorIndexProvider
+from agent_wiki.infrastructure.runtime.claim_annotations import ClaimAnnotationRepository
 from agent_wiki.infrastructure.runtime.operation_log import OperationLogRepository
 from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
@@ -196,6 +197,7 @@ class MaintenanceService:
             "claim_annotations": claim_annotations,
             "embedding_maintenance": embedding_maintenance,
             "compile_strategy_counts": self._compile_strategy_counts(compile_suggestions),
+            "quality_metrics": self._quality_metrics(wiki_root),
             "value_metrics": self._value_metrics(wiki_root),
             "staleness_governance": self._staleness_governance(wiki),
             "action_items": action_items,
@@ -353,6 +355,85 @@ class MaintenanceService:
             strategy = str(candidate.get("compile_strategy") or "Standard")
             counts[strategy] = counts.get(strategy, 0) + 1
         return counts
+
+    def _parse_timestamp(self, value: str | datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            try:
+                parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+
+    def _quality_metrics(self, wiki_root: Path) -> dict:
+        manifest_entries = ManifestRepository(wiki_root).read_all()
+        queue_entries = ReviewQueueRepository(wiki_root).read_all()
+        annotation_entries = ClaimAnnotationRepository(wiki_root).read_all()
+
+        compile_pending = sum(
+            1
+            for item in queue_entries
+            if item.get("item_type") == "compile_suggestion" and item.get("status", "open") == "open"
+        )
+
+        raw_doc_ids = {
+            str(entry.get("doc_id"))
+            for entry in manifest_entries
+            if entry.get("page_type") == "raw" and entry.get("doc_id")
+        }
+        atom_doc_ids = {
+            str(entry.get("doc_id"))
+            for entry in manifest_entries
+            if entry.get("page_type") == "atom" and entry.get("doc_id")
+        }
+        referenced_raw_doc_ids: set[str] = set()
+        synthesis_topics: set[str] = set()
+        freshness_distribution = {"recent": 0, "fresh": 0, "stale": 0}
+        now = datetime.now(UTC)
+
+        for entry in manifest_entries:
+            if entry.get("page_type") == "atom":
+                for ref in entry.get("source_refs") or []:
+                    _, _, doc_id = str(ref).partition(":")
+                    if doc_id:
+                        referenced_raw_doc_ids.add(doc_id)
+            if entry.get("page_type") == "synthesis":
+                topic = str(entry.get("topic") or "").strip()
+                if topic:
+                    synthesis_topics.add(topic)
+            if entry.get("page_type") in {"atom", "synthesis"}:
+                updated_at = self._parse_timestamp(entry.get("updated_at") or entry.get("updated"))
+                if updated_at is None:
+                    freshness_distribution["stale"] += 1
+                    continue
+                age_days = max((now - updated_at).days, 0)
+                if age_days <= 7:
+                    freshness_distribution["recent"] += 1
+                elif age_days <= 30:
+                    freshness_distribution["fresh"] += 1
+                else:
+                    freshness_distribution["stale"] += 1
+
+        compile_coverage = len(raw_doc_ids & referenced_raw_doc_ids) / len(raw_doc_ids) if raw_doc_ids else 0.0
+        annotated_atom_doc_ids = {
+            str(entry.get("doc_id"))
+            for entry in annotation_entries
+            if entry.get("doc_id")
+        }
+        claim_annotation_coverage = len(atom_doc_ids & annotated_atom_doc_ids) / len(atom_doc_ids) if atom_doc_ids else 0.0
+
+        return {
+            "compile_pending": compile_pending,
+            "compile_coverage": round(compile_coverage, 3),
+            "freshness_distribution": freshness_distribution,
+            "synthesis_directions": len(synthesis_topics),
+            "claim_annotation_coverage": round(claim_annotation_coverage, 3),
+        }
 
     def _value_metrics(self, wiki_root: Path) -> dict:
         eval_history = self._read_jsonl(wiki_root / ".agent-wiki" / "eval_history.jsonl")

@@ -8,6 +8,7 @@ from agent_wiki.application.maintenance import MaintenanceService
 from agent_wiki.application.query import QueryInput, QueryService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
+from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 
 
@@ -787,3 +788,91 @@ def test_maintenance_auto_tune_runs_post_change_eval_and_rolls_back(monkeypatch,
     assert eval_reports == []
     runtime = json.loads((runtime_root / "runtime_tuning.json").read_text(encoding="utf-8"))
     assert runtime["query_ranking"]["topic_alignment_boost"] == 6.5
+
+
+def test_maintenance_reports_quality_metrics(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-metrics-pending",
+            topic="metrics",
+            problem_cluster="cluster-metrics",
+            content="# Raw pending",
+            source_refs=[],
+        ),
+    )
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-metrics-covered",
+            topic="metrics",
+            problem_cluster="cluster-metrics",
+            content="# Raw covered",
+            source_refs=[],
+        ),
+    )
+
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-metrics-covered",
+            page_type="atom",
+            topic="metrics",
+            problem_cluster="cluster-metrics",
+            content="# Atom covered\n\n## Claims\n- raw-metrics-covered\n\n## Evidence\n- source.",
+            summary="Atom covered",
+            source_refs=["personal-1:raw-metrics-covered"],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="synthesis-metrics-1",
+            page_type="synthesis",
+            topic="agent-os-ai-harness",
+            problem_cluster="cross-domain",
+            content="# Synthesis\n\nsummary",
+            summary="Synthesis",
+            source_refs=["personal-1:raw-metrics-covered"],
+        ),
+    )
+
+    queue = ReviewQueueRepository(temp_wiki_root)
+    queue.append({
+        "item_id": "compile_suggestion:metrics:pending",
+        "item_type": "compile_suggestion",
+        "status": "open",
+        "raw_doc_ids": ["raw-metrics-pending"],
+    })
+
+    stale_ts = (datetime.now(UTC) - timedelta(days=45)).isoformat().replace("+00:00", "Z")
+    manifest_entries = [
+        json.loads(line)
+        for line in (temp_wiki_root / "MANIFEST.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    for entry in manifest_entries:
+        if entry.get("doc_id") == "atom-metrics-covered":
+            entry["updated_at"] = stale_ts
+    (temp_wiki_root / "MANIFEST.jsonl").write_text(
+        "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in manifest_entries),
+        encoding="utf-8",
+    )
+
+    summary = MaintenanceService().run(wiki)
+
+    metrics = summary["quality_metrics"]
+    assert metrics["compile_pending"] >= 1
+    assert metrics["compile_coverage"] == 0.5
+    assert metrics["freshness_distribution"]["stale"] >= 1
+    assert metrics["synthesis_directions"] >= 1
+    assert 0.0 <= metrics["claim_annotation_coverage"] <= 1.0
