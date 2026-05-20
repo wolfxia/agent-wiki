@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from collections import Counter, defaultdict
 import re
 
+from agent_wiki.application.claim_annotations import ClaimAnnotationService
 from agent_wiki.application.compile_suggest import CompileSuggestService
 from agent_wiki.application.diagnosis import DiagnosisService
 from agent_wiki.application.eval_retrieval import EvalRetrievalService
@@ -64,6 +65,7 @@ class MaintenanceService:
         co_occurrences = relations.detect_and_enqueue_co_occurrences(wiki)
         cross_references = relations.detect_and_enqueue_cross_references(wiki)
         duplicate_atom_warnings = self._detect_duplicate_atom_warnings(wiki)
+        claim_annotations = ClaimAnnotationService().annotate_incremental(Path(wiki.workspace_path), limit=50)
 
         metadata_repair_candidates = [c for c in compile_candidates if c["kind"] == "needs_metadata_repair"]
         compile_suggestions = [c for c in compile_candidates if c["kind"] != "needs_metadata_repair"]
@@ -102,6 +104,7 @@ class MaintenanceService:
             "co_occurrence_candidates": len(co_occurrences),
             "cross_reference_candidates": len(cross_references),
             "duplicate_atom_warnings": duplicate_atom_warnings,
+            "claim_annotations": claim_annotations,
             "compile_strategy_counts": self._compile_strategy_counts(compile_suggestions),
             "value_metrics": self._value_metrics(Path(wiki.workspace_path)),
             "staleness_governance": self._staleness_governance(wiki),

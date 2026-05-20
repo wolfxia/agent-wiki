@@ -835,6 +835,10 @@ def test_compile_execute_apply_next_persists_structured_metadata(temp_wiki_root:
     assert stored["aliases"] == ["metadata alias"]
     assert stored["confidence"] == "high"
     assert stored["wikilinks"] == ["[[metadata-neighbor]]"]
+    annotations = [json.loads(line) for line in (temp_wiki_root / ".agent-wiki" / "claim_annotations.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert annotations[-1]["doc_id"] == result.doc_id
+    assert annotations[-1]["annotation_method"] == "compile"
+    assert annotations[-1]["claims"][0]["confidence_label"] == "EXTRACTED"
     page_text = (temp_wiki_root / "pages" / f"{result.doc_id}.md").read_text(encoding="utf-8")
     for section in ["## Claims", "## Applicability", "## Evidence", "## Relationship Hints", "## Open Questions"]:
         assert section in page_text

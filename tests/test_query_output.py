@@ -58,6 +58,63 @@ def test_query_returns_l1_l2_l3_layers_and_dispute_caveat(temp_wiki_root: Path) 
     assert "conflicting evidence" in result.l2_context[0]["caveat"]
 
 
+def test_query_l2_context_includes_claim_confidence_annotations(temp_wiki_root: Path) -> None:
+    from agent_wiki.infrastructure.runtime.claim_annotations import ClaimAnnotationRepository
+
+    ManifestRepository(temp_wiki_root).upsert({
+        "wiki_id": "personal-1",
+        "doc_id": "atom-claim-context",
+        "page_type": "atom",
+        "topic": "claims",
+        "problem_cluster": "confidence",
+    })
+    ClaimAnnotationRepository(temp_wiki_root).upsert({
+        "doc_id": "atom-claim-context",
+        "annotation_method": "rule",
+        "claims": [
+            {"text": "Paper-backed claim.", "confidence_label": "EXTRACTED", "evidence_refs": ["personal-1:raw-paper"]}
+        ],
+    })
+
+    context = QueryService()._build_l2_context(
+        ManifestRepository(temp_wiki_root),
+        [RetrievalHit(wiki_id="personal-1", doc_id="atom-claim-context", score=1.0)],
+    )
+
+    assert context[0]["claims"] == [
+        {"text": "Paper-backed claim.", "confidence": "EXTRACTED", "evidence_refs": ["personal-1:raw-paper"]}
+    ]
+
+
+def test_query_l3_proof_includes_claim_confidence_annotations(temp_wiki_root: Path) -> None:
+    from agent_wiki.infrastructure.runtime.claim_annotations import ClaimAnnotationRepository
+
+    ManifestRepository(temp_wiki_root).upsert({
+        "wiki_id": "personal-1",
+        "doc_id": "atom-claim-proof",
+        "page_type": "atom",
+        "source_refs": ["personal-1:raw-paper"],
+    })
+    ClaimAnnotationRepository(temp_wiki_root).upsert({
+        "doc_id": "atom-claim-proof",
+        "annotation_method": "rule",
+        "claims": [
+            {"text": "Proof-backed claim.", "confidence_label": "EXTRACTED", "evidence_refs": ["personal-1:raw-paper"]}
+        ],
+    })
+
+    proof = QueryService()._build_l3_proof(
+        ManifestRepository(temp_wiki_root),
+        [RetrievalHit(wiki_id="personal-1", doc_id="atom-claim-proof", score=1.0)],
+    )
+
+    assert proof[0]["claims"] == [
+        {"text": "Proof-backed claim.", "confidence": "EXTRACTED", "evidence_refs": ["personal-1:raw-paper"]}
+    ]
+
+
+
+
 def test_query_l2_context_marks_stale_timestamped_atom_with_caveat(temp_wiki_root: Path) -> None:
     from datetime import UTC, datetime, timedelta
 

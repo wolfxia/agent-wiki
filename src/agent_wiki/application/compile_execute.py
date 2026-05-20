@@ -12,6 +12,7 @@ from agent_wiki.application.compile_quality_gate import CompileQualityGate
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import CompileResult, CompileUpdateInput
+from agent_wiki.infrastructure.runtime.claim_annotations import ClaimAnnotationRepository
 from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 
 
@@ -399,11 +400,13 @@ class CompileExecuteService:
                         evidence_note=quality.get("evidence_note"),
                     ),
                 )
+                wiki_root = Path(wiki.workspace_path)
                 self._append_manifest_quality(
-                    wiki_root=Path(wiki.workspace_path),
+                    wiki_root=wiki_root,
                     doc_id=data.doc_id,
                     quality=quality,
                 )
+                self._write_claim_annotations(wiki_root, normalized_data)
         except Exception as exc:
             failure_telemetry = self._attempt_telemetry(
                 started_at,
@@ -531,6 +534,26 @@ class CompileExecuteService:
                     "increment_warning": quality.get("increment_warning", False),
                 },
                 "quality_checked_at": quality.get("quality_checked_at"),
+            }
+        )
+
+
+    def _write_claim_annotations(self, wiki_root: Path, data: CompileGeneratedInput) -> None:
+        if data.page_type != "atom" or not data.claims:
+            return
+        ClaimAnnotationRepository(wiki_root).upsert(
+            {
+                "doc_id": data.doc_id,
+                "claims": [
+                    {
+                        "text": claim.text,
+                        "confidence_label": claim.confidence_label,
+                        "evidence_refs": claim.evidence_refs,
+                        "rationale": "compile structured output",
+                    }
+                    for claim in data.claims
+                ],
+                "annotation_method": "compile",
             }
         )
 

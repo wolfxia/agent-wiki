@@ -15,6 +15,7 @@ from agent_wiki.infrastructure.query.classifier import RuleBasedQueryClassifier
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 from agent_wiki.infrastructure.storage.purpose_reader import PurposeReader
 from agent_wiki.infrastructure.retrieval.topic_index import TopicIndexRepository
+from agent_wiki.infrastructure.runtime.claim_annotations import ClaimAnnotationRepository
 
 
 class QueryService:
@@ -247,6 +248,8 @@ class QueryService:
         wiki: WikiConfig | None = None,
     ) -> list[dict]:
         context = []
+        wiki_root = Path(wiki.workspace_path) if wiki is not None else getattr(manifest, "wiki_root", None)
+        claim_repository = ClaimAnnotationRepository(wiki_root) if wiki_root is not None else None
         for hit in hits[:3]:
             entry = (manifest_by_doc_id or {}).get(hit.doc_id) or manifest.find(hit.doc_id) or {}
             caveats = []
@@ -263,8 +266,27 @@ class QueryService:
                 "caveat": "; ".join(caveats),
                 "freshness": freshness,
                 "possibly_stale": freshness["status"] == "possibly_stale",
+                "claims": self._claim_context(claim_repository, hit.doc_id),
             })
         return context
+
+
+    def _claim_context(self, repository: ClaimAnnotationRepository | None, doc_id: str) -> list[dict]:
+        if repository is None:
+            return []
+        annotation = repository.find(doc_id)
+        if annotation is None:
+            return []
+        claims = []
+        for claim in annotation.get("claims") or []:
+            claims.append(
+                {
+                    "text": str(claim.get("text") or ""),
+                    "confidence": str(claim.get("confidence_label") or "INFERRED"),
+                    "evidence_refs": [str(ref) for ref in claim.get("evidence_refs") or []],
+                }
+            )
+        return claims
 
     def _freshness_state(self, entry: dict, wiki: WikiConfig | None = None) -> dict:
         threshold_days = self._stale_threshold_days(entry, wiki)
@@ -302,9 +324,15 @@ class QueryService:
 
     def _build_l3_proof(self, manifest: ManifestRepository, hits: list[RetrievalHit], manifest_by_doc_id: dict[str, dict] | None = None) -> list[dict]:
         proof = []
+        wiki_root = getattr(manifest, "wiki_root", None)
+        claim_repository = ClaimAnnotationRepository(wiki_root) if wiki_root is not None else None
         for hit in hits[:3]:
             entry = (manifest_by_doc_id or {}).get(hit.doc_id) or manifest.find(hit.doc_id) or {}
-            proof.append({"doc_id": hit.doc_id, "source_refs": entry.get("source_refs", [])})
+            proof.append({
+                "doc_id": hit.doc_id,
+                "source_refs": entry.get("source_refs", []),
+                "claims": self._claim_context(claim_repository, hit.doc_id),
+            })
         return proof
 
     def _build_l1_answer(self, hits: list[RetrievalHit], wiki_root: Path, manifest: ManifestRepository, manifest_by_doc_id: dict[str, dict] | None = None, topic_index_entries: dict[str, dict] | None = None) -> str:

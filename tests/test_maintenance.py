@@ -8,6 +8,7 @@ from agent_wiki.application.maintenance import MaintenanceService
 from agent_wiki.application.query import QueryInput, QueryService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
+from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 
 
 def test_maintenance_runs_all_detectors_and_returns_summary(temp_wiki_root: Path) -> None:
@@ -611,6 +612,35 @@ def test_maintenance_reports_post_compile_uplift_atom_reference_rate_and_stalene
         if line.strip()
     ]
     assert any(entry.get("item_type") == "staleness_refresh" for entry in queue_entries)
+
+
+def test_maintenance_runs_capped_incremental_claim_annotation(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    pages = temp_wiki_root / "pages"
+    pages.mkdir(exist_ok=True)
+    for index in range(60):
+        doc_id = f"atom-maint-claim-{index}"
+        (pages / f"{doc_id}.md").write_text(f"# Atom {index}\n\n## Claims\n- Claim {index}.\n", encoding="utf-8")
+        ManifestRepository(temp_wiki_root).upsert({
+            "wiki_id": "personal-1",
+            "doc_id": doc_id,
+            "page_type": "atom",
+            "canonical_uri": f"pages/{doc_id}.md",
+        })
+
+    summary = MaintenanceService().run(wiki)
+
+    assert summary["claim_annotations"]["annotated_count"] == 50
+    annotations = [
+        json.loads(line)
+        for line in (temp_wiki_root / ".agent-wiki" / "claim_annotations.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(annotations) == 50
+
+
 
 
 def test_maintenance_auto_tune_runs_post_change_eval_and_rolls_back(monkeypatch, temp_wiki_root: Path) -> None:
