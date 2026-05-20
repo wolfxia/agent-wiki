@@ -203,6 +203,86 @@ def test_synthesis_generate_dry_run_returns_plan_without_writing(temp_wiki_root:
     assert not (temp_wiki_root / "pages" / f"{results[0]['doc_id']}.md").exists()
 
 
+def test_cross_reference_skips_external_sync_atoms(temp_wiki_root: Path) -> None:
+    wiki = _wiki(temp_wiki_root)
+    for doc_id, topic in [
+        ("atom-external-sync-a", "external_sync:A2A protocol deep dive"),
+        ("atom-external-sync-b", "external_sync:HTTP agent collaboration"),
+        ("atom-real-a", "agent-os"),
+        ("atom-real-b", "ai-harness"),
+    ]:
+        _write_page(temp_wiki_root, doc_id, f"# {doc_id}\n\nconstraint scheduling")
+        _manifest_upsert(
+            temp_wiki_root,
+            {
+                "doc_id": doc_id,
+                "page_type": "atom",
+                "topic": topic,
+                "problem_cluster": "constraint-first",
+                "summary": doc_id,
+                "keywords": ["constraint", "scheduling"],
+                "source_refs": [],
+            },
+        )
+
+    groups = DreamCycleService().cross_reference(wiki)
+
+    assert groups
+    assert all(not atom_id.startswith("atom-external-sync-") for group in groups for atom_id in group.atom_ids)
+
+
+def test_cross_reference_applies_cross_topic_strength_boost(temp_wiki_root: Path) -> None:
+    wiki = _wiki(temp_wiki_root)
+    _write_page(temp_wiki_root, "atom-topic-a", "# Atom A\n\nconstraint schedule")
+    _manifest_upsert(
+        temp_wiki_root,
+        {
+            "doc_id": "atom-topic-a",
+            "page_type": "atom",
+            "topic": "agent-os",
+            "problem_cluster": "pc-a",
+            "summary": "a",
+            "keywords": ["constraint", "schedule"],
+            "source_refs": [],
+        },
+    )
+    _write_page(temp_wiki_root, "atom-topic-b", "# Atom B\n\nconstraint schedule")
+    _manifest_upsert(
+        temp_wiki_root,
+        {
+            "doc_id": "atom-topic-b",
+            "page_type": "atom",
+            "topic": "ai-harness",
+            "problem_cluster": "pc-b",
+            "summary": "b",
+            "keywords": ["constraint", "schedule"],
+            "source_refs": [],
+        },
+    )
+
+    groups = DreamCycleService().cross_reference(wiki)
+
+    assert len(groups) == 1
+    assert groups[0].atom_ids == ["atom-topic-a", "atom-topic-b"]
+    assert groups[0].strength >= 0.8
+
+
+def test_synthesis_generate_dry_run_skips_loading_atom_pages(temp_wiki_root: Path) -> None:
+    wiki = _wiki(temp_wiki_root)
+
+    class GuardedDreamCycleService(DreamCycleService):
+        def _load_atom_pages(self, wiki_root, manifest, atom_ids):  # type: ignore[override]
+            raise AssertionError("_load_atom_pages should not be called in dry_run")
+
+    groups = [
+        CandidateGroup(atom_ids=["atom-x-1", "atom-x-2"], shared_keywords=[], graph_relations=[], strength=0.9),
+    ]
+
+    results = GuardedDreamCycleService().synthesis_generate(wiki, _actor(), groups, dry_run=True)
+
+    assert results[0]["status"] == "planned"
+
+
 def test_quality_review_enqueues_frontmatter_stale_source_and_length_issues(temp_wiki_root: Path) -> None:
     wiki = _wiki(temp_wiki_root)
     _write_page(temp_wiki_root, "atom-quality-dream", "# Tiny\n\nShort.")

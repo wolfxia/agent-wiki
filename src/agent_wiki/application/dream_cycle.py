@@ -121,7 +121,13 @@ class DreamCycleService:
     def cross_reference(self, wiki: WikiConfig) -> list[CandidateGroup]:
         wiki_root = Path(wiki.workspace_path)
         manifest_entries = ManifestRepository(wiki_root).read_all()
-        atom_entries = [entry for entry in manifest_entries if entry.get("page_type") == "atom" and entry.get("doc_id")]
+        atom_entries = [
+            entry
+            for entry in manifest_entries
+            if entry.get("page_type") == "atom"
+            and entry.get("doc_id")
+            and not str(entry.get("doc_id")).startswith("atom-external-sync-")
+        ]
         atom_terms = {str(entry["doc_id"]): self._atom_keywords(wiki_root, entry) for entry in atom_entries}
         graph_relations = self._graph_relation_index(wiki_root, wiki)
         threshold = self._dream_config_value(wiki, "synthesis", "strength_threshold", _DEFAULT_STRENGTH_THRESHOLD)
@@ -139,6 +145,11 @@ class DreamCycleService:
                 strength += 0.3
             if self._same_problem_cluster_different_topic(entry_by_doc_id[first], entry_by_doc_id[second]):
                 strength += 0.2
+            if (
+                entry_by_doc_id[first].get("topic") != entry_by_doc_id[second].get("topic")
+                and (jaccard > 0.0 or bool(graph_matches))
+            ):
+                strength += 0.3
             strength = min(round(strength, 4), 1.0)
             if strength < float(threshold):
                 continue
@@ -167,15 +178,15 @@ class DreamCycleService:
         max_synthesis = int(self._dream_config_value(wiki, "synthesis", "max_synthesis_per_run", _DEFAULT_MAX_SYNTHESIS))
         results: list[dict] = []
         for group in candidate_groups[:max_synthesis]:
-            atom_pages = self._load_atom_pages(wiki_root, manifest, group.atom_ids)
-            if len(atom_pages) < 2:
-                continue
             doc_id = self._synthesis_doc_id(group)
             source_refs = [f"{wiki.wiki_id}:{atom_id}" for atom_id in group.atom_ids]
-            content = self._build_synthesis_page(wiki, group, atom_pages)
             if dry_run:
                 results.append({"status": "planned", "doc_id": doc_id, "source_refs": source_refs})
                 continue
+            atom_pages = self._load_atom_pages(wiki_root, manifest, group.atom_ids)
+            if len(atom_pages) < 2:
+                continue
+            content = self._build_synthesis_page(wiki, group, atom_pages)
 
             validate_doc_id(doc_id)
             decision = PermissionService().check(actor, "compile_update", wiki, "synthesis")
