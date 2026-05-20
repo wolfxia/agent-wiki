@@ -10,6 +10,8 @@ _VALID_TRANSITIONS = {
     "failed": {"archived"},
 }
 
+_VALID_STATUSES = set(_VALID_TRANSITIONS.keys())
+
 
 class ReviewQueueRepository:
     def __init__(self, wiki_root: Path) -> None:
@@ -265,6 +267,10 @@ class ReviewQueueRepository:
         normalized.setdefault("item_id", f"{item_type}:{doc_id}")
         normalized.setdefault("wiki_id", self.path.parent.name if self.path.parent.name else "unknown")
         normalized.setdefault("status", "open")
+        status = str(normalized.get("status", "open")).strip().lower()
+        if status not in _VALID_STATUSES:
+            status = "open"
+        normalized["status"] = status
         normalized.setdefault("priority", 2)
         normalized.setdefault("created_at", datetime.now(UTC).isoformat().replace("+00:00", "Z"))
         normalized.setdefault("content_state", {})

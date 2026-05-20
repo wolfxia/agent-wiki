@@ -116,6 +116,17 @@ def test_review_queue_consume_skips_nonmatching_items(temp_wiki_root: Path) -> N
     assert queue.find("quality_signal:q1")["status"] == "open"
 
 
+def test_review_queue_consume_accepts_pending_as_open(temp_wiki_root: Path) -> None:
+    queue = ReviewQueueRepository(temp_wiki_root)
+    queue.append({"item_id": "compile_suggestion:pending-1", "item_type": "compile_suggestion", "status": "pending"})
+
+    item = queue.consume("compile_suggestion", actor_id="claude-code")
+
+    assert item is not None
+    assert item["item_id"] == "compile_suggestion:pending-1"
+    assert queue.find("compile_suggestion:pending-1")["status"] == "assigned"
+
+
 
 def test_queue_producers_write_item_ids_for_detected_signals(temp_wiki_root: Path) -> None:
     import json
