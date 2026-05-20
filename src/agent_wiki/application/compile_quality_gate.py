@@ -17,9 +17,9 @@ class CompileQualityGate:
         if not (summary.strip() and confidence.strip() and content.strip()):
             raise ValueError("quality gate failed: summary/confidence/content required")
 
-        lowered = content.lower()
-        if "claims" not in lowered or "evidence" not in lowered:
-            raise ValueError("quality gate failed: Claims + Evidence sections required")
+        missing_sections = self._missing_required_sections(content)
+        if missing_sections:
+            raise ValueError(f"quality gate failed: 5-section schema required; missing {', '.join(missing_sections)}")
 
         source_ref_coverage = 1.0 if source_refs else 0.0
         critical_fact_coverage = self._critical_fact_coverage(content, source_refs)
@@ -39,6 +39,16 @@ class CompileQualityGate:
             "quality_checked_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             "evidence_note": "increment_warning" if increment_warning else None,
         }
+
+    def _missing_required_sections(self, content: str) -> list[str]:
+        required = ["Claims", "Applicability", "Evidence", "Relationship Hints", "Open Questions"]
+        missing = []
+        for section in required:
+            section_pattern = r"\s+".join(re.escape(part) for part in section.split())
+            pattern = rf"(?im)^##\s+{section_pattern}\s*$"
+            if re.search(pattern, content) is None:
+                missing.append(section)
+        return missing
 
     def _critical_fact_coverage(self, content: str, source_refs: list[str]) -> float:
         content_tokens = set(re.findall(r"[a-z0-9_-]+", content.lower()))

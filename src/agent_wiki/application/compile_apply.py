@@ -13,13 +13,32 @@ from agent_wiki.application.compile_prepare import CompilePrepareResult
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 
 
+class CompileClaim(BaseModel):
+    text: str
+    evidence_refs: list[str] = Field(default_factory=list)
+    confidence_label: str = "INFERRED"
+
+    @field_validator("confidence_label")
+    @classmethod
+    def normalize_confidence_label(cls, value: str) -> str:
+        label = str(value or "INFERRED").upper()
+        return label if label in {"EXTRACTED", "INFERRED", "AMBIGUOUS"} else "INFERRED"
+
+
+class CompileRelationshipHint(BaseModel):
+    source_doc: str | None = None
+    target_concept: str
+    hint_type: str
+
+
 class CompileStructuredOutput(BaseModel):
     content: str
     summary: str | None = None
     aliases: list[str] = Field(default_factory=list)
     confidence: str | None = None
     wikilinks: list[str] = Field(default_factory=list)
-    claims: list[str] = Field(default_factory=list)
+    claims: list[CompileClaim] = Field(default_factory=list)
+    relationship_hints: list[CompileRelationshipHint] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
     evidence_coverage: str | None = None
 
@@ -29,6 +48,19 @@ class CompileStructuredOutput(BaseModel):
         if not value.strip():
             raise ValueError("content must not be empty")
         return value.strip()
+
+    @field_validator("claims", mode="before")
+    @classmethod
+    def normalize_claims(cls, value):
+        if value is None:
+            return []
+        normalized = []
+        for item in value:
+            if isinstance(item, str):
+                normalized.append({"text": item, "confidence_label": "INFERRED", "evidence_refs": []})
+            else:
+                normalized.append(item)
+        return normalized
 
 
 class CompileApplyService:

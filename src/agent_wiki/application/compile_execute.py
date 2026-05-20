@@ -1,12 +1,13 @@
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 import threading
+import re
 import time
 from pydantic import BaseModel
 
 from agent_wiki.application.compile_prepare import CompilePrepareInput, CompilePrepareResult, CompilePrepareService
 from agent_wiki.application.compile_update import CompileUpdateService
-from agent_wiki.application.compile_apply import CompileApplyService, CompileStructuredOutput
+from agent_wiki.application.compile_apply import CompileApplyService, CompileStructuredOutput, CompileClaim, CompileRelationshipHint
 from agent_wiki.application.compile_quality_gate import CompileQualityGate
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
@@ -41,6 +42,10 @@ class CompileGeneratedInput(BaseModel):
     confidence: str | None = None
     contested: bool = False
     wikilinks: list[str] = []
+    claims: list[CompileClaim] = []
+    relationship_hints: list[CompileRelationshipHint] = []
+    open_questions: list[str] = []
+    evidence_coverage: str | None = None
     sensitivity: str | None = None
 
 
@@ -354,6 +359,10 @@ class CompileExecuteService:
             aliases=structured.aliases if structured else [],
             confidence=structured.confidence if structured else None,
             wikilinks=structured.wikilinks if structured else [],
+            claims=structured.claims if structured else [],
+            relationship_hints=structured.relationship_hints if structured else [],
+            open_questions=structured.open_questions if structured else [],
+            evidence_coverage=structured.evidence_coverage if structured else None,
         )
 
     def apply_generated(
@@ -367,25 +376,26 @@ class CompileExecuteService:
         queue = ReviewQueueRepository(Path(wiki.workspace_path))
         started_at = start_time or time.monotonic()
         try:
-            quality = self._quality_gate_service.evaluate(data)
+            normalized_data = self._with_required_sections(data)
+            quality = self._quality_gate_service.evaluate(normalized_data)
             with self._write_lock:
                 result = CompileUpdateService().apply(
                     wiki=wiki,
                     actor=actor,
                     data=CompileUpdateInput(
-                        doc_id=data.doc_id,
-                        page_type=data.page_type,
-                        topic=data.topic,
-                        problem_cluster=data.problem_cluster,
-                        summary=data.summary,
-                        aliases=data.aliases,
-                        confidence=data.confidence,
-                        contested=data.contested,
-                        wikilinks=data.wikilinks,
-                        sensitivity=data.sensitivity,
+                        doc_id=normalized_data.doc_id,
+                        page_type=normalized_data.page_type,
+                        topic=normalized_data.topic,
+                        problem_cluster=normalized_data.problem_cluster,
+                        summary=normalized_data.summary,
+                        aliases=normalized_data.aliases,
+                        confidence=normalized_data.confidence,
+                        contested=normalized_data.contested,
+                        wikilinks=normalized_data.wikilinks,
+                        sensitivity=normalized_data.sensitivity,
                         review_status="pending_review",
-                        content=data.content,
-                        source_refs=data.source_refs,
+                        content=normalized_data.content,
+                        source_refs=normalized_data.source_refs,
                         evidence_note=quality.get("evidence_note"),
                     ),
                 )
@@ -429,6 +439,46 @@ class CompileExecuteService:
                 },
             )
         return result
+
+    def _with_required_sections(self, data: CompileGeneratedInput) -> CompileGeneratedInput:
+        content = data.content.strip()
+        additions: list[str] = []
+        if not self._has_section(content, "Claims"):
+            additions.append(self._section("Claims", self._claim_lines(data)))
+        if not self._has_section(content, "Applicability"):
+            additions.append(self._section("Applicability", ["None identified from source evidence."]))
+        if not self._has_section(content, "Evidence"):
+            additions.append(self._section("Evidence", data.source_refs or ["None identified from source evidence."]))
+        if not self._has_section(content, "Relationship Hints"):
+            additions.append(self._section("Relationship Hints", self._relationship_hint_lines(data)))
+        if not self._has_section(content, "Open Questions"):
+            additions.append(self._section("Open Questions", data.open_questions or ["None identified from source evidence."]))
+        if additions:
+            content = content + "\n\n" + "\n\n".join(additions)
+        return data.model_copy(update={"content": content})
+
+    def _has_section(self, content: str, section: str) -> bool:
+        section_pattern = r"\s+".join(re.escape(part) for part in section.split())
+        pattern = rf"(?im)^##\s+{section_pattern}\s*$"
+        return re.search(pattern, content) is not None
+
+    def _section(self, heading: str, lines: list[str]) -> str:
+        body = [str(line).strip() for line in lines if str(line).strip()] or ["None identified from source evidence."]
+        return "## " + heading + "\n" + "\n".join(line if line.startswith("-") else f"- {line}" for line in body)
+
+    def _claim_lines(self, data: CompileGeneratedInput) -> list[str]:
+        if data.claims:
+            return [claim.text for claim in data.claims]
+        return ["None identified from source evidence."]
+
+    def _relationship_hint_lines(self, data: CompileGeneratedInput) -> list[str]:
+        if not data.relationship_hints:
+            return ["None identified from source evidence."]
+        lines = []
+        for hint in data.relationship_hints:
+            source = f"{hint.source_doc} -> " if hint.source_doc else ""
+            lines.append(f"{source}{hint.target_concept} ({hint.hint_type})")
+        return lines
 
     def _attempt_telemetry(
         self,

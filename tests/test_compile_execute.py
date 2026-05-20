@@ -510,7 +510,8 @@ def test_compile_apply_service_parses_structured_json_output(monkeypatch, temp_w
                                         "aliases": ["structured alias"],
                                         "confidence": "medium",
                                         "wikilinks": ["[[related-atom]]"],
-                                        "claims": ["Compiled claim."],
+                                        "claims": [{"text": "Compiled claim.", "evidence_refs": ["personal-1:raw-service-execute-0"], "confidence_label": "EXTRACTED"}],
+                                        "relationship_hints": [{"source_doc": "raw-service-execute-0", "target_concept": "related-atom", "hint_type": "same_cluster"}],
                                         "open_questions": ["What changes next?"],
                                         "evidence_coverage": "Covers three raw notes.",
                                     }
@@ -534,9 +535,14 @@ def test_compile_apply_service_parses_structured_json_output(monkeypatch, temp_w
     assert service.last_structured_output.aliases == ["structured alias"]
     assert service.last_structured_output.confidence == "medium"
     assert service.last_structured_output.wikilinks == ["[[related-atom]]"]
+    assert service.last_structured_output.claims[0].confidence_label == "EXTRACTED"
+    assert service.last_structured_output.relationship_hints[0].hint_type == "same_cluster"
     messages = captured["json"]["messages"]
     assert "Return only valid JSON" in messages[0]["content"]
     assert '"evidence_coverage"' in messages[1]["content"]
+    assert '"relationship_hints"' in messages[1]["content"]
+    assert "Relationship Hints" in messages[1]["content"]
+    assert "Open Questions" in messages[1]["content"]
 
 
 def test_compile_apply_service_falls_back_to_plain_markdown(monkeypatch, temp_wiki_root: Path) -> None:
@@ -807,7 +813,8 @@ def test_compile_execute_apply_next_persists_structured_metadata(temp_wiki_root:
                 aliases=["metadata alias"],
                 confidence="high",
                 wikilinks=["[[metadata-neighbor]]"],
-                claims=["structured metadata persists"],
+                claims=[{"text": "structured metadata persists", "evidence_refs": ["personal-1:raw-service-execute-0"], "confidence_label": "EXTRACTED"}],
+                relationship_hints=[{"source_doc": "raw-service-execute-0", "target_concept": "metadata-neighbor", "hint_type": "same_cluster"}],
                 open_questions=[],
                 evidence_coverage="Three source refs covered.",
             )
@@ -828,6 +835,9 @@ def test_compile_execute_apply_next_persists_structured_metadata(temp_wiki_root:
     assert stored["aliases"] == ["metadata alias"]
     assert stored["confidence"] == "high"
     assert stored["wikilinks"] == ["[[metadata-neighbor]]"]
+    page_text = (temp_wiki_root / "pages" / f"{result.doc_id}.md").read_text(encoding="utf-8")
+    for section in ["## Claims", "## Applicability", "## Evidence", "## Relationship Hints", "## Open Questions"]:
+        assert section in page_text
 
 
 def test_compile_execute_apply_next_records_token_usage_when_available(temp_wiki_root: Path) -> None:
