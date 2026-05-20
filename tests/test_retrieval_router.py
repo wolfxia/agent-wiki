@@ -103,3 +103,37 @@ def test_retrieval_router_merges_lexical_and_structured_debug_scores(temp_wiki_r
     assert hit.metadata["lexical_score"] > 0
     assert hit.metadata["structured_score"] > 0
     assert hit.metadata["final_score"] == hit.score
+
+
+def test_retrieval_router_caps_graph_score_below_structured_relevance(temp_wiki_root: Path) -> None:
+    from agent_wiki.domain.contracts import RetrievalHit
+
+    router = RetrievalRouter(temp_wiki_root, wiki_id="personal-1")
+
+    graph_only = RetrievalHit(
+        wiki_id="personal-1",
+        doc_id="raw-graph-edge-only",
+        score=10.0,
+        page_type="raw",
+        snippet="Graph edge match without topic evidence.",
+        metadata={},
+    )
+    structured_relevant = RetrievalHit(
+        wiki_id="personal-1",
+        doc_id="atom-topic-relevant",
+        score=6.0,
+        page_type="atom",
+        snippet="Structured topic match.",
+        metadata={},
+    )
+
+    router.graph.search = lambda query, top_k=10: [graph_only]  # type: ignore[method-assign]
+    router.fts.search = lambda query, top_k=10, filters=None: []  # type: ignore[method-assign]
+    router.lexical.search = lambda wiki_root, query: []  # type: ignore[method-assign]
+    router.structured.search = lambda query, top_k=10: [structured_relevant]  # type: ignore[method-assign]
+
+    hits = router.search("端侧AI在IoT上的实践及未来方向")
+
+    assert [hit.doc_id for hit in hits[:2]] == ["atom-topic-relevant", "raw-graph-edge-only"]
+    graph_hit = next(hit for hit in hits if hit.doc_id == "raw-graph-edge-only")
+    assert graph_hit.metadata["graph_score"] <= 5.0

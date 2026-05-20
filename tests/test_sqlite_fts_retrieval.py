@@ -194,6 +194,45 @@ def test_sqlite_fts_uses_pre_tokenized_text_for_chinese_terms(temp_wiki_root: Pa
     assert isinstance(JiebaTokenizer(), JiebaTokenizer)
 
 
+def test_sqlite_fts_scores_cjk_narrow_topic_above_broad_os_atom(temp_wiki_root: Path) -> None:
+    provider = SQLiteFTSIndexProvider(temp_wiki_root, wiki_id="personal-1")
+    provider.batch_upsert(
+        [
+            (
+                "atom-os-industry",
+                {
+                    "wiki_id": "personal-1",
+                    "doc_id": "atom-os-industry",
+                    "page_type": "atom",
+                    "topic": "全球OS竞争格局",
+                    "problem_cluster": "os-industry",
+                    "summary": "OS生态开发与行业趋势。",
+                    "content": "全球OS竞争与移动操作系统生态。",
+                },
+            ),
+            (
+                "atom-harmonyos-evolution",
+                {
+                    "wiki_id": "personal-1",
+                    "doc_id": "atom-harmonyos-evolution",
+                    "page_type": "atom",
+                    "topic": "HarmonyOS 鸿蒙OS演进历程",
+                    "problem_cluster": "harmonyos",
+                    "summary": "鸿蒙OS从分布式能力到生态建设的演进历程。",
+                    "content": "HarmonyOS 鸿蒙系统演进、方舟和分布式软总线。",
+                },
+            ),
+        ]
+    )
+
+    hits = provider.search("鸿蒙OS的演进历程", top_k=10)
+
+    scores = {hit.doc_id: hit.score for hit in hits}
+    assert hits[0].doc_id == "atom-harmonyos-evolution"
+    assert scores["atom-harmonyos-evolution"] > scores["atom-os-industry"]
+    assert scores["atom-harmonyos-evolution"] - scores["atom-os-industry"] > 5.0
+
+
 def test_sqlite_fts_weights_topic_and_summary_above_body_repetition(temp_wiki_root: Path) -> None:
     provider = SQLiteFTSIndexProvider(temp_wiki_root, wiki_id="personal-1")
     provider.batch_upsert(
