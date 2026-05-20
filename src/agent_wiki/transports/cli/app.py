@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 import signal
+import sys
 
 import json
 
@@ -146,15 +147,47 @@ def health(
     _run_cli(_command)
 
 
+_PIDFILE = Path(os.environ.get("AGENT_WIKI_PIDFILE", "/tmp/aw-agent.pid"))
+
+
+def _acquire_pidfile() -> None:
+    """Ensure only one aw-agent serve process runs at a time.
+
+    Writes a pidfile and refuses to start if another live process holds it.
+    Stale pidfiles (process no longer exists) are cleaned up automatically.
+    """
+    pid = os.getpid()
+    if _PIDFILE.exists():
+        try:
+            old_pid = int(_PIDFILE.read_text().strip())
+            # Check if the old process is still alive
+            os.kill(old_pid, 0)  # raises OSError if no such process
+            print(f"[aw-agent] another instance is already running (PID {old_pid}), exiting.", file=sys.stderr)
+            sys.exit(0)
+        except (ValueError, OSError):
+            # Stale pidfile or process gone — safe to remove
+            _PIDFILE.unlink(missing_ok=True)
+
+    _PIDFILE.write_text(str(pid))
+
+    # Register cleanup on normal exit
+    import atexit
+    atexit.register(_PIDFILE.unlink, missing_ok=True)
+
+
 @app.command("serve")
 def serve(
     workspace: str | None = typer.Option(None, "--workspace"),
     registry: str | None = typer.Option(None, "--registry"),
+    no_pidfile: bool = typer.Option(False, "--no-pidfile", help="Skip pidfile locking for stdio/MCP-managed mode."),
 ) -> None:
     """Start the long-running agent-wiki MCP stdio service."""
     # The SIGALRM timer set in main() will kill the process after 300s.
     # `serve` is a long-running daemon — cancel the timer immediately.
     signal.alarm(0)
+    use_pidfile = not no_pidfile and sys.stdin.isatty()
+    if use_pidfile:
+        _acquire_pidfile()
     if workspace:
         os.environ["AGENT_WIKI_WORKSPACE"] = workspace
     run_stdio_server(registry_path=registry)

@@ -121,12 +121,42 @@ def test_cli_serve_runs_stdio_mcp_server(monkeypatch, temp_wiki_root) -> None:
         captured["registry_path"] = registry_path
 
     monkeypatch.setattr("agent_wiki.transports.cli.app.run_stdio_server", fake_run_stdio_server)
+    monkeypatch.setattr("agent_wiki.transports.cli.app._acquire_pidfile", lambda: None)
 
     runner = CliRunner()
     result = runner.invoke(
         app,
         [
             "serve",
+            "--workspace",
+            str(temp_wiki_root),
+            "--registry",
+            "tests/fixtures/registry.yaml",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["registry_path"] == "tests/fixtures/registry.yaml"
+
+
+def test_cli_serve_skips_pidfile_with_no_pidfile_flag(monkeypatch, temp_wiki_root) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run_stdio_server(registry_path: str | None = None) -> None:
+        captured["registry_path"] = registry_path
+
+    def fail_acquire_pidfile() -> None:
+        raise AssertionError("pidfile should be skipped")
+
+    monkeypatch.setattr("agent_wiki.transports.cli.app.run_stdio_server", fake_run_stdio_server)
+    monkeypatch.setattr("agent_wiki.transports.cli.app._acquire_pidfile", fail_acquire_pidfile)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "serve",
+            "--no-pidfile",
             "--workspace",
             str(temp_wiki_root),
             "--registry",
