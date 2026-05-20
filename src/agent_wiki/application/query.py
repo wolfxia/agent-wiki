@@ -262,10 +262,14 @@ class QueryService:
         top_hit = hits[0]
         topic_index_entry = (topic_index_entries or {}).get(top_hit.doc_id) or TopicIndexRepository(wiki_root).find(top_hit.doc_id)
         if topic_index_entry and topic_index_entry.get("summary"):
-            return topic_index_entry["summary"]
+            summary = str(topic_index_entry["summary"])
+            if self._is_l1_content_line(summary):
+                return summary
         manifest_entry = (manifest_by_doc_id or {}).get(top_hit.doc_id) or manifest.find(top_hit.doc_id) or {}
         if manifest_entry.get("summary"):
-            return str(manifest_entry["summary"])
+            summary = str(manifest_entry["summary"])
+            if self._is_l1_content_line(summary):
+                return summary
         page_path = wiki_root / "pages" / f"{top_hit.doc_id}.md"
         if not page_path.exists():
             return f"Top match: {top_hit.doc_id}"
