@@ -150,7 +150,8 @@ class RetrievalRouter:
         return raw
 
     def _source_type_for_doc_id(self, doc_id: str) -> str:
-        return "external_sync" if str(doc_id).startswith("atom-external-sync-") else "own"
+        normalized = str(doc_id).lower().replace("_", "-")
+        return "external_sync" if "external-sync" in normalized else "own"
 
     def _build_embedding_provider(self, wiki: WikiConfig | None):
         if wiki is None or wiki.retrieval.embedding is None:

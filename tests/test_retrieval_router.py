@@ -251,3 +251,27 @@ def test_retrieval_router_applies_external_sync_penalty_by_doc_id_prefix(temp_wi
     assert [hit.doc_id for hit in hits] == ["atom-own-001", "atom-external-sync-001"]
     external = next(hit for hit in hits if hit.doc_id == "atom-external-sync-001")
     assert external.metadata.get("source_type") == "external_sync"
+
+
+def test_retrieval_router_penalizes_external_sync_raw_doc_id_pattern(temp_wiki_root: Path) -> None:
+    base_wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0]
+    wiki = base_wiki.model_copy(
+        update={
+            "workspace_path": str(temp_wiki_root),
+            "retrieval": base_wiki.retrieval.model_copy(update={"external_sync_penalty": 0.5}),
+        }
+    )
+    router = RetrievalRouter(temp_wiki_root, wiki_id="personal-1", wiki=wiki)
+    router.graph.search = lambda query, top_k=10: []  # type: ignore[method-assign]
+    router.structured.search = lambda query, top_k=10: []  # type: ignore[method-assign]
+    router.fts.search = lambda query, top_k=10, filters=None: [  # type: ignore[method-assign]
+        RetrievalHit(wiki_id="personal-1", doc_id="raw-external-sync-abc", score=10.0, section="fts5", metadata={}),
+        RetrievalHit(wiki_id="personal-1", doc_id="raw-own-abc", score=9.0, section="fts5", metadata={}),
+    ]
+    router.lexical.search = lambda wiki_root, query: []  # type: ignore[method-assign]
+
+    hits = router.search("agent os", top_k=2)
+
+    assert [hit.doc_id for hit in hits] == ["raw-own-abc", "raw-external-sync-abc"]
+    external = next(hit for hit in hits if hit.doc_id == "raw-external-sync-abc")
+    assert external.metadata.get("source_type") == "external_sync"
