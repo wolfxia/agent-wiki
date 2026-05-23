@@ -262,6 +262,7 @@ def capture_raw(
     doc_id: str = typer.Argument(...),
     topic: str = typer.Option(...),
     problem_cluster: str = typer.Option(...),
+    summary: str | None = typer.Option(None, "--summary"),
     content: str = typer.Option(...),
     workspace: str | None = typer.Option(None, "--workspace"),
     registry: str | None = typer.Option(None, "--registry"),
@@ -273,7 +274,7 @@ def capture_raw(
             wiki=wiki, actor=_actor(),
             data=CaptureRawInput(
                 doc_id=doc_id, topic=topic, problem_cluster=problem_cluster,
-                content=content, source_refs=[],
+                summary=summary, content=content, source_refs=[],
             ),
         )
         typer.echo(f"status={result.status} doc_id={result.doc_id}")
