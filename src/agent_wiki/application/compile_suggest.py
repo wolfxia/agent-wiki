@@ -82,14 +82,7 @@ class CompileSuggestService:
                     "priority_reason": "purpose_aligned" if self._topic_matches_p0(topic, purpose) else "general",
                 })
 
-        candidates.sort(
-            key=lambda c: (
-                c["kind"] == "needs_metadata_repair",
-                not c.get("purpose_aligned", False),
-                -c.get("raw_count", 0),
-                c.get("doc_id", ""),
-            )
-        )
+        candidates.sort(key=self._candidate_sort_key)
         return candidates
 
     def detect_and_enqueue(self, wiki: WikiConfig, threshold: int = RAW_ACCUMULATION_THRESHOLD) -> list[dict]:
@@ -168,6 +161,28 @@ class CompileSuggestService:
             item.get("cluster_raw_count"),
             item.get("sub_cluster_index"),
             item.get("sub_cluster_id"),
+        )
+
+    def _candidate_sort_key(self, candidate: dict) -> tuple:
+        kind = str(candidate.get("kind") or "")
+        if kind == "undercompiled_cluster":
+            kind_rank = 0
+        elif kind == "ready_to_compile":
+            kind_rank = 1
+        else:
+            kind_rank = 2
+
+        return (
+            kind_rank,
+            int(candidate.get("priority", 1)),
+            not candidate.get("purpose_aligned", False),
+            int(candidate.get("sub_cluster_index", 1)),
+            int(candidate.get("compiled_count", 0)),
+            -int(candidate.get("compile_priority_score", 0)),
+            -int(candidate.get("cluster_raw_count", candidate.get("raw_count", 0))),
+            str(candidate.get("topic") or ""),
+            str(candidate.get("problem_cluster") or ""),
+            str(candidate.get("doc_id") or ""),
         )
 
     def _chunks(self, entries: list[dict], size: int) -> list[list[dict]]:

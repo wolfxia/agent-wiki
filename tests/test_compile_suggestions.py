@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
 from agent_wiki.application.compile_suggest import CompileSuggestService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
@@ -419,6 +420,146 @@ def test_compile_suggestions_prioritize_purpose_aligned_clusters(temp_wiki_root:
     assert candidates[0]["priority"] == 0
     assert candidates[0]["priority_label"] == "P0"
     assert candidates[1]["priority"] == 1
+
+
+def test_compile_suggestions_prioritize_undercompiled_clusters_over_large_ready_clusters(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    (temp_wiki_root / "purpose.md").write_text(
+        "# Purpose\n\n## Topics\n\n- agent-os\n",
+        encoding="utf-8",
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+
+    for index in range(6):
+        raw_doc_id = f"raw-ready-priority-{index}"
+        capture_service.execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=raw_doc_id,
+                topic="agent-os",
+                problem_cluster="broad-cluster",
+                content=f"# Ready {index}",
+                source_refs=[],
+            ),
+        )
+
+    for index in range(2):
+        compile_service.apply(
+            wiki=wiki,
+            actor=actor,
+            data=CompileUpdateInput(
+                doc_id=f"atom-ready-priority-{index}",
+                page_type="atom",
+                topic="agent-os",
+                problem_cluster="broad-cluster",
+                content=f"# Ready atom {index}\n\nCompiled evidence.",
+                source_refs=[f"personal-1:raw-ready-priority-{index}"],
+            ),
+        )
+
+    for index in range(3):
+        capture_service.execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-undercompiled-priority-{index}",
+                topic="agent-os",
+                problem_cluster="focused-gap",
+                content=f"# Undercompiled {index}",
+                source_refs=[],
+            ),
+        )
+
+    candidates = CompileSuggestService().detect(wiki)
+
+    assert candidates[0]["topic"] == "agent-os"
+    assert candidates[0]["problem_cluster"] == "focused-gap"
+    assert candidates[0]["kind"] == "undercompiled_cluster"
+    assert candidates[1]["problem_cluster"] == "broad-cluster"
+    assert candidates[1]["kind"] == "ready_to_compile"
+
+
+def test_compile_suggestions_interleave_ready_clusters_before_second_subcluster(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    (temp_wiki_root / "purpose.md").write_text(
+        "# Purpose\n\n## Topics\n\n- agent-os\n",
+        encoding="utf-8",
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    capture_service = CaptureRawService()
+    compile_service = CompileUpdateService()
+
+    for index in range(9):
+        raw_doc_id = f"raw-deep-coverage-{index}"
+        capture_service.execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=raw_doc_id,
+                topic="agent-os",
+                problem_cluster="deep-coverage",
+                content=f"# Deep coverage {index}",
+                source_refs=[],
+            ),
+        )
+
+    for index in range(5):
+        compile_service.apply(
+            wiki=wiki,
+            actor=actor,
+            data=CompileUpdateInput(
+                doc_id=f"atom-deep-coverage-{index}",
+                page_type="atom",
+                topic="agent-os",
+                problem_cluster="deep-coverage",
+                content=f"# Deep atom {index}\n\nCompiled evidence.",
+                source_refs=[f"personal-1:raw-deep-coverage-{index}"],
+            ),
+        )
+
+    for index in range(4):
+        raw_doc_id = f"raw-shallow-coverage-{index}"
+        capture_service.execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=raw_doc_id,
+                topic="agent-os",
+                problem_cluster="shallow-coverage",
+                content=f"# Shallow coverage {index}",
+                source_refs=[],
+            ),
+        )
+
+    compile_service.apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-shallow-coverage-0",
+            page_type="atom",
+            topic="agent-os",
+            problem_cluster="shallow-coverage",
+            content="# Shallow atom 0\n\nCompiled evidence.",
+            source_refs=["personal-1:raw-shallow-coverage-0"],
+        ),
+    )
+
+    candidates = CompileSuggestService().detect(wiki)
+
+    ready_candidates = [candidate for candidate in candidates if candidate["kind"] == "ready_to_compile"]
+    assert ready_candidates[0]["problem_cluster"] == "shallow-coverage"
+    assert ready_candidates[0]["compiled_count"] == 1
+    assert ready_candidates[0]["sub_cluster_index"] == 1
+    assert ready_candidates[1]["problem_cluster"] == "deep-coverage"
+    assert ready_candidates[1]["compiled_count"] == 5
+    assert ready_candidates[1]["sub_cluster_index"] == 1
 
 
 def test_compile_suggestion_reopens_resolved_subcluster_when_raw_count_changes(temp_wiki_root: Path) -> None:
