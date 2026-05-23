@@ -124,6 +124,47 @@ def test_maintenance_summary_includes_action_items(temp_wiki_root: Path) -> None
     assert any("maintenance-gap-query" in item for item in summary["action_items"])
 
 
+def test_maintenance_summarizes_compile_action_items_by_cluster(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    capture_service = CaptureRawService()
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    for index in range(7):
+        capture_service.execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-maint-summary-a-{index}",
+                topic="deployment",
+                problem_cluster="cluster-a",
+                content=f"# Raw A {index}",
+                source_refs=[],
+            ),
+        )
+    for index in range(3):
+        capture_service.execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-maint-summary-b-{index}",
+                topic="observability",
+                problem_cluster="cluster-b",
+                content=f"# Raw B {index}",
+                source_refs=[],
+            ),
+        )
+
+    summary = MaintenanceService().run(wiki)
+
+    compile_items = [item for item in summary["action_items"] if item.startswith("Compile cluster ")]
+    assert len(compile_items) == 2
+    assert any("deployment/cluster-a" in item and "3 subclusters" in item for item in compile_items)
+    assert any("observability/cluster-b" in item and "1 subclusters" in item for item in compile_items)
+    assert summary["compile_suggestions"] == 4
+
+
 def test_maintenance_idempotent_with_no_signals(temp_wiki_root: Path) -> None:
     wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
         update={"workspace_path": str(temp_wiki_root)}

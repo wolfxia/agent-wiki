@@ -166,10 +166,7 @@ class MaintenanceService:
             action_items.append(
                 f"Repair raw metadata for {total_repair_candidates} imported raw pages"
             )
-        for candidate in compile_suggestions:
-            action_items.append(
-                f"Compile cluster {candidate['topic']}/{candidate['problem_cluster']} from {candidate['raw_count']} raw pages"
-            )
+        action_items.extend(self._compile_action_items(compile_suggestions))
         for signal in quality_signals:
             action_items.append(
                 f"Investigate repeated zero-hit query: {signal['query']} ({signal['zero_hit_count']} misses)"
@@ -348,6 +345,58 @@ class MaintenanceService:
                 continue
             actions.append(f"Review duplicate atom warning: {doc_ids[0]} <-> {doc_ids[1]}")
         return actions
+
+    def _compile_action_items(self, compile_suggestions: list[dict]) -> list[str]:
+        grouped: dict[tuple[str, str], dict[str, object]] = {}
+        for candidate in compile_suggestions:
+            key = (str(candidate.get("topic") or ""), str(candidate.get("problem_cluster") or ""))
+            summary = grouped.get(key)
+            if summary is None:
+                summary = {
+                    "topic": key[0],
+                    "problem_cluster": key[1],
+                    "subclusters": 0,
+                    "raw_pages": 0,
+                    "strategy": "Light",
+                    "max_priority_score": 0,
+                }
+                grouped[key] = summary
+            summary["subclusters"] = int(summary["subclusters"]) + 1
+            summary["raw_pages"] = int(summary["raw_pages"]) + int(candidate.get("raw_count", 0))
+            summary["strategy"] = self._max_compile_strategy(
+                str(summary["strategy"]),
+                str(candidate.get("compile_strategy") or "Light"),
+            )
+            summary["max_priority_score"] = max(
+                int(summary["max_priority_score"]),
+                int(candidate.get("compile_priority_score", 0)),
+            )
+
+        ordered_groups = sorted(
+            grouped.values(),
+            key=lambda summary: (
+                -int(summary["max_priority_score"]),
+                -self._compile_strategy_rank(str(summary["strategy"])),
+                -int(summary["raw_pages"]),
+                str(summary["topic"]),
+                str(summary["problem_cluster"]),
+            ),
+        )
+        return [
+            (
+                f"Compile cluster {summary['topic']}/{summary['problem_cluster']} "
+                f"across {summary['subclusters']} subclusters "
+                f"({summary['raw_pages']} raw pages, strategy {summary['strategy']})"
+            )
+            for summary in ordered_groups
+        ]
+
+    def _max_compile_strategy(self, left: str, right: str) -> str:
+        return left if self._compile_strategy_rank(left) >= self._compile_strategy_rank(right) else right
+
+    def _compile_strategy_rank(self, strategy: str) -> int:
+        order = {"Light": 0, "Standard": 1, "Deep": 2}
+        return order.get(strategy, 0)
 
     def _compile_strategy_counts(self, compile_suggestions: list[dict]) -> dict[str, int]:
         counts = {"Light": 0, "Standard": 0, "Deep": 0}
