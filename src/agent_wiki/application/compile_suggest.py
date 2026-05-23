@@ -189,10 +189,7 @@ class CompileSuggestService:
         path = wiki_root / "query_outcomes.jsonl"
         if not path.exists():
             return counts
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            entry = json.loads(line)
+        for entry in self._read_jsonl_lenient(path):
             query = str(entry.get("query") or "").lower()
             hit_count = int(entry.get("hit_count", 0) or 0)
             for topic, problem_cluster in cluster_keys:
@@ -209,10 +206,7 @@ class CompileSuggestService:
         path = wiki_root / "review_queue.jsonl"
         if not path.exists():
             return counts
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            entry = json.loads(line)
+        for entry in self._read_jsonl_lenient(path):
             if entry.get("item_type") != "compile_suggestion":
                 continue
             if (entry.get("content_state") or {}).get("error_type") != "quality_rejected":
@@ -222,6 +216,19 @@ class CompileSuggestService:
             if topic and problem_cluster:
                 counts[(topic, problem_cluster)] += 1
         return counts
+
+    def _read_jsonl_lenient(self, path: Path) -> list[dict]:
+        entries: list[dict] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(entry, dict):
+                entries.append(entry)
+        return entries
 
     def _cluster_staleness_days(self, entries: list[dict]) -> int:
         oldest: datetime | None = None

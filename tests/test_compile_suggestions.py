@@ -96,6 +96,30 @@ def test_compile_suggestions_written_to_review_queue(temp_wiki_root: Path) -> No
     assert suggestions[0]["status"] == "open"
 
 
+def test_capture_raw_suggestion_detection_ignores_malformed_review_queue_lines(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    queue_path = temp_wiki_root / "review_queue.jsonl"
+    queue_path.write_text("not-json\n", encoding="utf-8")
+
+    result = CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-malformed-queue-1",
+            topic="agent-wiki",
+            problem_cluster="retrieval-self-eval",
+            summary="Malformed queue should not break capture.",
+            content="# Malformed queue\n\nCapture still commits.",
+            source_refs=[],
+        ),
+    )
+
+    assert result.status == "committed"
+
+
 def test_compile_suggestions_prioritized_by_purpose(temp_wiki_root: Path) -> None:
     wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
         update={"workspace_path": str(temp_wiki_root)}
