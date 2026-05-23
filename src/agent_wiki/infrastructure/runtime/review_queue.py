@@ -75,7 +75,17 @@ class ReviewQueueRepository:
     def read_all(self) -> list[dict]:
         if not self.path.exists():
             return []
-        return [json.loads(line) for line in self.path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        items: list[dict] = []
+        for line in self.path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(item, dict):
+                items.append(item)
+        return items
 
     def find(self, item_id: str) -> dict | None:
         for item in self.read_all():

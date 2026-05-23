@@ -28,14 +28,12 @@ if [ -f "$AW_CONFIG_FILE" ]; then
     source "$AW_CONFIG_FILE"
 fi
 
-# --- Activate venv if aw not already on PATH ---
-if ! command -v aw &>/dev/null; then
-    if [ -f "$AW_VENV/bin/activate" ]; then
-        source "$AW_VENV/bin/activate"
-    else
-        echo "[aw-common] ERROR: aw CLI not found and venv missing at $AW_VENV" >&2
-        exit 1
-    fi
+# --- Prefer this project's venv over any aw already on PATH ---
+if [ -f "$AW_VENV/bin/activate" ]; then
+    source "$AW_VENV/bin/activate"
+elif ! command -v aw &>/dev/null; then
+    echo "[aw-common] ERROR: aw CLI not found and venv missing at $AW_VENV" >&2
+    exit 1
 fi
 
 # --- Load API keys from .env ---

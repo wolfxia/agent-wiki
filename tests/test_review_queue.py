@@ -69,6 +69,20 @@ def test_review_queue_appends_with_enriched_fields(temp_wiki_root: Path) -> None
     assert items[0]["content_state"]["topic"] == "caching"
 
 
+def test_review_queue_read_all_skips_malformed_jsonl_lines(temp_wiki_root: Path) -> None:
+    queue_path = temp_wiki_root / "review_queue.jsonl"
+    queue_path.write_text(
+        "not-json\n"
+        + json.dumps({"item_id": "rq-valid", "item_type": "task", "status": "open"}, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    items = ReviewQueueRepository(temp_wiki_root).read_all()
+
+    assert [item["item_id"] for item in items] == ["rq-valid"]
+
+
 def test_review_queue_status_transitions(temp_wiki_root: Path) -> None:
     queue = ReviewQueueRepository(temp_wiki_root)
     queue.append({"item_id": "rq-002", "item_type": "dispute", "status": "open"})

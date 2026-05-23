@@ -203,10 +203,7 @@ class CompileSuggestService:
 
     def _quality_failure_counts(self, wiki_root: Path) -> defaultdict[tuple[str, str], int]:
         counts: defaultdict[tuple[str, str], int] = defaultdict(int)
-        path = wiki_root / "review_queue.jsonl"
-        if not path.exists():
-            return counts
-        for entry in self._read_jsonl_lenient(path):
+        for entry in ReviewQueueRepository(wiki_root).read_all():
             if entry.get("item_type") != "compile_suggestion":
                 continue
             if (entry.get("content_state") or {}).get("error_type") != "quality_rejected":
