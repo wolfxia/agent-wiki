@@ -174,6 +174,45 @@ def test_cli_query_command(temp_wiki_root) -> None:
     assert "atom-cli-1" in result.stdout
 
 
+def test_cli_capture_raw_accepts_summary_option(temp_wiki_root) -> None:
+    from pathlib import Path
+    import json
+    from agent_wiki.bootstrap.registry_loader import RegistryLoader
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "capture-raw",
+            "raw-cli-summary-1",
+            "--topic",
+            "agent-wiki",
+            "--problem-cluster",
+            "retrieval-self-eval",
+            "--summary",
+            "Self-eval observation for retrieval drift.",
+            "--content",
+            "Detailed raw observation body.",
+            "--workspace",
+            str(temp_wiki_root),
+            "--registry",
+            "tests/fixtures/registry.yaml",
+            "--wiki-id",
+            wiki.wiki_id,
+        ],
+        env={"AGENT_WIKI_ACTOR_TYPE": "agent", "AGENT_WIKI_ACTOR_ID": "claude-code"},
+    )
+
+    assert result.exit_code == 0
+    manifest_entry = json.loads((temp_wiki_root / "MANIFEST.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert manifest_entry["summary"] == "Self-eval observation for retrieval drift."
+    topic_index = (temp_wiki_root / "topic_index.md").read_text(encoding="utf-8")
+    assert "Self-eval observation for retrieval drift." in topic_index
+
+
 def test_cli_rebuild_index_removes_stale_entries_and_rebuilds_fts(temp_wiki_root) -> None:
     from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
     from agent_wiki.bootstrap.registry_loader import RegistryLoader
