@@ -562,6 +562,69 @@ def test_compile_suggestions_interleave_ready_clusters_before_second_subcluster(
     assert ready_candidates[1]["sub_cluster_index"] == 1
 
 
+def test_compile_suggestions_prioritize_clusters_linked_to_recent_eval_failures(temp_wiki_root: Path) -> None:
+    import json
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    capture_service = CaptureRawService()
+
+    for index in range(3):
+        capture_service.execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-eval-priority-target-{index}",
+                topic="zz-target",
+                problem_cluster="missed-cluster",
+                content=f"# Target {index}",
+                source_refs=[],
+            ),
+        )
+        capture_service.execute(
+            wiki=wiki,
+            actor=actor,
+            data=CaptureRawInput(
+                doc_id=f"raw-eval-priority-other-{index}",
+                topic="aa-other",
+                problem_cluster="baseline-cluster",
+                content=f"# Other {index}",
+                source_refs=[],
+            ),
+        )
+
+    runtime_root = temp_wiki_root / ".agent-wiki"
+    runtime_root.mkdir(exist_ok=True)
+    (runtime_root / "eval_history.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-05-24T00:00:00Z",
+                "metrics": {"strict_recall_at_k": 0.2},
+                "queries": [
+                    {
+                        "query": "missed architecture query",
+                        "expected_doc_ids": ["raw-eval-priority-target-0"],
+                        "acceptable_doc_ids": ["raw-eval-priority-target-1"],
+                        "strict_recall_at_k": 0.0,
+                        "loose_recall_at_k": 0.0,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    candidates = CompileSuggestService().detect(wiki)
+
+    assert candidates[0]["topic"] == "zz-target"
+    assert candidates[0]["problem_cluster"] == "missed-cluster"
+    assert candidates[0]["compile_priority_score"] > candidates[1]["compile_priority_score"]
+
+
 def test_compile_suggestion_reopens_resolved_subcluster_when_raw_count_changes(temp_wiki_root: Path) -> None:
     import json
 

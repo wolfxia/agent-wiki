@@ -41,6 +41,7 @@ class CompileSuggestService:
 
         query_signal_counts = self._query_signal_counts(wiki_root, set(raw_cluster_entries.keys()))
         quality_failure_counts = self._quality_failure_counts(wiki_root)
+        eval_failure_counts = self._eval_failure_counts(wiki_root, entries)
 
         for (topic, problem_cluster), raw_entries in raw_cluster_entries.items():
             raw_entries.sort(key=lambda entry: str(entry.get("doc_id") or ""))
@@ -57,6 +58,7 @@ class CompileSuggestService:
                 purpose_aligned=purpose_aligned,
                 existing_compiled_count=compiled_count,
                 previous_quality_gate_failures=quality_failure_counts[cluster_key],
+                eval_failure_frequency=eval_failure_counts[cluster_key],
                 staleness_days=self._cluster_staleness_days(raw_entries),
                 contradiction_markers_present=self._has_contradiction_markers(wiki_root, raw_entries),
             )
@@ -229,8 +231,44 @@ class CompileSuggestService:
                 counts[(topic, problem_cluster)] += 1
         return counts
 
+    def _eval_failure_counts(self, wiki_root: Path, manifest_entries: list[dict]) -> defaultdict[tuple[str, str], int]:
+        counts: defaultdict[tuple[str, str], int] = defaultdict(int)
+        history_path = wiki_root / ".agent-wiki" / "eval_history.jsonl"
+        history = self._read_jsonl_lenient(history_path)
+        if not history:
+            return counts
+
+        manifest_by_doc_id = {
+            str(entry.get("doc_id")): entry
+            for entry in manifest_entries
+            if entry.get("doc_id")
+        }
+        latest = history[-1]
+        for query_row in latest.get("queries") or []:
+            strict_recall = float(query_row.get("strict_recall_at_k", 0.0) or 0.0)
+            loose_recall = float(query_row.get("loose_recall_at_k", 0.0) or 0.0)
+            if strict_recall >= 1.0 and loose_recall >= 1.0:
+                continue
+
+            impacted_clusters: set[tuple[str, str]] = set()
+            expected_doc_ids = list(query_row.get("expected_doc_ids") or [])
+            acceptable_doc_ids = list(query_row.get("acceptable_doc_ids") or [])
+            for doc_id in expected_doc_ids + acceptable_doc_ids:
+                entry = manifest_by_doc_id.get(str(doc_id))
+                if entry is None or entry.get("page_type") != "raw":
+                    continue
+                topic = str(entry.get("topic") or "")
+                problem_cluster = str(entry.get("problem_cluster") or "")
+                if topic and problem_cluster:
+                    impacted_clusters.add((topic, problem_cluster))
+            for cluster_key in impacted_clusters:
+                counts[cluster_key] += 1
+        return counts
+
     def _read_jsonl_lenient(self, path: Path) -> list[dict]:
         entries: list[dict] = []
+        if not path.exists():
+            return entries
         for line in path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
@@ -283,6 +321,7 @@ class CompileSuggestService:
         purpose_aligned: bool,
         existing_compiled_count: int,
         previous_quality_gate_failures: int,
+        eval_failure_frequency: int,
         staleness_days: int,
         contradiction_markers_present: bool,
     ) -> int:
@@ -294,6 +333,7 @@ class CompileSuggestService:
             score += 20
         score -= min(existing_compiled_count, 5) * 5
         score += min(previous_quality_gate_failures, 5) * 10
+        score += min(eval_failure_frequency, 5) * 12
         score += min(staleness_days // 30, 4) * 5
         if contradiction_markers_present:
             score += 15
