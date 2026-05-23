@@ -1,24 +1,15 @@
-#!/bin/bash
-# agent-wiki lint
+#!/usr/bin/env bash
+# aw-lint.sh — agent-wiki lint with retry
 set -euo pipefail
-VENV="/Users/chao/workspace/agent-wiki/.venv/bin/activate"
-REGISTRY="/Users/chao/agent-wiki-data/registry.yaml"
-ENV_FILE="/Users/chao/agent-wiki-data/.env"
-WIKI_ID="main"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/aw-common.sh
+source "$SCRIPT_DIR/aw-common.sh"
 
-source "$VENV"
-
-# Load API keys from .env
-if [ -f "$ENV_FILE" ]; then
-    set -a; source "$ENV_FILE"; set +a
-fi
-
-attempt=0
 MAX=2
+attempt=0
 while [ $attempt -lt $MAX ]; do
     attempt=$((attempt + 1))
-    if output=$(AGENT_WIKI_ACTOR_TYPE=agent AGENT_WIKI_ACTOR_ID=hermes \
-      aw lint --registry "$REGISTRY" --wiki-id "$WIKI_ID" 2>&1); then
+    if output=$(aw lint --registry "$AW_REGISTRY" --wiki-id "$AW_WIKI_ID" 2>&1); then
         echo "$output"
         exit 0
     else

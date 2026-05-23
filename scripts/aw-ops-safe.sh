@@ -1,32 +1,29 @@
-#!/bin/bash
-# agent-wiki ops with retry + fallback
+#!/usr/bin/env bash
+# aw-ops-safe.sh — agent-wiki ops with retry + fallback
 # Usage: aw-ops-safe.sh <command>
 # Commands: pull-view, maintain, lint, weekly-review
-
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/aw-common.sh
+source "$SCRIPT_DIR/aw-common.sh"
 
 CMD="${1:-}"
-REGISTRY="/Users/chao/agent-wiki-data/registry.yaml"
-WIKI_ID="main"
-VENV="/Users/chao/workspace/agent-wiki/.venv/bin/activate"
 MAX_RETRIES=2
 RETRY_DELAY=5
-
-source "$VENV"
 
 run_aw() {
     case "$CMD" in
         pull-view)
-            aw sync pull-view --registry "$REGISTRY" --wiki-id "$WIKI_ID" 2>&1
+            aw sync pull-view --registry "$AW_REGISTRY" --wiki-id "$AW_WIKI_ID" 2>&1
             ;;
         maintain)
-            aw maintain --registry "$REGISTRY" --wiki-id "$WIKI_ID" 2>&1
+            aw maintain --registry "$AW_REGISTRY" --wiki-id "$AW_WIKI_ID" 2>&1
             ;;
         lint)
-            aw lint --registry "$REGISTRY" --wiki-id "$WIKI_ID" 2>&1
+            aw lint --registry "$AW_REGISTRY" --wiki-id "$AW_WIKI_ID" 2>&1
             ;;
         weekly-review)
-            aw weekly-review --registry "$REGISTRY" --wiki-id "$WIKI_ID" 2>&1
+            aw weekly-review --registry "$AW_REGISTRY" --wiki-id "$AW_WIKI_ID" 2>&1
             ;;
         *)
             echo "Unknown command: $CMD"
@@ -49,8 +46,6 @@ while [ $attempt -lt $MAX_RETRIES ]; do
     fi
 done
 
-# All retries exhausted — graceful degradation
 echo "[FALLBACK] aw $CMD failed after $MAX_RETRIES attempts"
-echo "[FALLBACK] agent-wiki sync will be retried on next cycle"
-echo "[FALLBACK] Hermes agent continues normally"
+echo "[FALLBACK] agent-wiki continues normally, will retry on next cycle"
 exit 0

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# agent-wiki CLI wrapper for Codex (A-level, query + capture_raw only)
+# aw-codex — agent-wiki CLI wrapper for Codex (A-level, query + capture_raw only)
 # Usage: aw-codex query "搜索词"
 #        aw-codex capture-raw DOC_ID --topic TOPIC --problem-cluster CLUSTER --content CONTENT
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-export AGENT_WIKI_ACTOR_TYPE=agent
-export AGENT_WIKI_ACTOR_ID=codex
-export AGENT_WIKI_REGISTRY=/Users/chao/agent-wiki-data/registry.yaml
+# Override identity for Codex before sourcing common
+AW_ACTOR_ID=codex
+# shellcheck source=scripts/aw-common.sh
+source "$SCRIPT_DIR/aw-common.sh"
 
-exec /Users/chao/workspace/agent-wiki/.venv/bin/aw "$@"
+exec aw "$@"

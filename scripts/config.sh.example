@@ -1,0 +1,25 @@
+# agent-wiki deployment config
+# Copy to ~/.config/agent-wiki/config.sh and customize for your environment.
+# This file is sourced by all aw-* scripts via aw-common.sh.
+
+# Project directory (where agent-wiki repo is cloned)
+# AW_PROJECT_DIR="$HOME/workspace/agent-wiki"
+
+# Data directory (wiki data, registry, .env)
+# AW_DATA_DIR="$HOME/agent-wiki-data"
+
+# Registry file path
+# AW_REGISTRY="$AW_DATA_DIR/registry.yaml"
+
+# Virtual environment path
+# AW_VENV="$AW_PROJECT_DIR/.venv"
+
+# Wiki ID (default: main)
+# AW_WIKI_ID="main"
+
+# Default actor identity (override per-script or per-agent)
+# AW_ACTOR_TYPE="agent"
+# AW_ACTOR_ID="hermes"
+
+# .env file with API keys
+# AW_ENV_FILE="$AW_DATA_DIR/.env"
