@@ -223,6 +223,51 @@ def test_maintenance_runs_eval_and_writes_eval_history_when_eval_file_exists(tem
     assert len(history) == 1
 
 
+def test_maintenance_repairs_missing_fts_entries_via_rebuild(temp_wiki_root: Path) -> None:
+    from agent_wiki.infrastructure.retrieval.sqlite_fts import SQLiteFTSIndexProvider
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-maint-fts-repair-1",
+            topic="agent-os",
+            problem_cluster="fts-repair",
+            content="# Raw maintain fts repair",
+            source_refs=[],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-maint-fts-repair-1",
+            page_type="atom",
+            topic="agent-os",
+            problem_cluster="fts-repair",
+            summary="MCP shared context sidecar note.",
+            aliases=["shared context sidecar"],
+            content="# Atom repair\n\nMCP shared context sidecar protocol.",
+            source_refs=["personal-1:raw-maint-fts-repair-1"],
+        ),
+    )
+
+    SQLiteFTSIndexProvider(temp_wiki_root, wiki_id="personal-1").delete("atom-maint-fts-repair-1")
+    assert SQLiteFTSIndexProvider(temp_wiki_root, wiki_id="personal-1").search("shared context sidecar", top_k=5) == []
+
+    summary = MaintenanceService().run(wiki)
+    repaired_hits = SQLiteFTSIndexProvider(temp_wiki_root, wiki_id="personal-1").search("shared context sidecar", top_k=5)
+
+    assert repaired_hits
+    assert repaired_hits[0].doc_id == "atom-maint-fts-repair-1"
+    assert summary["index_rebuild"]["rebuilt_count"] >= 1
+    assert summary["index_rebuild"]["reason"] == "index_inconsistency"
+
+
 def test_maintenance_eval_timeout_returns_summary_without_eval_baseline(monkeypatch, temp_wiki_root: Path) -> None:
     import json
     import time
@@ -263,6 +308,27 @@ def test_maintenance_eval_timeout_returns_summary_without_eval_baseline(monkeypa
     assert summary["eval_timeout"] is True
     history_path = temp_wiki_root / ".agent-wiki" / "eval_history.jsonl"
     assert not history_path.exists()
+
+
+def test_maintenance_uses_repo_eval_file_when_workspace_eval_missing(monkeypatch, temp_wiki_root: Path) -> None:
+    import agent_wiki.application.maintenance as maintenance_module
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    captured: dict[str, str] = {}
+
+    class FakeEvalRetrievalService:
+        def run(self, **kwargs):
+            captured["eval_file"] = str(kwargs["eval_file"])
+            return {"metrics": {"strict_recall_at_k": 0.5}}
+
+    monkeypatch.setattr(maintenance_module, "EvalRetrievalService", lambda: FakeEvalRetrievalService())
+
+    summary = MaintenanceService().run(wiki)
+
+    assert summary["eval_baseline"]["metrics"]["strict_recall_at_k"] == 0.5
+    assert captured["eval_file"].endswith("eval/retrieval_queries.jsonl")
 
 
 
@@ -971,3 +1037,54 @@ def test_maintenance_quality_metrics_freshness_prefers_created_at(temp_wiki_root
 
     metrics = summary["quality_metrics"]
     assert metrics["freshness_distribution"]["stale"] >= 1
+
+
+def test_maintenance_repairs_missing_compiled_metadata_from_page_frontmatter(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    pages = temp_wiki_root / "pages"
+    pages.mkdir(exist_ok=True)
+    doc_id = "atom-frontmatter-repair-1"
+    (pages / f"{doc_id}.md").write_text(
+        """---
+aliases:
+  - agent-skills
+  - skill-engine
+confidence: EXTRACTED
+sensitivity: normal
+wikilinks:
+  - main:atom-agent-os-agent-os-0028
+---
+
+# Agent Skills 深度解析
+
+## 核心主张
+
+Agent Skills 是可被 Agent 发现、理解、调用和组合的能力模块。
+""",
+        encoding="utf-8",
+    )
+    ManifestRepository(temp_wiki_root).upsert({
+        "wiki_id": "personal-1",
+        "doc_id": doc_id,
+        "page_type": "atom",
+        "topic": "agent-engineering",
+        "problem_cluster": "agent-skills",
+        "canonical_uri": f"pages/{doc_id}.md",
+        "summary": "Agent Skills 是结构化能力模块。",
+        "aliases": [],
+        "confidence": None,
+        "wikilinks": [],
+        "sensitivity": None,
+    })
+
+    summary = MaintenanceService().run(wiki)
+
+    manifest_entry = ManifestRepository(temp_wiki_root).find(doc_id)
+    assert manifest_entry is not None
+    assert manifest_entry["aliases"] == ["agent-skills", "skill-engine"]
+    assert manifest_entry["confidence"] == "EXTRACTED"
+    assert manifest_entry["wikilinks"] == ["main:atom-agent-os-agent-os-0028"]
+    assert manifest_entry["sensitivity"] == "internal"
+    assert summary["compiled_metadata_repairs"] == 1
