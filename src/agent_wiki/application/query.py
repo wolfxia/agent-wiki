@@ -12,6 +12,7 @@ from agent_wiki.domain.models import QueryInput, QueryResult
 from agent_wiki.application.retrieval_router import RetrievalRouter
 from agent_wiki.application.runtime_tuning import RuntimeTuningService
 from agent_wiki.infrastructure.query.classifier import RuleBasedQueryClassifier
+from agent_wiki.infrastructure.retrieval.tokenizer import tokenize
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 from agent_wiki.infrastructure.storage.purpose_reader import PurposeReader
 from agent_wiki.infrastructure.retrieval.topic_index import TopicIndexRepository
@@ -69,7 +70,14 @@ class QueryService:
             hit for hit in filtered_hits
             if self._sensitivity_allowed(manifest, hit.doc_id, max_sensitivity, manifest_by_doc_id)
         ]
-        filtered_hits = self._apply_ranking(manifest, purpose_reader, filtered_hits, manifest_by_doc_id, query_ranking)
+        filtered_hits = self._apply_ranking(
+            manifest,
+            purpose_reader,
+            filtered_hits,
+            manifest_by_doc_id,
+            query_ranking,
+            query=data.query,
+        )
         l2_context = self._build_l2_context(manifest, filtered_hits, manifest_by_doc_id, wiki)
         l3_proof = self._build_l3_proof(manifest, filtered_hits, manifest_by_doc_id, wiki)
         self._enqueue_ambiguous_claim_reviews(wiki_root, filtered_hits)
@@ -155,14 +163,30 @@ class QueryService:
         doc_id: str,
         boost: float,
         manifest_by_doc_id: dict[str, dict] | None = None,
+        query: str | None = None,
     ) -> float:
         entry = (manifest_by_doc_id or {}).get(doc_id) or manifest.find(doc_id)
         if entry is None:
             return 0.0
-        topic = entry.get("topic", "")
-        if topic and purpose_reader.is_aligned(topic):
-            return boost
-        return 0.0
+        if not self._is_truth_zone_page(entry):
+            return 0.0
+        topic = str(entry.get("topic") or "")
+        if not topic or not purpose_reader.is_aligned(topic):
+            return 0.0
+        matched_topics = self._purpose_topics_mentioned_in_query(purpose_reader, query)
+        if matched_topics and self._topic_key(topic) not in matched_topics:
+            return 0.0
+        return boost
+
+    def _purpose_topics_mentioned_in_query(self, purpose_reader: PurposeReader, query: str | None) -> set[str]:
+        if not query:
+            return set()
+        purpose = purpose_reader.read()
+        return {
+            self._topic_key(str(topic))
+            for topic in purpose.get("topics", [])
+            if self._query_mentions_topic(query, str(topic)) and self._topic_key(str(topic))
+        }
 
     def _topic_alignment_boost(
         self,
@@ -171,16 +195,30 @@ class QueryService:
         doc_id: str,
         boost: float,
         manifest_by_doc_id: dict[str, dict] | None = None,
+        query: str | None = None,
     ) -> float:
         entry = (manifest_by_doc_id or {}).get(doc_id) or manifest.find(doc_id)
         if entry is None:
             return 0.0
+        if not self._is_truth_zone_page(entry):
+            return 0.0
         topic = str(entry.get("topic") or "")
         if not topic:
+            return 0.0
+        if not purpose_reader.is_aligned(topic):
+            return 0.0
+        if query is not None and not self._query_mentions_topic(query, topic):
             return 0.0
         if purpose_reader.is_aligned(topic):
             return boost
         return 0.0
+
+    def _is_truth_zone_page(self, entry: dict) -> bool:
+        return entry.get("page_type") in {
+            PageType.ATOM.value,
+            PageType.SYNTHESIS.value,
+            PageType.PRINCIPLE.value,
+        }
 
     def _apply_ranking(
         self,
@@ -189,6 +227,7 @@ class QueryService:
         hits: list[RetrievalHit],
         manifest_by_doc_id: dict[str, dict] | None = None,
         query_ranking=None,
+        query: str | None = None,
     ) -> list[RetrievalHit]:
         query_ranking = query_ranking or QueryRankingTuningConfig()
         ranked: list[RetrievalHit] = []
@@ -207,6 +246,7 @@ class QueryService:
                 hit.doc_id,
                 float(query_ranking.purpose_boost),
                 manifest_by_doc_id,
+                query,
             )
             topic_alignment_boost = self._topic_alignment_boost(
                 manifest,
@@ -214,6 +254,7 @@ class QueryService:
                 hit.doc_id,
                 float(query_ranking.topic_alignment_boost),
                 manifest_by_doc_id,
+                query,
             )
             freshness = float(manifest_entry.get("updated_at_score") or 0.0)
             manifest_priority = float(self._manifest_priority(manifest, hit.doc_id, manifest_by_doc_id))
@@ -281,10 +322,23 @@ class QueryService:
         entry = (manifest_by_doc_id or {}).get(doc_id) or manifest.find(doc_id)
         if entry is None:
             return True
-        doc_sensitivity = Sensitivity(entry.get("sensitivity") or Sensitivity.PUBLIC)
+        doc_sensitivity = self._normalize_sensitivity(entry.get("sensitivity"))
         max_level = self._SENSITIVITY_ORDER[max_sensitivity]
         doc_level = self._SENSITIVITY_ORDER[doc_sensitivity]
         return doc_level <= max_level
+
+    def _normalize_sensitivity(self, value: object) -> Sensitivity:
+        if isinstance(value, Sensitivity):
+            return value
+        normalized = str(value or "").strip().lower()
+        if not normalized:
+            return Sensitivity.PUBLIC
+        if normalized == "normal":
+            return Sensitivity.INTERNAL
+        try:
+            return Sensitivity(normalized)
+        except ValueError:
+            return Sensitivity.INTERNAL
 
     def _build_l2_context(
         self,
@@ -545,6 +599,7 @@ class QueryService:
             return []
         matched_keys = {self._topic_key(topic) for topic in matched_topics if self._topic_key(topic)}
         seeded: list[RetrievalHit] = []
+        candidates_by_topic: dict[str, list[tuple[float, int, dict]]] = {}
         for entry in manifest_entries:
             if entry.get("page_type") not in {PageType.ATOM.value, PageType.SYNTHESIS.value}:
                 continue
@@ -558,26 +613,76 @@ class QueryService:
                 continue
             if doc_id in manifest_by_doc_id and entry.get("page_type") != manifest_by_doc_id[doc_id].get("page_type"):
                 continue
-            seeded.append(
-                RetrievalHit(
-                    wiki_id=str(entry.get("wiki_id") or ""),
-                    doc_id=doc_id,
-                    score=topic_seed_score,
-                    metadata={
-                        "lexical_score": topic_seed_score,
-                        "structured_score": 0.0,
-                        "topic_seeded": True,
-                    },
+            topic_key = self._topic_key(topic)
+            candidates_by_topic.setdefault(topic_key, []).append(
+                (
+                    self._topic_seed_match_score(query, entry),
+                    self._manifest_priority_from_entry(entry),
+                    entry,
                 )
             )
+        for topic_key, candidates in candidates_by_topic.items():
+            relevant = [candidate for candidate in candidates if candidate[0] > 0]
+            selected = sorted(relevant, key=lambda item: (item[0], item[1], str(item[2].get("doc_id") or "")), reverse=True)[:3]
+            if not selected and candidates:
+                selected = [max(candidates, key=lambda item: (item[1], str(item[2].get("doc_id") or "")))]
+            for _, _, entry in selected:
+                doc_id = str(entry.get("doc_id") or "")
+                seeded.append(
+                    RetrievalHit(
+                        wiki_id=str(entry.get("wiki_id") or ""),
+                        doc_id=doc_id,
+                        score=topic_seed_score,
+                        metadata={
+                            "lexical_score": topic_seed_score,
+                            "structured_score": 0.0,
+                            "topic_seeded": True,
+                        },
+                    )
+                )
         return seeded
+
+    def _topic_seed_match_score(self, query: str, entry: dict) -> float:
+        topic_tokens = set(tokenize(str(entry.get("topic") or "")))
+        if not topic_tokens:
+            return 0.0
+        score = 0.0
+        for term in tokenize(query):
+            if term in topic_tokens:
+                continue
+            if term in tokenize(str(entry.get("problem_cluster") or "")):
+                score += 2.0
+                continue
+            if term in tokenize(str(entry.get("summary") or "")):
+                score += 1.0
+        return score
+
+    def _manifest_priority_from_entry(self, entry: dict) -> int:
+        if entry.get("review_status") == "disputed":
+            return 3
+        if entry.get("page_type") in {PageType.ATOM.value, PageType.SYNTHESIS.value, PageType.PRINCIPLE.value}:
+            return 2
+        return 1
 
     def _merge_hits(self, hits: list[RetrievalHit], seeded_hits: list[RetrievalHit]) -> list[RetrievalHit]:
         merged: dict[str, RetrievalHit] = {hit.doc_id: hit for hit in hits}
         for hit in seeded_hits:
             existing = merged.get(hit.doc_id)
-            if existing is None or hit.score > existing.score:
+            if existing is None:
                 merged[hit.doc_id] = hit
+                continue
+            seed_score = float(hit.metadata.get("topic_seed_score", hit.score) or 0.0)
+            metadata = {
+                **existing.metadata,
+                "topic_seeded": True,
+                "topic_seed_score": float(existing.metadata.get("topic_seed_score", 0.0) or 0.0) + seed_score,
+            }
+            merged[hit.doc_id] = existing.model_copy(
+                update={
+                    "score": existing.score + seed_score,
+                    "metadata": metadata,
+                }
+            )
         return list(merged.values())
 
     def _query_mentions_topic(self, query: str, topic: str) -> bool:
