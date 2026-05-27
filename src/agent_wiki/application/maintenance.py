@@ -632,6 +632,10 @@ class MaintenanceService:
                 doc_id = str(doc_id)
                 if doc_id in atom_doc_ids:
                     referenced_atoms.add(doc_id)
+            for item in entry.get("score_breakdown") or []:
+                doc_id = str(item.get("doc_id") or "")
+                if doc_id in atom_doc_ids:
+                    referenced_atoms.add(doc_id)
         atom_reference_rate = round(len(referenced_atoms) / len(atom_doc_ids), 3) if atom_doc_ids else 0.0
         return {
             "post_compile_query_uplift": post_compile_query_uplift,

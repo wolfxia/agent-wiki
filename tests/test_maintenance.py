@@ -722,6 +722,49 @@ def test_maintenance_reports_post_compile_uplift_atom_reference_rate_and_stalene
     assert any(entry.get("item_type") == "staleness_refresh" for entry in queue_entries)
 
 
+def test_maintenance_atom_reference_rate_counts_retrieved_atoms_without_feedback(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-atom-ref-1",
+            topic="metrics",
+            problem_cluster="cluster-atom-ref",
+            content="# Raw atom ref",
+            source_refs=[],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-atom-ref-1",
+            page_type="atom",
+            topic="metrics",
+            problem_cluster="cluster-atom-ref",
+            summary="Atom reference metric.",
+            aliases=["reference-metric"],
+            confidence="high",
+            content="# Atom ref\n\nReference metric should count retrieval exposure.\n\n## Evidence\n- source.",
+            source_refs=["personal-1:raw-atom-ref-1"],
+        ),
+    )
+
+    QueryService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=QueryInput(query="reference metric"),
+    )
+
+    summary = MaintenanceService().run(wiki)
+
+    assert summary["value_metrics"]["atom_reference_rate"] == 1.0
+
+
 def test_maintenance_runs_capped_incremental_claim_annotation(temp_wiki_root: Path) -> None:
     wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
         update={"workspace_path": str(temp_wiki_root)}
