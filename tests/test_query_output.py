@@ -485,6 +485,221 @@ def test_query_ranking_topic_alignment_boost_beats_broad_external_sync_atom(temp
     assert ranked[1].metadata["topic_alignment_boost"] == 0.0
 
 
+def test_query_ranking_topic_alignment_requires_query_topic_match(temp_wiki_root: Path) -> None:
+    (temp_wiki_root / "purpose.md").write_text(
+        "# Purpose\n\n## Topics\n\n- agent-os\n- ai-harness\n",
+        encoding="utf-8",
+    )
+    manifest = ManifestRepository(temp_wiki_root)
+    manifest.batch_upsert(
+        [
+            {
+                "doc_id": "atom-agent-os-001",
+                "page_type": "atom",
+                "topic": "agent-os",
+                "problem_cluster": "agent-os",
+                "canonical_uri": "pages/atom-agent-os-001.md",
+            },
+            {
+                "doc_id": "atom-ai-harness-001",
+                "page_type": "atom",
+                "topic": "ai-harness",
+                "problem_cluster": "ai-harness",
+                "canonical_uri": "pages/atom-ai-harness-001.md",
+            },
+        ]
+    )
+    hits = [
+        RetrievalHit(
+            wiki_id="personal-1",
+            doc_id="atom-ai-harness-001",
+            score=20.0,
+            metadata={"lexical_score": 20.0},
+        ),
+        RetrievalHit(
+            wiki_id="personal-1",
+            doc_id="atom-agent-os-001",
+            score=20.0,
+            metadata={"lexical_score": 20.0},
+        ),
+    ]
+
+    ranked = QueryService()._apply_ranking(
+        manifest,
+        PurposeReader(temp_wiki_root),
+        hits,
+        query="Agent OS shared context sidecar",
+    )
+
+    agent_os = next(hit for hit in ranked if hit.doc_id == "atom-agent-os-001")
+    ai_harness = next(hit for hit in ranked if hit.doc_id == "atom-ai-harness-001")
+
+    assert agent_os.metadata["topic_alignment_boost"] == 5.0
+    assert ai_harness.metadata["topic_alignment_boost"] == 0.0
+
+
+def test_query_ranking_purpose_boost_does_not_reward_unmentioned_purpose_topic(temp_wiki_root: Path) -> None:
+    (temp_wiki_root / "purpose.md").write_text(
+        "# Purpose\n\n## Topics\n\n- agent-os\n- ai-harness\n",
+        encoding="utf-8",
+    )
+    manifest = ManifestRepository(temp_wiki_root)
+    manifest.batch_upsert(
+        [
+            {
+                "doc_id": "atom-agent-os-001",
+                "page_type": "atom",
+                "topic": "agent-os",
+                "problem_cluster": "agent-os",
+                "canonical_uri": "pages/atom-agent-os-001.md",
+            },
+            {
+                "doc_id": "atom-ai-harness-001",
+                "page_type": "atom",
+                "topic": "ai-harness",
+                "problem_cluster": "ai-harness",
+                "canonical_uri": "pages/atom-ai-harness-001.md",
+            },
+        ]
+    )
+    hits = [
+        RetrievalHit(
+            wiki_id="personal-1",
+            doc_id="atom-ai-harness-001",
+            score=20.0,
+            metadata={"lexical_score": 20.0},
+        ),
+        RetrievalHit(
+            wiki_id="personal-1",
+            doc_id="atom-agent-os-001",
+            score=20.0,
+            metadata={"lexical_score": 20.0},
+        ),
+    ]
+
+    ranked = QueryService()._apply_ranking(
+        manifest,
+        PurposeReader(temp_wiki_root),
+        hits,
+        query="Agent OS shared context sidecar",
+    )
+
+    agent_os = next(hit for hit in ranked if hit.doc_id == "atom-agent-os-001")
+    ai_harness = next(hit for hit in ranked if hit.doc_id == "atom-ai-harness-001")
+
+    assert agent_os.metadata["purpose_boost"] == 1.5
+    assert ai_harness.metadata["purpose_boost"] == 0.0
+
+
+def test_query_ranking_purpose_boost_does_not_override_explicit_nonpurpose_topic(temp_wiki_root: Path) -> None:
+    (temp_wiki_root / "purpose.md").write_text(
+        "# Purpose\n\n## Topics\n\n- agent-os\n- ai-harness\n",
+        encoding="utf-8",
+    )
+    manifest = ManifestRepository(temp_wiki_root)
+    manifest.batch_upsert(
+        [
+            {
+                "doc_id": "atom-agent-os-001",
+                "page_type": "atom",
+                "topic": "agent-os",
+                "problem_cluster": "agent-os",
+                "canonical_uri": "pages/atom-agent-os-001.md",
+            },
+            {
+                "doc_id": "atom-methodology-001",
+                "page_type": "atom",
+                "topic": "methodology",
+                "problem_cluster": "methodology",
+                "canonical_uri": "pages/atom-methodology-001.md",
+            },
+        ]
+    )
+    hits = [
+        RetrievalHit(
+            wiki_id="personal-1",
+            doc_id="atom-agent-os-001",
+            score=20.0,
+            metadata={"lexical_score": 20.0},
+        ),
+        RetrievalHit(
+            wiki_id="personal-1",
+            doc_id="atom-methodology-001",
+            score=20.5,
+            metadata={"lexical_score": 20.5},
+        ),
+    ]
+
+    ranked = QueryService()._apply_ranking(
+        manifest,
+        PurposeReader(temp_wiki_root),
+        hits,
+        query="methodology frameworks collection 结构化分析 学习方法 source count",
+    )
+
+    methodology = next(hit for hit in ranked if hit.doc_id == "atom-methodology-001")
+    agent_os = next(hit for hit in ranked if hit.doc_id == "atom-agent-os-001")
+
+    assert methodology.doc_id == ranked[0].doc_id
+    assert agent_os.metadata["purpose_boost"] == 0.0
+
+
+def test_query_ranking_raw_page_does_not_get_truth_zone_topic_boosts(temp_wiki_root: Path) -> None:
+    (temp_wiki_root / "purpose.md").write_text(
+        "# Purpose\n\n## Topics\n\n- agent-os\n",
+        encoding="utf-8",
+    )
+    manifest = ManifestRepository(temp_wiki_root)
+    manifest.batch_upsert(
+        [
+            {
+                "doc_id": "raw-agent-os-001",
+                "page_type": "raw",
+                "topic": "agent-os",
+                "problem_cluster": "agent-os",
+                "canonical_uri": "pages/raw-agent-os-001.md",
+            },
+            {
+                "doc_id": "atom-agent-os-001",
+                "page_type": "atom",
+                "topic": "agent-os",
+                "problem_cluster": "agent-os",
+                "canonical_uri": "pages/atom-agent-os-001.md",
+            },
+        ]
+    )
+    hits = [
+        RetrievalHit(
+            wiki_id="personal-1",
+            doc_id="raw-agent-os-001",
+            score=20.0,
+            metadata={"lexical_score": 20.0},
+        ),
+        RetrievalHit(
+            wiki_id="personal-1",
+            doc_id="atom-agent-os-001",
+            score=20.0,
+            metadata={"lexical_score": 20.0},
+        ),
+    ]
+
+    ranked = QueryService()._apply_ranking(
+        manifest,
+        PurposeReader(temp_wiki_root),
+        hits,
+        query="Agent OS shared context sidecar",
+    )
+
+    raw_hit = next(hit for hit in ranked if hit.doc_id == "raw-agent-os-001")
+    atom_hit = next(hit for hit in ranked if hit.doc_id == "atom-agent-os-001")
+
+    assert raw_hit.metadata["purpose_boost"] == 0.0
+    assert raw_hit.metadata["topic_alignment_boost"] == 0.0
+    assert atom_hit.metadata["purpose_boost"] == 1.5
+    assert atom_hit.metadata["topic_alignment_boost"] == 5.0
+    assert atom_hit.score > raw_hit.score
+
+
 def test_query_ranking_expands_candidate_pool_before_topic_rerank(temp_wiki_root: Path, monkeypatch) -> None:
     wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
         update={"workspace_path": str(temp_wiki_root)}
@@ -629,6 +844,105 @@ def test_query_ranking_seeds_likely_purpose_topic_atom_candidates(temp_wiki_root
     assert result.hits[0].metadata["topic_alignment_boost"] == 5.0
     assert result.hits[0].metadata["topic_seeded"] is True
 
+
+
+def test_query_topic_seed_does_not_flood_all_same_topic_atoms(temp_wiki_root: Path, monkeypatch) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    (temp_wiki_root / "purpose.md").write_text(
+        "# Purpose\n\n## Topics\n\n- agent-os\n",
+        encoding="utf-8",
+    )
+    ManifestRepository(temp_wiki_root).batch_upsert(
+        [
+            {
+                "doc_id": "atom-agent-os-relevant",
+                "wiki_id": "personal-1",
+                "page_type": "atom",
+                "topic": "agent-os",
+                "problem_cluster": "context-protocol",
+                "canonical_uri": "pages/atom-agent-os-relevant.md",
+                "summary": "Agent OS shared context sidecar protocol.",
+            },
+            {
+                "doc_id": "atom-agent-os-unrelated",
+                "wiki_id": "personal-1",
+                "page_type": "atom",
+                "topic": "agent-os",
+                "problem_cluster": "governance",
+                "canonical_uri": "pages/atom-agent-os-unrelated.md",
+                "summary": "Agent OS governance planning review cadence.",
+            },
+            {
+                "doc_id": "raw-noise-0001",
+                "wiki_id": "personal-1",
+                "page_type": "raw",
+                "topic": "noise",
+                "problem_cluster": "noise",
+                "canonical_uri": "pages/raw-noise-0001.md",
+                "summary": "Noise result.",
+            },
+        ]
+    )
+    pages_dir = temp_wiki_root / "pages"
+    pages_dir.mkdir(exist_ok=True)
+    (pages_dir / "atom-agent-os-relevant.md").write_text("# Relevant\n\nShared context sidecar protocol.", encoding="utf-8")
+    (pages_dir / "atom-agent-os-unrelated.md").write_text("# Unrelated\n\nGovernance planning review cadence.", encoding="utf-8")
+    (pages_dir / "raw-noise-0001.md").write_text("# Noise\n\nNoise result.", encoding="utf-8")
+
+    class FakeRouter:
+        def __init__(self, wiki_root, wiki_id, wiki=None):
+            self.wiki_root = wiki_root
+            self.wiki_id = wiki_id
+
+        def search(self, query, top_k=10, filters=None):
+            return [RetrievalHit(wiki_id="personal-1", doc_id="raw-noise-0001", score=16.0)]
+
+    import agent_wiki.application.query as query_module
+
+    monkeypatch.setattr(query_module, "RetrievalRouter", FakeRouter)
+
+    result = QueryService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=QueryInput(query="Agent OS shared context sidecar"),
+        write_outcome=False,
+    )
+
+    assert result.hits[0].doc_id == "atom-agent-os-relevant"
+    assert result.hits[1].doc_id == "raw-noise-0001"
+    assert all(hit.doc_id != "atom-agent-os-unrelated" for hit in result.hits)
+
+
+def test_query_topic_seed_adds_ranking_score_to_existing_hit() -> None:
+    service = QueryService()
+    merged = service._merge_hits(
+        [
+            RetrievalHit(
+                wiki_id="personal-1",
+                doc_id="atom-agent-os-001",
+                score=7.0,
+                metadata={"lexical_score": 7.0},
+            )
+        ],
+        [
+            RetrievalHit(
+                wiki_id="personal-1",
+                doc_id="atom-agent-os-001",
+                score=8.0,
+                metadata={"topic_seeded": True, "topic_seed_score": 8.0},
+            )
+        ],
+    )
+
+    assert len(merged) == 1
+    assert merged[0].doc_id == "atom-agent-os-001"
+    assert merged[0].score == 15.0
+    assert merged[0].metadata["topic_seeded"] is True
+    assert merged[0].metadata["topic_seed_score"] == 8.0
+    assert merged[0].metadata["lexical_score"] == 7.0
 
 
 def test_query_logging_writes_stable_query_id_to_outcomes_and_hits(temp_wiki_root: Path) -> None:

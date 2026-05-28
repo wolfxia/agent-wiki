@@ -173,6 +173,7 @@ class QueryService:
         boost: float,
         manifest_by_doc_id: dict[str, dict] | None = None,
         query: str | None = None,
+        explicit_topics: set[str] | None = None,
     ) -> float:
         entry = (manifest_by_doc_id or {}).get(doc_id) or manifest.find(doc_id)
         if entry is None:
@@ -182,10 +183,29 @@ class QueryService:
         topic = str(entry.get("topic") or "")
         if not topic or not purpose_reader.is_aligned(topic):
             return 0.0
+        topic_key = self._topic_key(topic)
+        if explicit_topics and topic_key not in explicit_topics:
+            return 0.0
         matched_topics = self._purpose_topics_mentioned_in_query(purpose_reader, query)
-        if matched_topics and self._topic_key(topic) not in matched_topics:
+        if matched_topics and topic_key not in matched_topics:
             return 0.0
         return boost
+
+    def _query_topics_mentioned(
+        self,
+        query: str | None,
+        manifest: ManifestRepository,
+        manifest_by_doc_id: dict[str, dict] | None = None,
+    ) -> set[str]:
+        if not query:
+            return set()
+        entries = (manifest_by_doc_id or {}).values() if manifest_by_doc_id is not None else manifest.read_all()
+        mentioned: set[str] = set()
+        for entry in entries:
+            topic_key = self._topic_key(str(entry.get("topic") or ""))
+            if topic_key and self._query_mentions_topic(query, str(entry.get("topic") or "")):
+                mentioned.add(topic_key)
+        return mentioned
 
     def _purpose_topics_mentioned_in_query(self, purpose_reader: PurposeReader, query: str | None) -> set[str]:
         if not query:
@@ -240,6 +260,7 @@ class QueryService:
     ) -> list[RetrievalHit]:
         query_ranking = query_ranking or QueryRankingTuningConfig()
         ranked: list[RetrievalHit] = []
+        explicit_topics = self._query_topics_mentioned(query, manifest, manifest_by_doc_id)
         for hit in hits:
             manifest_entry = (manifest_by_doc_id or {}).get(hit.doc_id) or manifest.find(hit.doc_id) or {}
             page_type_boost = 0.0
@@ -256,6 +277,7 @@ class QueryService:
                 float(query_ranking.purpose_boost),
                 manifest_by_doc_id,
                 query,
+                explicit_topics,
             )
             topic_alignment_boost = self._topic_alignment_boost(
                 manifest,
