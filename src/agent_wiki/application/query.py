@@ -25,7 +25,15 @@ class QueryService:
         self._classifier = RuleBasedQueryClassifier()
         self._runtime_tuning = RuntimeTuningService()
 
-    def execute(self, wiki: WikiConfig, actor: ResolvedActor, data: QueryInput, *, write_outcome: bool = True) -> QueryResult:
+    def execute(
+        self,
+        wiki: WikiConfig,
+        actor: ResolvedActor,
+        data: QueryInput,
+        *,
+        write_outcome: bool = True,
+        write_side_effects: bool = True,
+    ) -> QueryResult:
         start_time = time.monotonic()
         query_type = self._classifier.classify(data.query)
         wiki_root = Path(wiki.workspace_path)
@@ -80,7 +88,8 @@ class QueryService:
         )
         l2_context = self._build_l2_context(manifest, filtered_hits, manifest_by_doc_id, wiki)
         l3_proof = self._build_l3_proof(manifest, filtered_hits, manifest_by_doc_id, wiki)
-        self._enqueue_ambiguous_claim_reviews(wiki_root, filtered_hits)
+        if write_side_effects:
+            self._enqueue_ambiguous_claim_reviews(wiki_root, filtered_hits)
         topic_index_entries = {
             row["doc_id"]: row for row in TopicIndexRepository(wiki_root).read_all()
             if row.get("doc_id")
