@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 import sqlite3
 from pathlib import Path
@@ -132,8 +133,11 @@ class SQLiteFTSIndexProvider:
 
     def _score_from_rank(self, rank: float) -> float:
         strength = max(-rank, 0.0)
+        if not strength:
+            return 0.0
         reference_rank = 0.00001
-        return 20.0 * strength / (strength + reference_rank) if strength else 0.0
+        scaled = 4.0 * math.log10(1.0 + (strength / reference_rank))
+        return min(scaled, 20.0)
 
     def _ensure_schema(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -211,4 +215,5 @@ class SQLiteFTSIndexProvider:
             str(payload.get(field) or "")
             for field in ("topic", "problem_cluster", "summary", "content")
         )
-        return " ".join(self.tokenizer.tokenize(source))
+        aliases = " ".join(str(alias) for alias in (payload.get("aliases") or []))
+        return " ".join(self.tokenizer.tokenize(f"{source} {aliases}".strip()))

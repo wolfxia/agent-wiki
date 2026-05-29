@@ -196,7 +196,8 @@ def test_sqlite_fts_uses_pre_tokenized_text_for_chinese_terms(temp_wiki_root: Pa
 
 def test_sqlite_fts_scores_cjk_narrow_topic_above_broad_os_atom(temp_wiki_root: Path) -> None:
     provider = SQLiteFTSIndexProvider(temp_wiki_root, wiki_id="personal-1")
-    assert 19.0 < provider._score_from_rank(-0.1) < 20.0
+    assert 10.0 < provider._score_from_rank(-0.1) < 18.0
+    assert 0.0 < provider._score_from_rank(-0.001) < provider._score_from_rank(-0.1)
     provider.batch_upsert(
         [
             (
@@ -231,7 +232,8 @@ def test_sqlite_fts_scores_cjk_narrow_topic_above_broad_os_atom(temp_wiki_root: 
     scores = {hit.doc_id: hit.score for hit in hits}
     assert hits[0].doc_id == "atom-harmonyos-evolution"
     assert 0.0 <= scores["atom-os-industry"] < scores["atom-harmonyos-evolution"] <= 20.0
-    assert scores["atom-harmonyos-evolution"] - scores["atom-os-industry"] >= 5.0
+    assert scores["atom-harmonyos-evolution"] - scores["atom-os-industry"] >= 0.5
+    assert scores["atom-harmonyos-evolution"] >= scores["atom-os-industry"] * 2.0
 
 
 def test_sqlite_fts_weights_topic_and_summary_above_body_repetition(temp_wiki_root: Path) -> None:
