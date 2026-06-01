@@ -27,110 +27,138 @@
     </style>
   </defs>
 
+  <!-- Outer frame -->
   <rect x="18" y="18" width="964" height="684" rx="20" fill="#ffffff" stroke="#d7dee8"/>
-  <text x="500" y="56" text-anchor="middle" class="title">Agent-Wiki 系统架构总览</text>
-  <text x="500" y="80" text-anchor="middle" class="subtitle">保持 Git authority → local workspace/runtime → external views，并把 MCP 扩展、page type 注册、embedding provider 工厂放在共享核心之上。</text>
+  <text x="500" y="54" text-anchor="middle" class="title">Agent-Wiki 系统架构总览</text>
+  <text x="500" y="74" text-anchor="middle" class="subtitle">保持 Git authority → local workspace/runtime → external views，并把 MCP 扩展、page type 注册、embedding provider 工厂放在共享核心之上。</text>
 
-  <rect x="40" y="110" width="920" height="110" rx="18" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="2"/>
-  <text x="58" y="136" class="section">CLIENTS</text>
+  <!-- ======== CLIENTS ======== -->
+  <rect x="40" y="95" width="920" height="100" rx="18" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="2"/>
+  <text x="58" y="119" class="section">CLIENTS</text>
 
-  <rect x="70" y="150" width="390" height="48" rx="14" fill="#ce93d8" stroke="#7b1fa2" stroke-width="2"/>
-  <text x="265" y="171" text-anchor="middle" class="box-title">共享 registry agent 权限</text>
-  <text x="265" y="189" text-anchor="middle" class="box-copy">hermes T1/C · openclaw T1/C · claude-code T2/B · codex T3/A reserve</text>
+  <rect x="70" y="131" width="390" height="46" rx="14" fill="#ce93d8" stroke="#7b1fa2" stroke-width="2"/>
+  <text x="265" y="152" text-anchor="middle" class="box-title">共享 registry agent 权限</text>
+  <text x="265" y="169" text-anchor="middle" class="box-copy">hermes T1/C · openclaw T1/C · claude-code T2/B · codex T3/A reserve</text>
 
-  <rect x="700" y="150" width="220" height="48" rx="14" fill="#ef9a9a" stroke="#c62828" stroke-width="2"/>
-  <text x="810" y="171" text-anchor="middle" class="box-title">Human Operator</text>
-  <text x="810" y="189" text-anchor="middle" class="box-copy">CLI / REST 使用者，C 级走同一审批路径</text>
+  <rect x="700" y="131" width="220" height="46" rx="14" fill="#ef9a9a" stroke="#c62828" stroke-width="2"/>
+  <text x="810" y="152" text-anchor="middle" class="box-title">Human Operator</text>
+  <text x="810" y="169" text-anchor="middle" class="box-copy">CLI / REST 使用者，C 级走同一审批路径</text>
 
-  <rect x="40" y="250" width="920" height="260" rx="18" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
-  <text x="58" y="276" class="section">AW-AGENT SERVICE PROCESS</text>
+  <!-- ======== AW-AGENT SERVICE PROCESS ======== -->
+  <!-- Expanded height (290→335) to fully contain extensions box -->
+  <rect x="40" y="215" width="920" height="295" rx="18" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
+  <text x="58" y="241" class="section">AW-AGENT SERVICE PROCESS</text>
 
-  <rect x="70" y="300" width="360" height="100" rx="16" fill="#e1f5fe" stroke="#0277bd" stroke-width="2"/>
-  <text x="250" y="330" text-anchor="middle" class="box-title">FastMCP stdio host</text>
-  <text x="250" y="352" text-anchor="middle" class="box-copy">主入口: aw serve · 别名: aw-agent</text>
-  <text x="250" y="370" text-anchor="middle" class="box-copy">server name: agent-wiki</text>
-  <text x="250" y="388" text-anchor="middle" class="box-copy">tools: wiki.query · capture_raw · compile_update · lint · sync · extra_tools</text>
+  <!-- Entry row: FastMCP -->
+  <rect x="70" y="260" width="350" height="95" rx="16" fill="#e1f5fe" stroke="#0277bd" stroke-width="2"/>
+  <text x="245" y="288" text-anchor="middle" class="box-title">FastMCP stdio host</text>
+  <text x="245" y="308" text-anchor="middle" class="box-copy">主入口: aw serve · 别名: aw-agent</text>
+  <text x="245" y="326" text-anchor="middle" class="box-copy">server name: agent-wiki</text>
+  <text x="245" y="344" text-anchor="middle" class="box-copy">tools: wiki.query · capture_raw · compile_update · lint · sync · extra_tools</text>
 
-  <rect x="520" y="300" width="150" height="42" rx="12" fill="#e1f5fe" stroke="#0277bd" stroke-width="2"/>
-  <text x="595" y="326" text-anchor="middle" class="box-title">CLI · aw</text>
-  <rect x="740" y="300" width="150" height="42" rx="12" fill="#e1f5fe" stroke="#0277bd" stroke-width="2"/>
-  <text x="815" y="326" text-anchor="middle" class="box-title">REST API</text>
+  <!-- Entry row: CLI & REST — taller for visual balance -->
+  <rect x="520" y="260" width="150" height="48" rx="12" fill="#e1f5fe" stroke="#0277bd" stroke-width="2"/>
+  <text x="595" y="289" text-anchor="middle" class="box-title">CLI · aw</text>
+  <rect x="740" y="260" width="150" height="48" rx="12" fill="#e1f5fe" stroke="#0277bd" stroke-width="2"/>
+  <text x="815" y="289" text-anchor="middle" class="box-title">REST API</text>
 
-  <rect x="70" y="430" width="220" height="52" rx="14" fill="#a5d6a7" stroke="#2e7d32" stroke-width="2"/>
-  <text x="180" y="460" text-anchor="middle" class="box-title">Transport Dispatcher</text>
-  <text x="180" y="476" text-anchor="middle" class="small">trusted identity resolve · wiki route · error map</text>
+  <!-- Label for CLI/REST — centered between the two boxes -->
+  <text x="655" y="328" text-anchor="middle" class="label">secondary operator transports</text>
 
-  <rect x="340" y="430" width="270" height="52" rx="14" fill="#a5d6a7" stroke="#2e7d32" stroke-width="2"/>
-  <text x="475" y="460" text-anchor="middle" class="box-title">Application Services</text>
-  <text x="475" y="476" text-anchor="middle" class="small">query · capture_raw · compile_update · lint · sync</text>
+  <!-- Core row -->
+  <rect x="70" y="380" width="220" height="52" rx="14" fill="#a5d6a7" stroke="#2e7d32" stroke-width="2"/>
+  <text x="180" y="410" text-anchor="middle" class="box-title">Transport Dispatcher</text>
+  <text x="180" y="426" text-anchor="middle" class="small">trusted identity resolve · wiki route · error map</text>
 
-  <rect x="660" y="430" width="250" height="52" rx="14" fill="#fff9c4" stroke="#f57f17" stroke-width="2"/>
-  <text x="785" y="460" text-anchor="middle" class="box-title">Identity / Permission / Gate</text>
-  <text x="785" y="476" text-anchor="middle" class="small">actor resolution · page type · operation · A/B/C max_gate</text>
+  <rect x="340" y="380" width="270" height="52" rx="14" fill="#a5d6a7" stroke="#2e7d32" stroke-width="2"/>
+  <text x="475" y="410" text-anchor="middle" class="box-title">Application Services</text>
+  <text x="475" y="426" text-anchor="middle" class="small">query · capture_raw · compile_update · lint · sync</text>
 
-  <rect x="70" y="500" width="250" height="34" rx="12" fill="#d1c4e9" stroke="#5e35b1" stroke-width="2"/>
-  <text x="195" y="521" text-anchor="middle" class="box-title">agent_wiki.extensions</text>
-  <text x="195" y="537" text-anchor="middle" class="small">MCP tools · page types · embedding providers</text>
+  <rect x="660" y="380" width="250" height="52" rx="14" fill="#fff9c4" stroke="#f57f17" stroke-width="2"/>
+  <text x="785" y="410" text-anchor="middle" class="box-title">Identity / Permission / Gate</text>
+  <text x="785" y="426" text-anchor="middle" class="small">actor resolution · page type · operation · A/B/C max_gate</text>
 
-  <path d="M 195 500 V 484 H 250" fill="none" stroke="#5e35b1" stroke-width="2" marker-end="url(#arrow-blue)"/>
+  <!-- Extensions — now fully inside SERVICE container -->
+  <rect x="70" y="452" width="260" height="42" rx="12" fill="#d1c4e9" stroke="#5e35b1" stroke-width="2"/>
+  <text x="200" y="476" text-anchor="middle" class="box-title">agent_wiki.extensions</text>
+  <text x="200" y="490" text-anchor="middle" class="small">MCP tools · page types · embedding providers</text>
 
-  <rect x="40" y="540" width="560" height="140" rx="18" fill="#fff3e0" stroke="#e65100" stroke-width="2"/>
-  <text x="58" y="566" class="section">AUTHORITY / WORKSPACE</text>
+  <!-- Extensions label — shifted right to avoid arrow overlap -->
+  <text x="180" y="448" class="label">extension surface above shared core</text>
 
-  <rect x="70" y="585" width="220" height="70" rx="16" fill="#ffcc80" stroke="#e65100" stroke-width="2"/>
-  <text x="180" y="613" text-anchor="middle" class="box-title">Git Authority</text>
-  <text x="180" y="632" text-anchor="middle" class="box-copy">pages · MANIFEST.jsonl · retrieval_index.jsonl</text>
+  <!-- ======== Connection lines ======== -->
 
-  <rect x="350" y="585" width="220" height="70" rx="16" fill="#ffe0b2" stroke="#bf360c" stroke-width="2"/>
-  <text x="460" y="613" text-anchor="middle" class="box-title">Local Workspace / Runtime</text>
-  <text x="460" y="632" text-anchor="middle" class="box-copy">.agent-wiki pending state · staging · local indexes</text>
+  <!-- Clients → Entry row -->
+  <path d="M 265 177 V 215 H 245 V 260" fill="none" stroke="#7b1fa2" stroke-width="3"/>
+  <path d="M 810 177 V 215 H 595 V 260" fill="none" stroke="#c62828" stroke-width="2"/>
+  <path d="M 810 177 V 215 H 815 V 260" fill="none" stroke="#c62828" stroke-width="2"/>
 
-  <rect x="620" y="540" width="340" height="140" rx="18" fill="#fce4ec" stroke="#880e4f" stroke-width="2"/>
-  <text x="638" y="566" class="section">EXTERNAL VIEWS</text>
+  <!-- Entry → Core row -->
+  <path d="M 245 355 V 380" fill="none" stroke="#0277bd" stroke-width="3" marker-end="url(#arrow-blue)"/>
+  <path d="M 595 308 V 345 H 180 V 380" fill="none" stroke="#0277bd" stroke-width="2"/>
+  <path d="M 815 308 V 345 H 180 V 380" fill="none" stroke="#0277bd" stroke-width="2"/>
 
-  <rect x="650" y="585" width="190" height="62" rx="16" fill="#f48fb1" stroke="#880e4f" stroke-width="2"/>
-  <text x="745" y="611" text-anchor="middle" class="box-title">Obsidian Vault</text>
-  <text x="745" y="629" text-anchor="middle" class="box-copy">push-view / pull-view adapter</text>
+  <!-- Core horizontal flow -->
+  <path d="M 290 406 H 340" fill="none" stroke="#2e7d32" stroke-width="3" marker-end="url(#arrow-green)"/>
+  <path d="M 610 406 H 660" fill="none" stroke="#f57f17" stroke-width="2"/>
 
-  <rect x="850" y="585" width="90" height="62" rx="16" fill="#f8bbd0" stroke="#ad1457" stroke-width="2" stroke-dasharray="7 5"/>
-  <text x="895" y="611" text-anchor="middle" class="box-title">Other</text>
-  <text x="895" y="629" text-anchor="middle" class="box-copy">Phase 2+</text>
+  <!-- Extensions connector -->
+  <path d="M 200 452 V 440 H 245 V 432" fill="none" stroke="#5e35b1" stroke-width="2" marker-end="url(#arrow-blue)"/>
 
-  <rect x="650" y="648" width="290" height="22" rx="11" fill="#fff3f7" stroke="#d88ead"/>
-  <text x="795" y="663" text-anchor="middle" class="small">view-layer 派生产物，非 authority source of truth</text>
+  <!-- Core → Authority/Workspace -->
+  <path d="M 475 432 V 530 H 180" fill="none" stroke="#e65100" stroke-width="2.5"/>
+  <path d="M 475 432 V 530" fill="none" stroke="#e65100" stroke-width="2.5" marker-end="url(#arrow-orange)"/>
 
-  <rect x="344" y="548" width="238" height="22" rx="11" fill="#fff8ee" stroke="#efbf92"/>
-  <text x="463" y="563" text-anchor="middle" class="small">compile_update 到此为止: 只写内部 authority / workspace 状态</text>
+  <!-- Core → External Views (sync boundary) -->
+  <path d="M 475 432 V 472 H 745 V 530" fill="none" stroke="#880e4f" stroke-width="2.5" stroke-dasharray="8 6" marker-end="url(#arrow-pink)"/>
+  <text x="610" y="468" class="label">explicit sync boundary</text>
 
-  <text x="80" y="548" class="label">extension surface above shared core</text>
+  <!-- Obsidian → Other -->
+  <path d="M 840 565 H 850" fill="none" stroke="#880e4f" stroke-width="2" stroke-dasharray="7 5"/>
 
-  <text x="508" y="512" class="label">secondary operator transports</text>
-  <text x="710" y="512" class="label">explicit sync boundary</text>
+  <!-- ======== AUTHORITY / WORKSPACE ======== -->
+  <rect x="40" y="530" width="560" height="135" rx="18" fill="#fff3e0" stroke="#e65100" stroke-width="2"/>
+  <text x="58" y="556" class="section">AUTHORITY / WORKSPACE</text>
 
-  <path d="M 265 198 V 248 H 250 V 300" fill="none" stroke="#7b1fa2" stroke-width="3"/>
-  <path d="M 810 198 V 248 H 595 V 300" fill="none" stroke="#c62828" stroke-width="2"/>
-  <path d="M 810 198 V 248 H 815 V 300" fill="none" stroke="#c62828" stroke-width="2"/>
+  <!-- compile_update annotation — now inside the section header area -->
+  <rect x="280" y="540" width="300" height="20" rx="10" fill="#fff8ee" stroke="#efbf92"/>
+  <text x="430" y="554" text-anchor="middle" class="small">compile_update 到此为止: 只写内部 authority / workspace 状态</text>
 
-  <path d="M 250 400 V 430" fill="none" stroke="#0277bd" stroke-width="3" marker-end="url(#arrow-blue)"/>
-  <path d="M 595 342 V 410 H 180 V 430" fill="none" stroke="#0277bd" stroke-width="2"/>
-  <path d="M 815 342 V 410 H 180 V 430" fill="none" stroke="#0277bd" stroke-width="2"/>
+  <rect x="70" y="572" width="220" height="72" rx="16" fill="#ffcc80" stroke="#e65100" stroke-width="2"/>
+  <text x="180" y="603" text-anchor="middle" class="box-title">Git Authority</text>
+  <text x="180" y="622" text-anchor="middle" class="box-copy">pages · MANIFEST.jsonl ·</text>
+  <text x="180" y="636" text-anchor="middle" class="box-copy">retrieval_index.jsonl</text>
 
-  <path d="M 290 456 H 340" fill="none" stroke="#2e7d32" stroke-width="3" marker-end="url(#arrow-green)"/>
-  <path d="M 610 456 H 660" fill="none" stroke="#f57f17" stroke-width="2"/>
+  <rect x="350" y="572" width="220" height="72" rx="16" fill="#ffe0b2" stroke="#bf360c" stroke-width="2"/>
+  <text x="460" y="603" text-anchor="middle" class="box-title">Local Workspace / Runtime</text>
+  <text x="460" y="622" text-anchor="middle" class="box-copy">.agent-wiki pending state ·</text>
+  <text x="460" y="636" text-anchor="middle" class="box-copy">staging · local indexes</text>
 
-  <path d="M 475 482 V 585 H 180" fill="none" stroke="#e65100" stroke-width="2.5"/>
-  <path d="M 475 482 V 585" fill="none" stroke="#e65100" stroke-width="2.5" marker-end="url(#arrow-orange)"/>
-  <path d="M 475 482 V 525 H 745 V 585" fill="none" stroke="#880e4f" stroke-width="2.5" stroke-dasharray="8 6" marker-end="url(#arrow-pink)"/>
-  <path d="M 840 616 H 850" fill="none" stroke="#880e4f" stroke-width="2" stroke-dasharray="7 5"/>
+  <!-- ======== EXTERNAL VIEWS ======== -->
+  <rect x="620" y="530" width="340" height="135" rx="18" fill="#fce4ec" stroke="#880e4f" stroke-width="2"/>
+  <text x="638" y="556" class="section">EXTERNAL VIEWS</text>
 
-  <rect x="60" y="688" width="180" height="16" rx="8" fill="#f3e5f5" stroke="none"/>
-  <text x="72" y="700" class="legend">紫: agent / registry sharing</text>
-  <rect x="250" y="688" width="180" height="16" rx="8" fill="#e1f5fe" stroke="none"/>
-  <text x="262" y="700" class="legend">蓝: transport</text>
-  <rect x="440" y="688" width="180" height="16" rx="8" fill="#e8f5e9" stroke="none"/>
-  <text x="452" y="700" class="legend">绿: shared core</text>
-  <rect x="630" y="688" width="160" height="16" rx="8" fill="#d1c4e9" stroke="none"/>
-  <text x="642" y="700" class="legend">紫: extension APIs</text>
-  <rect x="800" y="688" width="150" height="16" rx="8" fill="#fff3e0" stroke="none"/>
-  <text x="812" y="700" class="legend">橙: authority / workspace</text>
+  <rect x="650" y="572" width="190" height="58" rx="16" fill="#f48fb1" stroke="#880e4f" stroke-width="2"/>
+  <text x="745" y="597" text-anchor="middle" class="box-title">Obsidian Vault</text>
+  <text x="745" y="615" text-anchor="middle" class="box-copy">push-view / pull-view adapter</text>
+
+  <rect x="850" y="572" width="90" height="58" rx="16" fill="#f8bbd0" stroke="#ad1457" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="895" y="597" text-anchor="middle" class="box-title">Other</text>
+  <text x="895" y="615" text-anchor="middle" class="box-copy">Phase 2+</text>
+
+  <!-- View note -->
+  <rect x="650" y="638" width="290" height="20" rx="10" fill="#fff3f7" stroke="#d88ead"/>
+  <text x="795" y="652" text-anchor="middle" class="small">view-layer 派生产物，非 authority source of truth</text>
+
+  <!-- ======== Legend — fixed duplicate purple ======== -->
+  <rect x="60" y="680" width="170" height="16" rx="8" fill="#f3e5f5" stroke="none"/>
+  <text x="72" y="692" class="legend">紫: agent / registry</text>
+  <rect x="240" y="680" width="140" height="16" rx="8" fill="#e1f5fe" stroke="none"/>
+  <text x="252" y="692" class="legend">蓝: transport</text>
+  <rect x="390" y="680" width="150" height="16" rx="8" fill="#e8f5e9" stroke="none"/>
+  <text x="402" y="692" class="legend">绿: shared core</text>
+  <rect x="550" y="680" width="150" height="16" rx="8" fill="#d1c4e9" stroke="none"/>
+  <text x="562" y="692" class="legend">靛: extension APIs</text>
+  <rect x="710" y="680" width="170" height="16" rx="8" fill="#fff3e0" stroke="none"/>
+  <text x="722" y="692" class="legend">橙: authority / workspace</text>
 </svg>

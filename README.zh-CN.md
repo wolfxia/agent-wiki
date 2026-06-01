@@ -14,7 +14,7 @@ Agent Wiki 是面向长生命周期 AI 记忆的 Agent 无关知识系统。它�
 
 ### 系统架构
 
-![v0.4 系统架构](docs/architecture/v0.4-system-overview.svg)
+![系统架构](docs/architecture/system-overview.svg)
 
 ### 编译管道与自进化循环
 
