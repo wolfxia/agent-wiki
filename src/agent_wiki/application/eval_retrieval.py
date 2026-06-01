@@ -59,6 +59,7 @@ class EvalRetrievalService:
                 actor=actor,
                 data=QueryInput(query=item.query, page_types=page_types),
                 write_outcome=False,
+                write_side_effects=False,
             )
             latency_ms = round(max(time.monotonic() - start, 0.0) * 1000, 3)
             latencies.append(latency_ms)

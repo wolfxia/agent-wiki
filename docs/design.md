@@ -1,8 +1,8 @@
 # Agent-Wiki Architecture Design
 
 > Universal Knowledge System for Multi-Agent Environments  
-> v0.4.0 — 2026-05-19  
-> Status: Design baseline aligned against the current Phase 1 + v0.4 implementation, including real FastMCP transport, shared access policy, explicit Obsidian push-view, compile quality gate, diagnosis engine, runtime tuning, and controlled self-evolution
+> v0.5.0 — 2026-06-01  
+> Status: Design baseline aligned against the current Phase 1 + v0.5 implementation, including real FastMCP transport, shared access policy, explicit Obsidian push-view, compile quality gate, diagnosis engine, runtime tuning, controlled self-evolution, and public extension APIs
 
 > Authority note: `docs/specs/knowledge-system-architecture.md` is the authoritative end-state architecture spec. This document must distinguish current baseline from target design explicitly.
 
@@ -86,6 +86,16 @@ The current runtime now exposes a real FastMCP stdio server and workflow-complet
 - a six-tool MCP surface: `wiki.query`, `wiki.capture_raw`, `wiki.compile_prepare`, `wiki.compile_update`, `wiki.lint`, `wiki.sync`
 - workflow-complete CLI and REST surfaces over the same shared core
 - explicit `sync` separation so `compile_update` still writes only internal authority/workspace state
+
+### Phase 1 extension baseline
+
+The current v0.5 baseline adds a stable downstream extension surface under `agent_wiki.extensions`:
+
+- custom MCP tools can be registered at server construction time and still flow through the same identity and permission checks as built-in tools
+- page types are registry-backed governed strings, with the four built-ins retained for compatibility
+- embedding providers are selected through a factory rather than a hardcoded SiliconFlow branch, with built-in support for SiliconFlow, OpenAI-compatible APIs, and Azure OpenAI
+
+This extension surface exists so pip consumers such as `knowledge-agent` can depend on `agent-wiki` without importing private transport or infrastructure internals.
 
 ---
 
@@ -273,6 +283,16 @@ The architecture still assumes phased gates A/B/C/D.
 ### Design note
 
 Keep the gate model in the design docs. The current code should be read as a baseline that matches the direction of A/B/C separation without yet implementing the full gate engine.
+
+### Extension governance
+
+Extension points inherit the same transport, identity, permission, and gate rules as core services:
+
+- custom MCP tools are invoked through the dispatcher, not by bypassing it
+- custom page types must be registered before a registry references them
+- `compile_update` stays at least B-level even if a custom page type declares a lower default gate
+- C-level operations such as principle promotion remain C-level regardless of page type metadata
+- embedding providers are selected from the registry, but the retrieval layer only depends on the `EmbeddingProvider` protocol
 
 ---
 

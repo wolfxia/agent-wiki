@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-wiki"
-version = "0.2.0"
+version = "0.5.0"
 description = "Agent Wiki Phase 1 core"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -1,9 +1,9 @@
 # Agent Wiki Knowledge System Architecture
 
-- Status: Authoritative architecture spec for Step 1
-- Date: 2026-05-17
+- Status: Authoritative architecture spec for Step 1, updated for v0.5.0 extension APIs
+- Date: 2026-06-01
 - Supersedes: `docs/specs/retrieval-architecture.md`
-- Scope: Unified end-state architecture for knowledge intake, compilation, retrieval, maintenance, and documentation discipline
+- Scope: Unified end-state architecture for knowledge intake, compilation, retrieval, maintenance, extension APIs, and documentation discipline
 - Baseline sources: `README.md`, `core/schema.md`, `docs/design.md`, `docs/requirements-and-architecture.md`, `src/agent_wiki/domain/contracts.py`, `src/agent_wiki/domain/models.py`, `src/agent_wiki/application/*`, `src/agent_wiki/infrastructure/*`
 
 ## 1. First Principles
@@ -67,6 +67,8 @@ The architecture must remain valid at approximately:
 - `atom`: smallest reusable compiled knowledge unit and default retrieval target
 - `synthesis`: topic-level or cluster-level compiled conclusions across multiple atoms and raw sources
 - `principle`: higher-stability guidance and high-risk governance knowledge
+
+The built-in classes are compatibility defaults, not the complete taxonomy boundary. Runtime page type registration supports additional governed types such as `document` and `slide_deck`, but a registered type still has to pass wiki config, actor permission, and gate checks before a write can commit.
 
 ### 2.3 Supporting authority artifacts
 
@@ -305,6 +307,16 @@ End-state query behavior requires:
 - evidence-preserving L2/L3 layers
 - caveat propagation for low confidence, disputed state, and pending state
 - gap signaling when compilation or metadata quality is insufficient
+
+### 6.5 Extension surface
+
+`agent_wiki.extensions` is the supported public API surface for pip consumers. It exposes three extension points:
+
+- MCP tool registration via `MCPToolSpec` and `MCPToolContext`.
+- Page type registration via `register_page_type()` and `PageTypeDefinition`.
+- Embedding provider registration and factory selection via `EmbeddingProvider`, `register_embedding_provider()`, and `create_embedding_provider()`.
+
+The retrieval layer consumes the embedding provider protocol rather than a concrete SDK class. Custom providers can be registered without changing `RetrievalRouter` internals, and custom MCP tools run through the same identity and permission path as built-in tools.
 
 ## 7. Maintenance and Repair Loop
 

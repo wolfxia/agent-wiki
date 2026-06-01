@@ -844,6 +844,78 @@ def test_compile_execute_apply_next_persists_structured_metadata(temp_wiki_root:
         assert section in page_text
 
 
+def test_compile_execute_apply_next_derives_aliases_from_links_when_missing(temp_wiki_root: Path) -> None:
+    wiki, actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-derived-alias")
+
+    class StructuredApplyService:
+        last_attempts = 1
+        last_usage = None
+        last_structured_output = None
+
+        def generate(self, wiki, prepare):
+            self.last_structured_output = CompileStructuredOutput(
+                content="# Structured Apply\n\n## Claims\n- raw-service-execute-0\n- raw-service-execute-1\n- raw-service-execute-2\n\n## Evidence\n- structured metadata persists.",
+                summary="Structured metadata summary.",
+                aliases=[],
+                confidence="high",
+                wikilinks=["[[metadata-neighbor]]"],
+                relationship_hints=[{"source_doc": "raw-service-execute-0", "target_concept": "protocol-sidecar", "hint_type": "same_cluster"}],
+                open_questions=[],
+                evidence_coverage="Three source refs covered.",
+            )
+            return self.last_structured_output.content
+
+    result = CompileExecuteService(apply_service=StructuredApplyService()).apply_next(
+        wiki=wiki,
+        actor=actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )[0]
+
+    manifest_entry = next(
+        entry for entry in (temp_wiki_root / "MANIFEST.jsonl").read_text(encoding="utf-8").splitlines()
+        if json.loads(entry).get("doc_id") == result.doc_id
+    )
+    stored = json.loads(manifest_entry)
+    assert stored["aliases"] == ["metadata-neighbor", "protocol-sidecar"]
+
+
+def test_compile_execute_apply_next_derives_aliases_from_summary_when_all_metadata_missing(temp_wiki_root: Path) -> None:
+    wiki, actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-summary-alias")
+
+    class StructuredApplyService:
+        last_attempts = 1
+        last_usage = None
+        last_structured_output = None
+
+        def generate(self, wiki, prepare):
+            self.last_structured_output = CompileStructuredOutput(
+                content="# Structured Apply\n\n## Claims\n- raw-service-execute-0\n- raw-service-execute-1\n- raw-service-execute-2\n\n## Evidence\n- structured metadata persists.",
+                summary="Agent OS combines App Intents, OpenInference-based observability, and Hybrid Loop execution architecture.",
+                aliases=[],
+                confidence="high",
+                wikilinks=[],
+                relationship_hints=[],
+                open_questions=[],
+                evidence_coverage="Three source refs covered.",
+            )
+            return self.last_structured_output.content
+
+    result = CompileExecuteService(apply_service=StructuredApplyService()).apply_next(
+        wiki=wiki,
+        actor=actor,
+        data=CompileExecuteInput(limit=1, priority_filter="P0"),
+    )[0]
+
+    manifest_entry = next(
+        entry for entry in (temp_wiki_root / "MANIFEST.jsonl").read_text(encoding="utf-8").splitlines()
+        if json.loads(entry).get("doc_id") == result.doc_id
+    )
+    stored = json.loads(manifest_entry)
+    assert "App Intents" in stored["aliases"]
+    assert "OpenInference" in stored["aliases"]
+    assert "Hybrid Loop" in stored["aliases"]
+
+
 def test_compile_execute_apply_next_records_token_usage_when_available(temp_wiki_root: Path) -> None:
     wiki, actor = _seed_cluster(temp_wiki_root, problem_cluster="cluster-token-usage")
 

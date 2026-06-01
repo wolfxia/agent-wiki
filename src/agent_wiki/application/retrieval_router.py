@@ -4,7 +4,8 @@ from pathlib import Path
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import RetrievalHit
-from agent_wiki.infrastructure.retrieval.embedding import SiliconFlowEmbeddingProvider
+from agent_wiki.extensions import create_embedding_provider
+from agent_wiki.infrastructure.retrieval import embedding as _embedding_providers
 from agent_wiki.infrastructure.retrieval.knowledge_graph import KnowledgeGraphRetrievalProvider
 from agent_wiki.infrastructure.retrieval.retrieval_index import LexicalRetrievalProvider, RetrievalIndexRepository
 from agent_wiki.infrastructure.retrieval.sqlite_fts import SQLiteFTSIndexProvider
@@ -159,16 +160,7 @@ class RetrievalRouter:
         if "embedding" not in set(wiki.retrieval.optional_providers or []):
             return None
         config = wiki.retrieval.embedding
-        if config.provider != "siliconflow":
-            return None
-        return SiliconFlowEmbeddingProvider(
-            base_url=config.base_url,
-            api_key_env=config.api_key_env,
-            model=config.model,
-            dimension=config.dimension,
-            batch_size=config.batch_size,
-            timeout_seconds=config.timeout_seconds,
-        )
+        return create_embedding_provider(config.provider, config)
 
     def _build_vector_index(self, wiki_root: Path, wiki_id: str, wiki: WikiConfig | None):
         if wiki is None or wiki.retrieval.embedding is None:

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
@@ -155,3 +156,58 @@ def test_query_defaults_to_internal_sensitivity_and_excludes_confidential(temp_w
     doc_ids = [hit.doc_id for hit in result.hits]
     assert "atom-sens-default-public" in doc_ids
     assert "atom-sens-default-conf" not in doc_ids
+
+
+def test_query_tolerates_invalid_manifest_sensitivity_values(temp_wiki_root: Path) -> None:
+    from agent_wiki.application.query import QueryInput, QueryService
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-sens-invalid-1",
+            topic="secrets",
+            problem_cluster="cluster-invalid",
+            content="# Raw invalid sensitivity",
+            source_refs=[],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-sens-invalid-1",
+            page_type="atom",
+            topic="secrets",
+            problem_cluster="cluster-invalid",
+            content="# Invalid sensitivity\n\nLegacy sensitivity should not crash query.",
+            source_refs=["personal-1:raw-sens-invalid-1"],
+            sensitivity="public",
+        ),
+    )
+
+    manifest_path = temp_wiki_root / "MANIFEST.jsonl"
+    manifest_entries = [
+        json.loads(line)
+        for line in manifest_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    for entry in manifest_entries:
+        if entry.get("doc_id") == "atom-sens-invalid-1":
+            entry["sensitivity"] = "normal"
+    manifest_path.write_text(
+        "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in manifest_entries),
+        encoding="utf-8",
+    )
+
+    result = QueryService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=QueryInput(query="legacy sensitivity"),
+    )
+
+    assert "atom-sens-invalid-1" in [hit.doc_id for hit in result.hits]

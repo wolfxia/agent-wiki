@@ -76,6 +76,64 @@ def test_eval_retrieval_reports_quality_metrics_without_logging_queries(temp_wik
     assert not (temp_wiki_root / "query_outcomes.jsonl").exists()
 
 
+def test_eval_retrieval_does_not_enqueue_ambiguous_claim_reviews(temp_wiki_root: Path, tmp_path: Path) -> None:
+    from agent_wiki.infrastructure.runtime.claim_annotations import ClaimAnnotationRepository
+
+    wiki = _wiki(temp_wiki_root)
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-eval-ambiguous-1",
+            topic="quality",
+            problem_cluster="claims",
+            content="# Raw ambiguous eval\n\nquality claims conflict",
+            source_refs=[],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-eval-ambiguous-1",
+            page_type="atom",
+            topic="quality",
+            problem_cluster="claims",
+            summary="Ambiguous eval atom.",
+            content="# Atom ambiguous eval\n\nquality claims conflict",
+            source_refs=["personal-1:raw-eval-ambiguous-1"],
+        ),
+    )
+    ClaimAnnotationRepository(temp_wiki_root).upsert({
+        "doc_id": "atom-eval-ambiguous-1",
+        "annotation_method": "rule",
+        "claims": [
+            {"text": "Evidence is conflicting.", "confidence_label": "AMBIGUOUS", "evidence_refs": []}
+        ],
+    })
+    eval_file = tmp_path / "retrieval_queries.jsonl"
+    eval_file.write_text(
+        json.dumps(
+            {
+                "query": "quality claims conflict",
+                "query_type": "fact",
+                "expected_doc_ids": ["atom-eval-ambiguous-1"],
+                "acceptable_doc_ids": [],
+                "must_not_doc_ids": [],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = EvalRetrievalService().run(wiki=wiki, actor=actor, eval_file=eval_file, k=5)
+
+    assert report["metrics"]["strict_recall_at_k"] == 1.0
+    assert not (temp_wiki_root / "review_queue.jsonl").exists()
+
+
 def test_eval_retrieval_passes_page_type_filter_to_query_service(temp_wiki_root: Path, tmp_path: Path) -> None:
     wiki = _wiki(temp_wiki_root)
     actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")

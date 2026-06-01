@@ -348,6 +348,7 @@ class CompileExecuteService:
         generated: GeneratedCompilePacket | None,
     ) -> CompileGeneratedInput:
         structured = generated.structured_output if generated else None
+        aliases = self._normalized_aliases(structured)
         return CompileGeneratedInput(
             item_id=packet.item_id,
             doc_id=packet.prepare.proposed_doc_id,
@@ -357,7 +358,7 @@ class CompileExecuteService:
             content=generated.content if generated else "",
             source_refs=packet.prepare.source_refs,
             summary=structured.summary if structured else None,
-            aliases=structured.aliases if structured else [],
+            aliases=aliases,
             confidence=structured.confidence if structured else None,
             wikilinks=structured.wikilinks if structured else [],
             claims=structured.claims if structured else [],
@@ -365,6 +366,81 @@ class CompileExecuteService:
             open_questions=structured.open_questions if structured else [],
             evidence_coverage=structured.evidence_coverage if structured else None,
         )
+
+    def _normalized_aliases(self, structured: CompileStructuredOutput | None) -> list[str]:
+        if structured is None:
+            return []
+        aliases: list[str] = []
+        seen: set[str] = set()
+
+        def add(value: str) -> None:
+            normalized = str(value).strip()
+            if normalized.startswith("[[") and normalized.endswith("]]"):
+                normalized = normalized[2:-2].strip()
+            if not normalized:
+                return
+            key = normalized.lower()
+            if key in seen:
+                return
+            seen.add(key)
+            aliases.append(normalized)
+
+        for alias in structured.aliases:
+            add(alias)
+        if aliases:
+            return aliases
+        for link in structured.wikilinks:
+            add(link)
+        for hint in structured.relationship_hints:
+            add(hint.target_concept)
+        if aliases:
+            return aliases
+        for alias in self._aliases_from_summary(structured.summary):
+            add(alias)
+        return aliases
+
+    def _aliases_from_summary(self, summary: str | None) -> list[str]:
+        if not summary:
+            return []
+
+        aliases: list[str] = []
+        seen: set[str] = set()
+
+        def capture(value: str) -> None:
+            normalized = value.strip(" ,.;:()[]{}")
+            if len(normalized) < 3:
+                return
+            key = normalized.lower()
+            if key in seen:
+                return
+            seen.add(key)
+            aliases.append(normalized)
+            if "-" in normalized:
+                head, tail = normalized.split("-", 1)
+                if (
+                    len(head) >= 3
+                    and tail.islower()
+                    and re.fullmatch(r"(?:[A-Z]{2,}\d*|[A-Z][a-z0-9]+[A-Z][A-Za-z0-9]*)", head)
+                ):
+                    head_key = head.lower()
+                    if head_key not in seen:
+                        seen.add(head_key)
+                        aliases.append(head)
+
+        phrase_pattern = re.compile(
+            r"\b(?:[A-Z][A-Za-z0-9]*(?:[-/][A-Za-z0-9]+)*|[A-Z]{2,}\d*(?:[-/][A-Za-z0-9]+)*)"
+            r"(?:\s+(?:[A-Z][A-Za-z0-9]*(?:[-/][A-Za-z0-9]+)*|[A-Z]{2,}\d*(?:[-/][A-Za-z0-9]+)*)){1,2}\b"
+        )
+        token_pattern = re.compile(
+            r"\b(?:[A-Z]{2,}\d*(?:[-/][A-Za-z0-9]+)*|[A-Z][a-z0-9]+[A-Z][A-Za-z0-9]*"
+            r"(?:[-/][A-Za-z0-9]+)*)\b"
+        )
+
+        for match in phrase_pattern.finditer(summary):
+            capture(match.group(0))
+        for match in token_pattern.finditer(summary):
+            capture(match.group(0))
+        return aliases[:6]
 
     def apply_generated(
         self,

@@ -4,6 +4,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from collections import Counter, defaultdict
 import re
+import yaml
 
 from agent_wiki.application.claim_annotations import ClaimAnnotationService
 from agent_wiki.application.compile_suggest import CompileSuggestService
@@ -14,9 +15,11 @@ from agent_wiki.application.relations import RelationsService
 from agent_wiki.application.runtime_tuning import RuntimeTuningService
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
+from agent_wiki.domain.enums import Sensitivity
 from agent_wiki.infrastructure.repair.raw_metadata_repair import RawMetadataRepairService
 from agent_wiki.infrastructure.retrieval.knowledge_graph import KnowledgeGraphRepository
 from agent_wiki.infrastructure.retrieval.embedding import SiliconFlowEmbeddingProvider
+from agent_wiki.infrastructure.retrieval.index_consistency import IndexConsistencyChecker
 from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRepository
 from agent_wiki.infrastructure.retrieval.sqlite_fts import SQLiteFTSIndexProvider
 from agent_wiki.infrastructure.retrieval.topic_index import TopicIndexRepository
@@ -144,6 +147,11 @@ class MaintenanceService:
         queue_timeouts_recovered = ReviewQueueRepository(wiki_root).recover_assigned_timeouts()
         repair_summary = RawMetadataRepairService().repair(wiki)
         orphan_cleanup_count = self._clean_orphan_authority_entries(wiki)
+        compiled_metadata_repairs = self._repair_compiled_metadata_from_page_frontmatter(wiki_root)
+        index_rebuild = self._repair_runtime_indexes_if_needed(
+            wiki,
+            force_rebuild=compiled_metadata_repairs > 0,
+        )
         compile_candidates = CompileSuggestService().detect_and_enqueue(wiki)
         quality_signals = FastFeedbackService().detect_and_enqueue(wiki)
         graph_repository = KnowledgeGraphRepository(wiki_root, wiki_id=wiki.wiki_id)
@@ -184,6 +192,8 @@ class MaintenanceService:
             "metadata_repair_candidates": total_repair_candidates,
             "orphan_cleanup_count": orphan_cleanup_count,
             "queue_timeouts_recovered": queue_timeouts_recovered,
+            "compiled_metadata_repairs": compiled_metadata_repairs,
+            "index_rebuild": index_rebuild,
             "compile_suggestions": len(compile_suggestions),
             "typed_relations": typed_relations,
             "relation_reviews": relation_reviews,
@@ -211,6 +221,113 @@ class MaintenanceService:
         else:
             summary["auto_tune"] = {"status": "disabled"}
         return summary
+
+    def _repair_runtime_indexes_if_needed(self, wiki: WikiConfig, force_rebuild: bool = False) -> dict:
+        wiki_root = Path(wiki.workspace_path)
+        issues = IndexConsistencyChecker().check(wiki_root)
+        actionable = [
+            issue for issue in issues
+            if issue.startswith("retrieval index missing manifest entry:")
+            or issue.startswith("retrieval index entry without manifest entry:")
+            or issue.startswith("fts index missing manifest entry:")
+            or issue.startswith("fts index entry without manifest entry:")
+        ]
+        if force_rebuild and not actionable:
+            rebuilt = self.rebuild_index(wiki, include_embedding=False)
+            return {
+                **rebuilt,
+                "reason": "compiled_metadata_repair",
+                "issues_detected": 0,
+            }
+        if not actionable:
+            return {"rebuilt_count": 0, "removed_count": 0, "embedded_count": 0, "reason": None}
+        rebuilt = self.rebuild_index(wiki, include_embedding=False)
+        return {
+            **rebuilt,
+            "reason": "index_inconsistency",
+            "issues_detected": len(actionable),
+        }
+
+    def _repair_compiled_metadata_from_page_frontmatter(self, wiki_root: Path) -> int:
+        manifest = ManifestRepository(wiki_root)
+        repairs: list[dict] = []
+        for entry in manifest.read_all():
+            if str(entry.get("page_type") or "") not in {"atom", "synthesis", "principle"}:
+                continue
+            if self._compiled_metadata_present(entry):
+                continue
+            frontmatter = self._page_frontmatter(wiki_root, entry)
+            if not frontmatter:
+                continue
+            patch = self._compiled_metadata_patch(entry, frontmatter)
+            if patch:
+                repairs.append({"doc_id": entry.get("doc_id"), **patch})
+        manifest.batch_upsert(repairs)
+        return len(repairs)
+
+    def _compiled_metadata_present(self, entry: dict) -> bool:
+        return bool(entry.get("aliases")) and bool(entry.get("confidence")) and bool(entry.get("wikilinks")) and bool(entry.get("sensitivity"))
+
+    def _compiled_metadata_patch(self, entry: dict, frontmatter: dict) -> dict:
+        patch: dict[str, object] = {}
+        aliases = entry.get("aliases")
+        if not aliases:
+            frontmatter_aliases = self._frontmatter_list(frontmatter.get("aliases"))
+            if frontmatter_aliases:
+                patch["aliases"] = frontmatter_aliases
+        confidence = str(entry.get("confidence") or "").strip()
+        if not confidence:
+            frontmatter_confidence = str(frontmatter.get("confidence") or "").strip()
+            if frontmatter_confidence:
+                patch["confidence"] = frontmatter_confidence
+        wikilinks = entry.get("wikilinks")
+        if not wikilinks:
+            frontmatter_wikilinks = self._frontmatter_list(frontmatter.get("wikilinks"))
+            if frontmatter_wikilinks:
+                patch["wikilinks"] = frontmatter_wikilinks
+        sensitivity = str(entry.get("sensitivity") or "").strip()
+        if not sensitivity:
+            frontmatter_sensitivity = self._normalize_sensitivity(frontmatter.get("sensitivity"))
+            if frontmatter_sensitivity:
+                patch["sensitivity"] = frontmatter_sensitivity
+        return patch
+
+    def _page_frontmatter(self, wiki_root: Path, entry: dict) -> dict:
+        canonical_uri = entry.get("canonical_uri")
+        if not canonical_uri:
+            return {}
+        page_path = wiki_root / str(canonical_uri)
+        if not page_path.exists() or not page_path.is_file():
+            return {}
+        content = page_path.read_text(encoding="utf-8")
+        match = re.match(r"^---\n(.*?)\n---\n?", content, flags=re.DOTALL)
+        if match is None:
+            return {}
+        try:
+            frontmatter = yaml.safe_load(match.group(1)) or {}
+        except yaml.YAMLError:
+            return {}
+        return frontmatter if isinstance(frontmatter, dict) else {}
+
+    def _frontmatter_list(self, value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        normalized: list[str] = []
+        for item in value:
+            text = str(item).strip()
+            if text:
+                normalized.append(text)
+        return normalized
+
+    def _normalize_sensitivity(self, value: object) -> str | None:
+        normalized = str(value or "").strip().lower()
+        if not normalized:
+            return None
+        if normalized == "normal":
+            return Sensitivity.INTERNAL.value
+        if normalized in {member.value for member in Sensitivity}:
+            return normalized
+        return None
 
     def _clean_orphan_authority_entries(self, wiki: WikiConfig) -> int:
         wiki_root = Path(wiki.workspace_path)
@@ -259,8 +376,7 @@ class MaintenanceService:
             summary["eval_baseline"] = report
 
     def _run_eval_report_if_available(self, wiki: WikiConfig) -> dict | None:
-        wiki_root = Path(wiki.workspace_path)
-        eval_file = wiki_root / "eval" / "retrieval_queries.jsonl"
+        eval_file = self._resolve_eval_file(wiki)
         if not eval_file.exists():
             return None
         actor = ResolvedActor(actor_type="agent", actor_id="system-maintenance", transport="maintenance")
@@ -277,6 +393,14 @@ class MaintenanceService:
                 return future.result(timeout=_MAINTAIN_EVAL_TIMEOUT_SECONDS)
             except FuturesTimeoutError:
                 raise
+
+    def _resolve_eval_file(self, wiki: WikiConfig) -> Path:
+        wiki_root = Path(wiki.workspace_path)
+        workspace_eval = wiki_root / "eval" / "retrieval_queries.jsonl"
+        if workspace_eval.exists():
+            return workspace_eval
+        repo_eval = Path(__file__).resolve().parents[3] / "eval" / "retrieval_queries.jsonl"
+        return repo_eval
 
     def _detect_duplicate_atom_warnings(self, wiki: WikiConfig) -> int:
         wiki_root = Path(wiki.workspace_path)
@@ -506,6 +630,10 @@ class MaintenanceService:
                 continue
             for doc_id in entry.get("accepted_doc_ids") or []:
                 doc_id = str(doc_id)
+                if doc_id in atom_doc_ids:
+                    referenced_atoms.add(doc_id)
+            for item in entry.get("score_breakdown") or []:
+                doc_id = str(item.get("doc_id") or "")
                 if doc_id in atom_doc_ids:
                     referenced_atoms.add(doc_id)
         atom_reference_rate = round(len(referenced_atoms) / len(atom_doc_ids), 3) if atom_doc_ids else 0.0
