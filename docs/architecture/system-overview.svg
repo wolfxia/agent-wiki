@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="720" viewBox="0 0 1000 720" role="img" aria-labelledby="title desc">
   <title id="title">Agent-Wiki 系统架构总览</title>
-  <desc id="desc">System overview showing clients, aw-agent service process, authority storage, and explicit Obsidian sync boundary.</desc>
+  <desc id="desc">System overview showing clients, aw-agent service process, public extension APIs, authority storage, and explicit Obsidian sync boundary.</desc>
   <defs>
     <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#0277bd"/>
@@ -29,7 +29,7 @@
 
   <rect x="18" y="18" width="964" height="684" rx="20" fill="#ffffff" stroke="#d7dee8"/>
   <text x="500" y="56" text-anchor="middle" class="title">Agent-Wiki 系统架构总览</text>
-  <text x="500" y="80" text-anchor="middle" class="subtitle">保持 Git authority → local workspace/runtime → external views，不把 compile_update 与外部 sync 耦合。</text>
+  <text x="500" y="80" text-anchor="middle" class="subtitle">保持 Git authority → local workspace/runtime → external views，并把 MCP 扩展、page type 注册、embedding provider 工厂放在共享核心之上。</text>
 
   <rect x="40" y="110" width="920" height="110" rx="18" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="2"/>
   <text x="58" y="136" class="section">CLIENTS</text>
@@ -49,7 +49,7 @@
   <text x="250" y="330" text-anchor="middle" class="box-title">FastMCP stdio host</text>
   <text x="250" y="352" text-anchor="middle" class="box-copy">主入口: aw serve · 别名: aw-agent</text>
   <text x="250" y="370" text-anchor="middle" class="box-copy">server name: agent-wiki</text>
-  <text x="250" y="388" text-anchor="middle" class="box-copy">tools: wiki.query · capture_raw · compile_update · lint · sync</text>
+  <text x="250" y="388" text-anchor="middle" class="box-copy">tools: wiki.query · capture_raw · compile_update · lint · sync · extra_tools</text>
 
   <rect x="520" y="300" width="150" height="42" rx="12" fill="#e1f5fe" stroke="#0277bd" stroke-width="2"/>
   <text x="595" y="326" text-anchor="middle" class="box-title">CLI · aw</text>
@@ -67,6 +67,12 @@
   <rect x="660" y="430" width="250" height="52" rx="14" fill="#fff9c4" stroke="#f57f17" stroke-width="2"/>
   <text x="785" y="460" text-anchor="middle" class="box-title">Identity / Permission / Gate</text>
   <text x="785" y="476" text-anchor="middle" class="small">actor resolution · page type · operation · A/B/C max_gate</text>
+
+  <rect x="70" y="500" width="250" height="34" rx="12" fill="#d1c4e9" stroke="#5e35b1" stroke-width="2"/>
+  <text x="195" y="521" text-anchor="middle" class="box-title">agent_wiki.extensions</text>
+  <text x="195" y="537" text-anchor="middle" class="small">MCP tools · page types · embedding providers</text>
+
+  <path d="M 195 500 V 484 H 250" fill="none" stroke="#5e35b1" stroke-width="2" marker-end="url(#arrow-blue)"/>
 
   <rect x="40" y="540" width="560" height="140" rx="18" fill="#fff3e0" stroke="#e65100" stroke-width="2"/>
   <text x="58" y="566" class="section">AUTHORITY / WORKSPACE</text>
@@ -91,10 +97,12 @@
   <text x="895" y="629" text-anchor="middle" class="box-copy">Phase 2+</text>
 
   <rect x="650" y="648" width="290" height="22" rx="11" fill="#fff3f7" stroke="#d88ead"/>
-  <text x="795" y="663" text-anchor="middle" class="small">04-知识图谱/知识图谱索引.md 为 view-layer 派生产物</text>
+  <text x="795" y="663" text-anchor="middle" class="small">view-layer 派生产物，非 authority source of truth</text>
 
   <rect x="344" y="548" width="238" height="22" rx="11" fill="#fff8ee" stroke="#efbf92"/>
   <text x="463" y="563" text-anchor="middle" class="small">compile_update 到此为止: 只写内部 authority / workspace 状态</text>
+
+  <text x="80" y="548" class="label">extension surface above shared core</text>
 
   <text x="508" y="512" class="label">secondary operator transports</text>
   <text x="710" y="512" class="label">explicit sync boundary</text>
@@ -121,8 +129,8 @@
   <text x="262" y="700" class="legend">蓝: transport</text>
   <rect x="440" y="688" width="180" height="16" rx="8" fill="#e8f5e9" stroke="none"/>
   <text x="452" y="700" class="legend">绿: shared core</text>
-  <rect x="630" y="688" width="160" height="16" rx="8" fill="#fff3e0" stroke="none"/>
-  <text x="642" y="700" class="legend">橙: authority / workspace</text>
-  <rect x="800" y="688" width="150" height="16" rx="8" fill="#fce4ec" stroke="none"/>
-  <text x="812" y="700" class="legend">粉: external views</text>
+  <rect x="630" y="688" width="160" height="16" rx="8" fill="#d1c4e9" stroke="none"/>
+  <text x="642" y="700" class="legend">紫: extension APIs</text>
+  <rect x="800" y="688" width="150" height="16" rx="8" fill="#fff3e0" stroke="none"/>
+  <text x="812" y="700" class="legend">橙: authority / workspace</text>
 </svg>

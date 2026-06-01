@@ -111,7 +111,7 @@ aw query "How should Hermes connect to agent-wiki?" \
 
 ### System Overview
 
-![v0.4 System Overview](docs/architecture/v0.4-system-overview.svg)
+![v0.5 System Overview](docs/architecture/system-overview.svg)
 
 ### Compile Pipeline & Self-Evolution
 
