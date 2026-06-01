@@ -1,15 +1,27 @@
 #!/usr/bin/env bash
-# aw-dream-cycle.sh — run dream cycle synthesis step
-# Timeout: 300s (each synthesis ~45s, max 5 per run)
+# aw-dream-cycle.sh — run dream cycle one step at a time
+# Cron default timeout is 120s; synthesis alone takes ~140s, so we run steps separately.
+# Schedule 3 separate cron jobs for orphan/cross-ref/synthesis, each stays under 120s.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=scripts/aw-common.sh
 source "$SCRIPT_DIR/aw-common.sh"
 
-output=$(AGENT_WIKI_CLI_TIMEOUT_SECONDS=300 \
-  aw dream-cycle --step synthesis 2>&1) || true
+STEP="${1:-synthesis}"
 
-# Success
-echo "$output" | tail -10
-echo "DREAM_CYCLE_OK $(date +%H:%M)"
+output=$(aw dream-cycle --step "$STEP" 2>&1) || true
+
+# Summary output (keep under 1KB for cron)
+case "$STEP" in
+  orphan)
+    echo "$output" | grep -oP 'orphan_count=\d+' | tail -1
+    ;;
+  cross-ref)
+    echo "$output" | grep -oP 'candidate_group_count=\d+' | tail -1
+    ;;
+  synthesis)
+    echo "$output" | grep -oP 'synthesis_count=\d+' | tail -1
+    ;;
+esac
+echo "DREAM_CYCLE_${STEP^^}_OK $(date +%H:%M)"
 exit 0

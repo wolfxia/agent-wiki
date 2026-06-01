@@ -6,9 +6,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=scripts/aw-common.sh
 source "$SCRIPT_DIR/aw-common.sh"
 
-# Single compile per run, use aw CLI's built-in timeout
-output=$(AGENT_WIKI_CLI_TIMEOUT_SECONDS=100 \
-  aw compile-execute --limit 1 --concurrency 1 --apply 2>&1) || true
+# Batch compile: process up to 5 items with concurrency 3 per run
+# Can override via env: AW_COMPILE_LIMIT=10 AW_COMPILE_CONCURRENCY=5
+COMPILE_LIMIT="${AW_COMPILE_LIMIT:-5}"
+COMPILE_CONCURRENCY="${AW_COMPILE_CONCURRENCY:-2}"
+
+output=$(AGENT_WIKI_CLI_TIMEOUT_SECONDS=180 \
+  aw compile-execute --limit "$COMPILE_LIMIT" --concurrency "$COMPILE_CONCURRENCY" --apply 2>&1) || true
 
 # No items — silent
 if echo "$output" | grep -q "无待编译\|no.*compile\|Nothing to\|0 items"; then

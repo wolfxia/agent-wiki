@@ -1,6 +1,6 @@
 # Agent Wiki Project Instructions
 
-Last updated: 2026-05-16
+Last updated: 2026-05-23
 
 ## Project Scope
 
@@ -103,4 +103,3 @@ Raw capture is available to all agents. Truth-zone compile updates require at le
 - When recording decisions, include the rationale and the phase boundary: implemented in Phase 1, smoke-tested in Phase 1, or reserved for Phase 2+.
 - Do not introduce implementation files, package scaffolding, or generated code during brainstorming unless the user explicitly moves the project into implementation planning.
 - Do not commit changes unless explicitly requested.
-
