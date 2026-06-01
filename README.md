@@ -1,12 +1,14 @@
 # Agent Wiki
 
-> Version: v0.4.0
-> Date: 2026-05-19
-> Status: working multi-agent knowledge system with MCP, CLI, REST, Obsidian sync, FTS5 retrieval, graph visualization, compile quality gate, diagnosis engine, and controlled self-evolution.
+> Version: v0.5.0
+> Date: 2026-06-01
+> Status: working multi-agent knowledge system with MCP, CLI, REST, Obsidian sync, FTS5 retrieval, graph visualization, compile quality gate, diagnosis engine, controlled self-evolution, and public extension APIs.
 >
 > One knowledge base, many agent frontends: Hermes, Claude Code, Codex, OpenClaw, and other agents can query, capture, compile, lint, and sync through shared core services.
 
 Agent Wiki is an agent-agnostic knowledge system for long-lived AI memory. It treats the workspace as the single source of truth, exposes a real FastMCP stdio server for agents, and keeps human-facing tools such as Obsidian as read-write views over the same authority model.
+
+For downstream integration and extension patterns, see [docs/extensions.md](docs/extensions.md).
 
 Current data baseline: **5204 workspace pages**, **4724 manifest entries**, **4723 indexed entries**, and **387 passing tests**.
 

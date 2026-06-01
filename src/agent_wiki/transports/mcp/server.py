@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from mcp.server.fastmcp import Context, FastMCP
 
+from agent_wiki.extensions import MCPToolSpec
 from agent_wiki.transports.mcp.dispatcher import MCPDispatcher
 
 
@@ -84,8 +85,29 @@ def _metadata_from_context(ctx: Context | None) -> dict[str, str]:
     return metadata
 
 
-def build_fastmcp_server(registry_path: str | None = None) -> FastMCP:
-    dispatcher = MCPDispatcher(registry_path=registry_path)
+_BUILTIN_TOOLS = {
+    "wiki.query": "Query the agent wiki",
+    "wiki.capture_raw": "Capture a raw page",
+    "wiki.compile_prepare": "Prepare raw evidence for agent-driven compilation",
+    "wiki.compile_update": "Compile a truth-zone page",
+    "wiki.lint": "Lint wiki state and indexes",
+    "wiki.sync": "Run explicit wiki sync operations",
+}
+
+
+def _validate_extra_tools(extra_tools: list[MCPToolSpec] | None) -> list[MCPToolSpec]:
+    tools = list(extra_tools or [])
+    seen = set(_BUILTIN_TOOLS)
+    for tool in tools:
+        if tool.name in seen:
+            raise ValueError(f"duplicate MCP tool name: {tool.name}")
+        seen.add(tool.name)
+    return tools
+
+
+def build_fastmcp_server(registry_path: str | None = None, extra_tools: list[MCPToolSpec] | None = None) -> FastMCP:
+    extra_tools = _validate_extra_tools(extra_tools)
+    dispatcher = MCPDispatcher(registry_path=registry_path, extra_tools=extra_tools)
     server = FastMCP(name="agent-wiki")
 
     @server.tool(name="wiki.query", structured_output=True)
@@ -223,6 +245,17 @@ def build_fastmcp_server(registry_path: str | None = None) -> FastMCP:
             )
         )
 
+    for spec in extra_tools:
+
+        def _extra_tool(ctx: Context | None = None, _spec: MCPToolSpec = spec, **params) -> dict:
+            return dispatcher.dispatch(
+                tool_name=_spec.name,
+                params=params,
+                session_metadata=_metadata_from_context(ctx),
+            )
+
+        server.tool(name=spec.name, description=spec.description)(_extra_tool)
+
     return server
 
 
@@ -231,17 +264,14 @@ def run_stdio_server(registry_path: str | None = None) -> None:
 
 
 class MCPServer:
-    def __init__(self, registry_path: str | None = None) -> None:
-        self._dispatcher = MCPDispatcher(registry_path=registry_path)
+    def __init__(self, registry_path: str | None = None, extra_tools: list[MCPToolSpec] | None = None) -> None:
+        self._extra_tools = _validate_extra_tools(extra_tools)
+        self._dispatcher = MCPDispatcher(registry_path=registry_path, extra_tools=self._extra_tools)
 
     def list_tools(self) -> list[dict]:
         return [
-            {"name": "wiki.query", "description": "Query the agent wiki"},
-            {"name": "wiki.capture_raw", "description": "Capture a raw page"},
-            {"name": "wiki.compile_prepare", "description": "Prepare raw evidence for agent-driven compilation"},
-            {"name": "wiki.compile_update", "description": "Compile a truth-zone page"},
-            {"name": "wiki.lint", "description": "Lint wiki state and indexes"},
-            {"name": "wiki.sync", "description": "Run explicit wiki sync operations"},
+            *[{"name": name, "description": description} for name, description in _BUILTIN_TOOLS.items()],
+            *[{"name": tool.name, "description": tool.description} for tool in self._extra_tools],
         ]
 
     def invoke(

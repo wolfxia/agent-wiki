@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.enums import PageType
+from agent_wiki.extensions.page_types import get_page_type_registry
 from agent_wiki.infrastructure.retrieval.index_consistency import IndexConsistencyChecker
 from agent_wiki.infrastructure.runtime.pending_state import PendingStateRepository
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
@@ -33,7 +34,7 @@ class LintService:
             if not page_path.exists():
                 issues.append(f"missing page for {entry.get('doc_id')}")
             page_type = entry.get("page_type")
-            if page_type in {PageType.ATOM.value, PageType.SYNTHESIS.value, PageType.PRINCIPLE.value} and not entry.get("source_refs"):
+            if page_type and get_page_type_registry().get(str(page_type)).requires_source_refs and not entry.get("source_refs"):
                 issues.append(f"missing source_refs for compiled page {entry.get('doc_id')}")
 
         pending_state = PendingStateRepository(wiki_root)

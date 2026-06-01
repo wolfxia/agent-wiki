@@ -5,6 +5,7 @@ from agent_wiki.bootstrap.registry_loader import RegistryLoader, WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.models import CompileAnalysis, CompileResult, CompileUpdateInput
 from agent_wiki.domain.validators import validate_doc_id
+from agent_wiki.extensions.page_types import get_page_type_registry, normalize_page_type
 from agent_wiki.infrastructure.identity.permissions import PermissionService
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 from agent_wiki.settings import DEFAULT_REGISTRY_PATH
@@ -29,21 +30,21 @@ class CompileUpdateService:
     def apply(self, wiki: WikiConfig, actor: ResolvedActor, data: CompileUpdateInput) -> CompileResult:
         manifest = ManifestRepository(Path(wiki.workspace_path))
         validate_doc_id(data.doc_id)
-        if data.page_type not in wiki.allowed_page_types:
-            raise ValueError(f"page type {data.page_type} is not allowed")
+        page_type = normalize_page_type(data.page_type)
+        page_type_definition = get_page_type_registry().get(page_type)
+        if page_type not in wiki.allowed_page_types:
+            raise ValueError(f"page type {page_type} is not allowed")
 
         permission_service = PermissionService()
-        decision = permission_service.check(actor, "compile_update", wiki, data.page_type)
+        decision = permission_service.check(actor, "compile_update", wiki, page_type)
         if not decision.allowed:
             raise PermissionError(decision.reason)
 
-        if not data.allow_shared_write_without_sources and not self._source_refs_are_valid(wiki, manifest, data.source_refs):
+        if page_type_definition.requires_source_refs and not data.allow_shared_write_without_sources and not self._source_refs_are_valid(wiki, manifest, data.source_refs):
             raise ValueError("source_refs must point to existing raw pages")
 
-        if actor.actor_type == "agent" and data.page_type not in {"atom", "synthesis"}:
-            raise ValueError("compile_update only supports atom and synthesis in Milestone 3")
-
         propagation = PropagationService(Path(wiki.workspace_path))
+        data = data.model_copy(update={"page_type": page_type})
         return propagation.propagate_compile_update(wiki=wiki, actor=actor, data=data)
 
     def _source_refs_are_valid(self, wiki: WikiConfig, manifest: ManifestRepository, source_refs: list[str]) -> bool:

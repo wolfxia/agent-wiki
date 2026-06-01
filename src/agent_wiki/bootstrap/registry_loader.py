@@ -1,9 +1,10 @@
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from agent_wiki.domain.enums import ActorType, GateLevel, Operation, PageType
+from agent_wiki.extensions.page_types import is_registered_page_type, normalize_page_type
 
 
 class PermissionConfig(BaseModel):
@@ -11,7 +12,12 @@ class PermissionConfig(BaseModel):
     actor_id: str
     allowed_operations: list[Operation] = Field(default_factory=list)
     max_gate: GateLevel
-    allowed_page_types: list[PageType] = Field(default_factory=list)
+    allowed_page_types: list[str] = Field(default_factory=list)
+
+    @field_validator("allowed_page_types", mode="before")
+    @classmethod
+    def _validate_allowed_page_types(cls, value: object) -> list[str]:
+        return _coerce_page_type_list(value)
 
 
 class RetrievalConfig(BaseModel):
@@ -24,7 +30,7 @@ class RetrievalConfig(BaseModel):
 
 class EmbeddingConfig(BaseModel):
     provider: str
-    base_url: str
+    base_url: str = ""
     api_key_env: str
     model: str
     dimension: int = 1024
@@ -123,7 +129,7 @@ class WikiConfig(BaseModel):
     workspace_path: str
     purpose_path: str
     config_path: str
-    allowed_page_types: list[PageType] = Field(default_factory=list)
+    allowed_page_types: list[str] = Field(default_factory=list)
     external_views: list[ExternalViewConfig] = Field(default_factory=list)
     pending_query_policy: dict[str, str] = Field(default_factory=dict)
     retrieval: RetrievalConfig
@@ -132,6 +138,11 @@ class WikiConfig(BaseModel):
     tuning_defaults: RuntimeTuningConfig = Field(default_factory=RuntimeTuningConfig)
     freshness: FreshnessConfig = Field(default_factory=FreshnessConfig)
     permissions: list[PermissionConfig] = Field(default_factory=list)
+
+    @field_validator("allowed_page_types", mode="before")
+    @classmethod
+    def _validate_allowed_page_types(cls, value: object) -> list[str]:
+        return _coerce_page_type_list(value)
 
 
 class RegistryConfig(BaseModel):
@@ -144,3 +155,15 @@ class RegistryLoader:
     def load(self, path: Path) -> RegistryConfig:
         data = yaml.safe_load(path.read_text())
         return RegistryConfig.model_validate(data)
+
+
+def _coerce_page_type_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("allowed_page_types must be a list")
+    page_types = [normalize_page_type(item) for item in value]
+    for page_type in page_types:
+        if not is_registered_page_type(page_type):
+            raise ValueError(f"unknown page type: {page_type}")
+    return page_types

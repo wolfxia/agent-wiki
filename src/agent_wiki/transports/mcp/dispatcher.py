@@ -15,6 +15,7 @@ from agent_wiki.domain.models import (
     IdentityContext,
     QueryInput,
 )
+from agent_wiki.extensions import MCPToolContext, MCPToolSpec
 from agent_wiki.infrastructure.identity.resolver import IdentityResolver
 from agent_wiki.settings import DEFAULT_REGISTRY_PATH
 from agent_wiki.transports.errors import map_exception
@@ -24,8 +25,9 @@ LOGGER = logging.getLogger(__name__)
 
 
 class MCPDispatcher:
-    def __init__(self, registry_path: str | None = None) -> None:
+    def __init__(self, registry_path: str | None = None, extra_tools: list[MCPToolSpec] | None = None) -> None:
         self._registry_path = Path(registry_path) if registry_path else DEFAULT_REGISTRY_PATH
+        self._extra_tools = {tool.name: tool for tool in extra_tools or []}
 
     def dispatch(
         self,
@@ -36,16 +38,22 @@ class MCPDispatcher:
         wiki_workspace_overrides: dict[str, str] | None = None,
     ) -> dict:
         try:
-            handler = {
+            handlers = {
                 "wiki.query": self._tool_query,
                 "wiki.capture_raw": self._tool_capture_raw,
                 "wiki.compile_prepare": self._tool_compile_prepare,
                 "wiki.compile_update": self._tool_compile_update,
                 "wiki.lint": self._tool_lint,
                 "wiki.sync": self._tool_sync,
-            }.get(tool_name)
+            }
+            handler = handlers.get(tool_name)
             if handler is None:
-                raise ValueError(f"unknown tool: {tool_name}")
+                extra_tool = self._extra_tools.get(tool_name)
+                if extra_tool is None:
+                    raise ValueError(f"unknown tool: {tool_name}")
+                actor = self.resolve_identity(request_metadata or {}, session_metadata or {})
+                wiki = self._resolve_wiki(params["wiki_id"], wiki_workspace_overrides or {})
+                return self._dispatch_extra_tool(extra_tool, params, wiki, actor)
             actor = self.resolve_identity(request_metadata or {}, session_metadata or {})
             wiki = self._resolve_wiki(params["wiki_id"], wiki_workspace_overrides or {})
             return handler(params, wiki, actor)
@@ -185,3 +193,16 @@ class MCPDispatcher:
             SyncInput(mode=params["mode"], doc_ids=params.get("doc_ids")),
         )
         return {"mode": result.mode, "changed_files": result.changed_files}
+
+    def _dispatch_extra_tool(self, tool: MCPToolSpec, params: dict, wiki, actor) -> dict:
+        ctx = MCPToolContext(dispatcher=self, wiki=wiki, actor=actor, params=params)
+        if tool.required_operation and tool.required_page_type:
+            decision = ctx.check_permission(tool.required_operation, tool.required_page_type)
+            if not decision.allowed:
+                raise PermissionError(decision.reason)
+        result = tool.handler(ctx)
+        if hasattr(result, "model_dump"):
+            return result.model_dump()
+        if isinstance(result, dict):
+            return result
+        return {"result": result}
