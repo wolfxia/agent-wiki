@@ -247,9 +247,9 @@ def build_fastmcp_server(registry_path: str | None = None, extra_tools: list[MCP
 
     for spec in extra_tools:
 
-        def _extra_tool(ctx: Context | None = None, _spec: MCPToolSpec = spec, **params) -> dict:
+        def _extra_tool(ctx: Context | None = None, spec: MCPToolSpec = spec, **params) -> dict:
             return dispatcher.dispatch(
-                tool_name=_spec.name,
+                tool_name=spec.name,
                 params=params,
                 session_metadata=_metadata_from_context(ctx),
             )
