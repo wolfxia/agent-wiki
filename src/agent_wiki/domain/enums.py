@@ -1,4 +1,13 @@
-from enum import StrEnum
+try:
+    from enum import StrEnum
+except ImportError:
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        """Compatibility shim for Python 3.10 (StrEnum added in 3.11)."""
+
+        def __str__(self) -> str:
+            return str(self.value)
 
 
 class ActorType(StrEnum):
