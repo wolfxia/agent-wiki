@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Callable
 
 from agent_wiki.domain.contracts import ResolvedActor
 
@@ -9,16 +9,11 @@ if TYPE_CHECKING:
     from agent_wiki.bootstrap.registry_loader import WikiConfig
 
 
-class MCPToolHandler(Protocol):
-    def __call__(self, ctx: "MCPToolContext") -> Any:
-        ...
-
-
 @dataclass(frozen=True)
 class MCPToolSpec:
     name: str
     description: str
-    handler: MCPToolHandler
+    handler: Callable[["MCPToolContext"], Any]
     required_operation: str | None = None
     required_page_type: str | None = None
 
