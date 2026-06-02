@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from agent_wiki.domain.contracts import ResolvedActor
 
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 class MCPToolSpec:
     name: str
     description: str
-    handler: Callable[["MCPToolContext"], Any]
+    handler: Any  # runtime callback; typed Any to avoid Pydantic CallableSchema error
     required_operation: str | None = None
     required_page_type: str | None = None
 
