@@ -245,16 +245,17 @@ def build_fastmcp_server(registry_path: str | None = None, extra_tools: list[MCP
             )
         )
 
-    for spec in extra_tools:
-
-        def _extra_tool(ctx: Context | None = None, spec: MCPToolSpec = spec, **params) -> dict:
+    def _make_extra_tool(spec: MCPToolSpec):
+        def _extra_tool(ctx: Context | None = None, **params) -> dict:
             return dispatcher.dispatch(
                 tool_name=spec.name,
                 params=params,
                 session_metadata=_metadata_from_context(ctx),
             )
+        return _extra_tool
 
-        server.tool(name=spec.name, description=spec.description)(_extra_tool)
+    for spec in extra_tools:
+        server.tool(name=spec.name, description=spec.description)(_make_extra_tool(spec))
 
     return server
 
