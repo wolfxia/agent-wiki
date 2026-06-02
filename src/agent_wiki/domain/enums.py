@@ -1,13 +1,6 @@
-try:
-    from enum import StrEnum
-except ImportError:
-    from enum import Enum
+from __future__ import annotations
 
-    class StrEnum(str, Enum):
-        """Compatibility shim for Python 3.10 (StrEnum added in 3.11)."""
-
-        def __str__(self) -> str:
-            return str(self.value)
+from agent_wiki._compat import StrEnum
 
 
 class ActorType(StrEnum):

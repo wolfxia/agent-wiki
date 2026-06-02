@@ -1,9 +1,10 @@
+from __future__ import annotations
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import re
 import time
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agent_wiki.application.compile_prepare import CompilePrepareInput, CompilePrepareResult, CompilePrepareService
 from agent_wiki.application.compile_update import CompileUpdateService
@@ -39,13 +40,13 @@ class CompileGeneratedInput(BaseModel):
     content: str
     source_refs: list[str]
     summary: str | None = None
-    aliases: list[str] = []
+    aliases: list[str] = Field(default_factory=list)
     confidence: str | None = None
     contested: bool = False
-    wikilinks: list[str] = []
-    claims: list[CompileClaim] = []
-    relationship_hints: list[CompileRelationshipHint] = []
-    open_questions: list[str] = []
+    wikilinks: list[str] = Field(default_factory=list)
+    claims: list[CompileClaim] = Field(default_factory=list)
+    relationship_hints: list[CompileRelationshipHint] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
     evidence_coverage: str | None = None
     sensitivity: str | None = None
 

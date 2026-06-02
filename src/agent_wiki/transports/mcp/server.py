@@ -1,3 +1,4 @@
+from __future__ import annotations
 from pydantic import BaseModel, Field
 from mcp.server.fastmcp import Context, FastMCP
 

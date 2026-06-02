@@ -1,3 +1,4 @@
+from __future__ import annotations
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import PermissionDecision, ResolvedActor
 from agent_wiki.domain.enums import GateLevel, Operation

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import json
 from agent_wiki._compat import UTC
 from datetime import datetime, timedelta

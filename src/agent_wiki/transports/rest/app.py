@@ -1,9 +1,10 @@
+from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agent_wiki.application.approvals import ApprovalService
 from agent_wiki.application.capture_raw import CaptureRawService
@@ -34,7 +35,7 @@ class CaptureRequest(BaseModel):
     topic: str
     problem_cluster: str
     content: str
-    source_refs: list[str] = []
+    source_refs: list[str] = Field(default_factory=list)
 
 
 class CompileUpdateRequest(BaseModel):
@@ -43,13 +44,13 @@ class CompileUpdateRequest(BaseModel):
     topic: str
     problem_cluster: str
     summary: str | None = None
-    aliases: list[str] = []
+    aliases: list[str] = Field(default_factory=list)
     confidence: str | None = None
     contested: bool = False
-    wikilinks: list[str] = []
+    wikilinks: list[str] = Field(default_factory=list)
     sensitivity: str | None = None
     content: str
-    source_refs: list[str] = []
+    source_refs: list[str] = Field(default_factory=list)
 
 
 class CompilePrepareRequest(BaseModel):
@@ -73,7 +74,7 @@ class FeedbackRequest(BaseModel):
     query_id: str
     approved: bool
     missing_evidence: bool
-    rewrite_targets: list[str] = []
+    rewrite_targets: list[str] = Field(default_factory=list)
     notes: str = ""
 
 
@@ -85,7 +86,7 @@ class ProposalRequest(BaseModel):
     topic: str
     problem_cluster: str
     content: str
-    source_refs: list[str] = []
+    source_refs: list[str] = Field(default_factory=list)
 
 
 class ApproveRequest(BaseModel):

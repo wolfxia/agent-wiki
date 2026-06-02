@@ -1,3 +1,4 @@
+from __future__ import annotations
 from agent_wiki.domain.enums import GateLevel, Operation, PageType
 from agent_wiki.extensions.page_types import get_page_type_registry, normalize_page_type
 

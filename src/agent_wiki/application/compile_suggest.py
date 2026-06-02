@@ -1,3 +1,4 @@
+from __future__ import annotations
 import json
 from collections import defaultdict
 from agent_wiki._compat import UTC

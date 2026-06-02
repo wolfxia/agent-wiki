@@ -1,4 +1,5 @@
-from pydantic import BaseModel
+from __future__ import annotations
+from pydantic import BaseModel, Field
 
 from agent_wiki.domain.contracts import RetrievalHit
 from agent_wiki.domain.enums import GateLevel, PageType, Sensitivity
@@ -36,10 +37,10 @@ class CompileUpdateInput(BaseModel):
     topic: str
     problem_cluster: str
     summary: str | None = None
-    aliases: list[str] = []
+    aliases: list[str] = Field(default_factory=list)
     confidence: str | None = None
     contested: bool = False
-    wikilinks: list[str] = []
+    wikilinks: list[str] = Field(default_factory=list)
     content: str
     source_refs: list[str]
     evidence_note: str | None = None
