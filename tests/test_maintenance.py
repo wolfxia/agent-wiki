@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
-from datetime import UTC, datetime, timedelta
+from agent_wiki._compat import UTC
+from datetime import datetime, timedelta
 
 from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
 from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService

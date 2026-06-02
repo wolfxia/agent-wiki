@@ -1,5 +1,6 @@
 import json
-from datetime import UTC, datetime
+from agent_wiki._compat import UTC
+from datetime import datetime
 from pathlib import Path
 
 

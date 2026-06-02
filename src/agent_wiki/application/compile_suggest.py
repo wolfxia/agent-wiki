@@ -1,6 +1,7 @@
 import json
 from collections import defaultdict
-from datetime import UTC, datetime
+from agent_wiki._compat import UTC
+from datetime import datetime
 from pathlib import Path
 
 from agent_wiki.bootstrap.registry_loader import WikiConfig

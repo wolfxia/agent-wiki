@@ -4,7 +4,8 @@ import logging
 import os
 from pathlib import Path
 import tempfile
-from datetime import UTC, datetime
+from agent_wiki._compat import UTC
+from datetime import datetime
 
 
 logger = logging.getLogger(__name__)

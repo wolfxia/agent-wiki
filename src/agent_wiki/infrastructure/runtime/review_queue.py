@@ -1,5 +1,6 @@
 import json
-from datetime import UTC, datetime, timedelta
+from agent_wiki._compat import UTC
+from datetime import datetime, timedelta
 from pathlib import Path
 
 _VALID_TRANSITIONS = {

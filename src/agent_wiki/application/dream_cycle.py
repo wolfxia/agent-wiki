@@ -5,7 +5,8 @@ import os
 import re
 from collections import defaultdict
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from agent_wiki._compat import UTC
+from datetime import datetime, timedelta
 from itertools import combinations
 from pathlib import Path
 from typing import Any

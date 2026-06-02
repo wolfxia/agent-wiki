@@ -113,7 +113,8 @@ def test_manifest_repository_adds_timestamps_and_preserves_created_at_on_upsert(
 
 
 def test_manifest_repository_uses_file_mtime_for_legacy_entry_missing_timestamps(temp_wiki_root: Path) -> None:
-    from datetime import datetime, UTC
+    from agent_wiki._compat import UTC
+    from datetime import datetime
     import os
 
     pages_dir = temp_wiki_root / "pages"
@@ -137,7 +138,8 @@ def test_manifest_repository_uses_file_mtime_for_legacy_entry_missing_timestamps
 
 
 def test_manifest_repository_read_all_uses_file_mtime_fallback_for_existing_legacy_entry(temp_wiki_root: Path) -> None:
-    from datetime import datetime, UTC
+    from agent_wiki._compat import UTC
+    from datetime import datetime
     import json
     import os
 

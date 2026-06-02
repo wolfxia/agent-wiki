@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from agent_wiki._compat import UTC
+from datetime import datetime
 import time
 from pathlib import Path
 from statistics import mean

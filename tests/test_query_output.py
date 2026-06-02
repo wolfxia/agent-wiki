@@ -121,7 +121,8 @@ def test_query_l3_proof_includes_claim_confidence_annotations(temp_wiki_root: Pa
 
 
 def test_query_l2_context_marks_stale_timestamped_atom_with_caveat(temp_wiki_root: Path) -> None:
-    from datetime import UTC, datetime, timedelta
+    from agent_wiki._compat import UTC
+    from datetime import datetime, timedelta
 
     stale_updated_at = (datetime.now(UTC) - timedelta(days=45)).isoformat().replace("+00:00", "Z")
     ManifestRepository(temp_wiki_root).upsert({
@@ -1202,7 +1203,8 @@ def test_query_can_filter_to_compiled_page_types(temp_wiki_root: Path) -> None:
 
 
 def test_query_l3_proof_includes_source_page_trace_and_freshness(temp_wiki_root: Path) -> None:
-    from datetime import UTC, datetime, timedelta
+    from agent_wiki._compat import UTC
+    from datetime import datetime, timedelta
     from agent_wiki.infrastructure.runtime.claim_annotations import ClaimAnnotationRepository
 
     stale_updated_at = (datetime.now(UTC) - timedelta(days=45)).isoformat().replace("+00:00", "Z")

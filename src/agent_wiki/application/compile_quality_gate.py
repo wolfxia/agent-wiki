@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
+from agent_wiki._compat import UTC
+from datetime import datetime
 from typing import Any
 
 
