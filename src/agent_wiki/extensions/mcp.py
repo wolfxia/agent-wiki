@@ -16,6 +16,7 @@ class MCPToolSpec:
     handler: Any  # runtime callback; typed Any to avoid Pydantic CallableSchema error
     required_operation: str | None = None
     required_page_type: str | None = None
+    input_schema: dict[str, Any] | None = None  # JSON Schema for tool parameters; if None, accepts any dict
 
 
 @dataclass

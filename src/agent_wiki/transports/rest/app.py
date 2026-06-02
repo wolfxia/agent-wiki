@@ -93,8 +93,6 @@ class ApproveRequest(BaseModel):
     proposal_id: str
 
 
-from agent_wiki.transports.errors import map_exception
-
 
 def create_app(
     wiki_workspace: str | None = None,
@@ -111,7 +109,7 @@ def create_app(
             raise exc
         mapped = map_exception(exc)
         return JSONResponse(
-            status_code=mapped.http_status,
+            status_code=mapped.status_code,
             content={"error": {"type": mapped.type, "message": mapped.message}},
         )
 

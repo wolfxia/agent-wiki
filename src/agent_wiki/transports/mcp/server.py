@@ -256,6 +256,17 @@ def build_fastmcp_server(registry_path: str | None = None, extra_tools: list[MCP
 
     for spec in extra_tools:
         server.tool(name=spec.name, description=spec.description)(_make_extra_tool(spec))
+        # FastMCP generates a broken schema from **params; replace with the
+        # explicit schema from MCPToolSpec, or a permissive fallback.
+        registered = server._tool_manager._tools[spec.name]
+        if spec.input_schema is not None:
+            registered.parameters = spec.input_schema
+        else:
+            registered.parameters = {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": True,
+            }
 
     return server
 

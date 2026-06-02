@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 
+from agent_wiki.domain.contracts import RetrievalHit
 from agent_wiki.domain.enums import GateLevel, PageType, Sensitivity
 
 
@@ -72,7 +73,7 @@ class QueryResult(BaseModel):
     l1_answer: str
     l2_context: list[dict]
     l3_proof: list[dict]
-    hits: list
+    hits: list[RetrievalHit]
     hit_count: int = 0
     miss_signal: bool = False
 

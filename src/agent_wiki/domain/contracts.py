@@ -50,9 +50,9 @@ class QualityEvaluator(Protocol):
     def evaluate(self, inputs: dict) -> dict: ...
 
 
-@runtime_checkable
-class EmbeddingProvider(Protocol):
-    def embed_texts(self, texts: list[str]) -> list[list[float]]: ...
+# EmbeddingProvider lives in extensions/embedding.py (canonical, with dimension attr).
+# Re-exported here for backward compatibility.
+from agent_wiki.extensions.embedding import EmbeddingProvider  # noqa: E402
 
 
 @runtime_checkable
