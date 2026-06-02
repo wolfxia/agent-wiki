@@ -24,11 +24,11 @@ Agent Wiki 是面向长生命周期 AI 记忆的 Agent 无关知识系统。它�
 
 ### 写入传播
 
-![写入传播](docs/architecture/write-propagation.png)
+![写入传播](docs/architecture/write-propagation.svg)
 
 ### 查询与检索
 
-![查询与检索](docs/architecture/query-retrieval.png)
+![查询与检索](docs/architecture/query-retrieval.svg)
 
 ## 快速集成指南
 

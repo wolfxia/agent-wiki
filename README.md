@@ -121,11 +121,11 @@ The compile pipeline turns raw evidence into agent working memory. v0.4 adds a 4
 
 ### Write Propagation
 
-![Write Propagation](docs/architecture/write-propagation.png)
+![Write Propagation](docs/architecture/write-propagation.svg)
 
 ### Query and Retrieval
 
-![Query and Retrieval](docs/architecture/query-retrieval.png)
+![Query and Retrieval](docs/architecture/query-retrieval.svg)
 
 ## Architecture Decisions
 
