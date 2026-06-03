@@ -278,7 +278,7 @@ def create_app(
         wiki = _resolve_wiki()
         _resolve_actor(authorization)
         result = LintService().run(wiki)
-        return {"ok": result.ok, "issues": result.issues}
+        return {"ok": result.ok, "issues": result.issues, "metrics": result.metrics}
 
     @app.post("/sync")
     def sync(request: SyncRequest, authorization: str | None = Header(default=None)) -> dict:

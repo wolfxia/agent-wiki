@@ -748,7 +748,7 @@ class CrossWikiQueryService:
             result = query_service.execute(wiki, actor, data, write_outcome=False)
             if result.hits and l1_answer == "No matching knowledge found.":
                 l1_answer = result.l1_answer
-            combined_hits.extend(result.hits)
+            combined_hits.extend(self._normalize_cross_wiki_hits(wiki, result.hits))
             l2_context.extend(result.l2_context)
             l3_proof.extend(result.l3_proof)
 
@@ -775,3 +775,28 @@ class CrossWikiQueryService:
             hit_count=len(combined_hits),
             miss_signal=len(combined_hits) == 0,
         )
+
+    def _normalize_cross_wiki_hits(self, wiki: WikiConfig, hits: list[RetrievalHit]) -> list[RetrievalHit]:
+        if not hits:
+            return []
+        scores = [float(hit.score) for hit in hits]
+        min_score = min(scores)
+        max_score = max(scores)
+        weight = float(getattr(wiki.retrieval, "cross_wiki_weight", 1.0) or 1.0)
+        normalized_hits: list[RetrievalHit] = []
+        for hit in hits:
+            raw_score = float(hit.score)
+            if max_score == min_score:
+                normalized_score = 20.0 if raw_score > 0.0 else 0.0
+            else:
+                normalized_score = ((raw_score - min_score) / (max_score - min_score)) * 20.0
+            weighted_score = normalized_score * weight
+            metadata = {
+                **hit.metadata,
+                "cross_wiki_raw_score": raw_score,
+                "cross_wiki_normalized_score": round(normalized_score, 6),
+                "cross_wiki_weight": weight,
+                "final_score": weighted_score,
+            }
+            normalized_hits.append(hit.model_copy(update={"score": weighted_score, "metadata": metadata}))
+        return normalized_hits

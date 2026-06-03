@@ -252,3 +252,74 @@ def test_raw_metadata_repair_rebuilds_runtime_indexes(temp_wiki_root: Path) -> N
     assert "repaired-index-1" in retrieval_text
     assert [hit.doc_id for hit in fts_hits] == ["repaired-index-1"]
     assert lint_result.ok is True
+
+
+def test_lint_reports_kg_coverage_metrics(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        data=CaptureRawInput(
+            doc_id="raw-kg-covered",
+            topic="graph",
+            problem_cluster="kg-coverage",
+            content="# Raw covered",
+            source_refs=[],
+        ),
+    )
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        data=CaptureRawInput(
+            doc_id="raw-kg-missing",
+            topic="graph",
+            problem_cluster="kg-coverage",
+            content="# Raw missing",
+            source_refs=[],
+        ),
+    )
+    (temp_wiki_root / "knowledge_graph.jsonl").write_text(
+        json.dumps(
+            {
+                "subject": "MCP",
+                "relation": "powers",
+                "object": "agent",
+                "source_doc_id": "raw-kg-covered",
+                "confidence_label": "EXTRACTED",
+                "confidence_score": 1.0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = LintService().run(wiki)
+
+    assert result.metrics["kg_coverage"]["raw_total"] == 2
+    assert result.metrics["kg_coverage"]["raw_with_relations"] == 1
+    assert result.metrics["kg_coverage"]["raw_without_relations"] == 1
+    assert result.metrics["kg_coverage"]["coverage"] == 0.5
+
+
+def test_lint_reports_invalid_relation_schema_issue(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    (temp_wiki_root / "relation_schema.yaml").write_text(
+        """relation_types:
+  - name: broken
+    patterns:
+      - pattern: "(?P<person>.+ works at (?P<org>.+)"
+    subject_type: person
+    object_type: organization
+""",
+        encoding="utf-8",
+    )
+
+    result = LintService().run(wiki)
+
+    assert result.ok is False
+    assert any("relation_schema" in issue for issue in result.issues)

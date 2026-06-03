@@ -185,7 +185,7 @@ class MCPDispatcher:
 
     def _tool_lint(self, params: dict, wiki, actor) -> dict:
         result = LintService().run(wiki)
-        return {"ok": result.ok, "issues": result.issues, "issue_count": len(result.issues)}
+        return {"ok": result.ok, "issues": result.issues, "issue_count": len(result.issues), "metrics": result.metrics}
 
     def _tool_sync(self, params: dict, wiki, actor) -> dict:
         result = SyncService().execute(

@@ -2,12 +2,13 @@ import json
 import os
 from pathlib import Path
 
+from agent_wiki.extensions import register_page_type
 from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
 from agent_wiki.application.maintenance import MaintenanceService
 from agent_wiki.application.query import QueryInput, QueryService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
-from agent_wiki.infrastructure.retrieval.knowledge_graph import RelationExtractor, RelationTypeDefinition
+from agent_wiki.infrastructure.retrieval.knowledge_graph import RelationExtractor, RelationTypeDefinition, KnowledgeGraphRetrievalProvider
 from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 
 
@@ -419,3 +420,274 @@ def test_relation_extractor_keeps_meaningful_chinese_relations() -> None:
     assert ("华为", "competes_with", "苹果") in relation_keys
     assert ("苹果", "competes_with", "华为") in relation_keys
     assert ("鸿蒙", "depends_on", "Linux") in relation_keys
+
+
+def test_kg_retrieval_weights_high_precision_relations_above_generic(temp_wiki_root: Path) -> None:
+    """P1-5: Relations like 'founded' and 'powers' should score higher than 'works_at'."""
+    kg = KnowledgeGraphRetrievalProvider(temp_wiki_root, wiki_id="personal-1")
+
+    # Write relations with different types
+    kg_dir = temp_wiki_root / ".agent-wiki" / "knowledge_graph"
+    kg_dir.mkdir(parents=True, exist_ok=True)
+
+    relations_data = [
+        {
+            "subject": "Sam Altman",
+            "relation": "founded",
+            "object": "OpenAI",
+            "source_doc_id": "raw-test-1",
+            "confidence_label": "EXTRACTED",
+            "confidence_score": 1.0,
+        },
+        {
+            "subject": "Sam Altman",
+            "relation": "works_at",
+            "object": "OpenAI",
+            "source_doc_id": "raw-test-1",
+            "confidence_label": "EXTRACTED",
+            "confidence_score": 1.0,
+        },
+        {
+            "subject": "GPU",
+            "relation": "powers",
+            "object": "training",
+            "source_doc_id": "raw-test-2",
+            "confidence_label": "EXTRACTED",
+            "confidence_score": 1.0,
+        },
+    ]
+
+    kg_path = kg_dir / "knowledge_graph.jsonl"
+    with open(kg_path, "w", encoding="utf-8") as f:
+        for rel in relations_data:
+            f.write(json.dumps(rel) + "\n")
+
+    # Query that matches both founded and works_at (same subject/object)
+    founded_score = kg._score_relation(relations_data[0], {"sam", "altman", "openai"})
+    works_at_score = kg._score_relation(relations_data[1], {"sam", "altman", "openai"})
+    powers_score = kg._score_relation(relations_data[2], {"gpu", "powers", "training"})
+
+    # founded (weight 1.5) should score higher than works_at (weight 1.0) for same overlap
+    assert founded_score > works_at_score
+    # powers (weight 1.5) should also score higher than works_at
+    assert powers_score > works_at_score
+
+
+def test_relation_extractor_rejects_overlong_entities(temp_wiki_root: Path) -> None:
+    """P0-2b: Entities longer than 30 chars should be truncated or rejected."""
+    extractor = _extractor(
+        RelationTypeDefinition(
+            name="works_at",
+            patterns=(r"(?P<person>.+?) works at (?P<org>.+)",),
+            subject_type="person",
+            object_type="organization",
+        ),
+    )
+
+    relations = extractor.extract(
+        text="John works at Very Long Organization Name That Exceeds Thirty Characters Limit",
+        source_doc_id="raw-test",
+        extracted_at="2026-06-03T00:00:00Z",
+    )
+
+    for relation in relations:
+        assert len(relation["subject"]) <= 30
+        assert len(relation["object"]) <= 30
+
+
+def test_relation_extractor_rejects_trailing_function_words(temp_wiki_root: Path) -> None:
+    """P0-2b: Entities ending with trailing function words like '的' or 'with' should be rejected."""
+    extractor = _extractor(
+        RelationTypeDefinition(
+            name="powers",
+            patterns=(r"(?P<tech>.+?) 驱动 (?P<target>.+)",),
+            subject_type="technology",
+            object_type="product",
+        ),
+    )
+
+    relations = extractor.extract(
+        text="技术栈的 驳回 训练模型",
+        source_doc_id="raw-test",
+        extracted_at="2026-06-03T00:00:00Z",
+    )
+
+    # "技术栈的" should be rejected because it ends with "的"
+    for relation in relations:
+        assert not relation["subject"].endswith("的")
+
+
+def test_relation_extractor_rejects_digit_dominated_entities(temp_wiki_root: Path) -> None:
+    """P0-2b: Entities where >50% of chars are digits should be rejected."""
+    extractor = _extractor(
+        RelationTypeDefinition(
+            name="founded",
+            patterns=(r"(?P<person>.+?) founded (?P<org>.+)",),
+            subject_type="person",
+            object_type="organization",
+        ),
+    )
+
+    relations = extractor.extract(
+        text="123456789 founded 987654321",
+        source_doc_id="raw-test",
+        extracted_at="2026-06-03T00:00:00Z",
+    )
+
+    # Both entities are >50% digits, should be rejected
+    assert len(relations) == 0
+
+
+def test_schema_repository_loads_pattern_confidence_labels() -> None:
+    """P0-2c: RelationSchemaRepository should parse per-pattern confidence labels."""
+    schema_path = temp_wiki_root / "relation_schema.yaml" if False else Path("templates/relation_schema.yaml")
+    from agent_wiki.infrastructure.retrieval.knowledge_graph import RelationSchemaRepository
+
+    # Use a temp directory with a test schema
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        schema = tmp_path / "relation_schema.yaml"
+        schema.write_text(
+            """relation_types:
+  - name: test_rel
+    patterns:
+      - pattern: "(?P<person>[A-Z][A-Za-z]{1,10}) works at (?P<org>[A-Z][A-Za-z]{1,10})"
+        confidence_label: EXTRACTED
+      - pattern: "(?P<person>.+?) works at (?P<org>.+)"
+        confidence_label: AMBIGUOUS
+    subject_type: person
+    object_type: organization
+""",
+            encoding="utf-8",
+        )
+        repo = RelationSchemaRepository(tmp_path)
+        defs = repo.load()
+        assert len(defs) == 1
+        assert defs[0].pattern_confidence_labels == ("EXTRACTED", "AMBIGUOUS")
+
+
+def test_extractor_uses_per_pattern_confidence_label() -> None:
+    """P0-2c: Extracted relations should carry the confidence label from their matching pattern."""
+    extractor = _extractor(
+        RelationTypeDefinition(
+            name="works_at",
+            patterns=(
+                r"(?P<person>[A-Z][A-Za-z]{1,10}) works at (?P<org>[A-Z][A-Za-z]{1,10})",
+                r"(?P<person>.+?) works at (?P<org>.+)",
+            ),
+            pattern_confidence_labels=("EXTRACTED", "AMBIGUOUS"),
+            subject_type="person",
+            object_type="organization",
+        ),
+    )
+
+    # Strict pattern match — should get EXTRACTED
+    strict_relations = extractor.extract(
+        text="Sam works at OpenAI",
+        source_doc_id="raw-strict",
+        extracted_at="2026-06-03T00:00:00Z",
+    )
+    assert any(r["confidence_label"] == "EXTRACTED" for r in strict_relations)
+
+    # Loose pattern match — should get AMBIGUOUS
+    loose_relations = extractor.extract(
+        text="something vague works at another vague thing",
+        source_doc_id="raw-loose",
+        extracted_at="2026-06-03T00:00:00Z",
+    )
+    assert any(r["confidence_label"] == "AMBIGUOUS" for r in loose_relations)
+
+
+def test_extractor_lowercase_english_entities_fall_back_to_ambiguous() -> None:
+    extractor = _extractor(
+        RelationTypeDefinition(
+            name="works_at",
+            patterns=(
+                r"(?P<person>[A-Z][A-Za-z]{1,10}) works at (?P<org>[A-Z][A-Za-z]{1,10})",
+                r"(?P<person>.+?) works at (?P<org>.+)",
+            ),
+            pattern_confidence_labels=("EXTRACTED", "AMBIGUOUS"),
+            subject_type="person",
+            object_type="organization",
+        ),
+    )
+
+    relations = extractor.extract(
+        text="sam works at openai",
+        source_doc_id="raw-lowercase",
+        extracted_at="2026-06-03T00:00:00Z",
+    )
+
+    assert relations
+    assert all(r["confidence_label"] == "AMBIGUOUS" for r in relations)
+
+
+def test_kg_search_filters_by_page_type_from_doc_id_prefix(temp_wiki_root: Path) -> None:
+    """P1-6: KG search should filter by inferred page_type from doc_id prefix."""
+    kg = KnowledgeGraphRetrievalProvider(temp_wiki_root, wiki_id="personal-1")
+
+    # Write relations from different source doc types — use the correct path
+    # KnowledgeGraphRepository reads from wiki_root / "knowledge_graph.jsonl"
+    relations_data = [
+        {
+            "subject": "MCP",
+            "relation": "powers",
+            "object": "agent",
+            "source_doc_id": "atom-agent-os-001",
+            "confidence_label": "EXTRACTED",
+            "confidence_score": 1.0,
+        },
+        {
+            "subject": "MCP",
+            "relation": "powers",
+            "object": "agent",
+            "source_doc_id": "raw-notes-001",
+            "confidence_label": "EXTRACTED",
+            "confidence_score": 1.0,
+        },
+    ]
+
+    kg_path = temp_wiki_root / "knowledge_graph.jsonl"
+    with open(kg_path, "w", encoding="utf-8") as f:
+        for rel in relations_data:
+            f.write(json.dumps(rel) + "\n")
+
+    # Filter for atom pages only
+    atom_hits = kg.search("MCP powers agent", top_k=10, filters={"page_type": "atom"})
+    assert len(atom_hits) == 1
+    assert atom_hits[0].doc_id == "atom-agent-os-001"
+
+    # Filter for raw pages only
+    raw_hits = kg.search("MCP powers agent", top_k=10, filters={"page_type": "raw"})
+    assert len(raw_hits) == 1
+    assert raw_hits[0].doc_id == "raw-notes-001"
+
+    # No filter: both should appear
+    all_hits = kg.search("MCP powers agent", top_k=10)
+    assert len(all_hits) == 2
+
+
+def test_kg_search_filters_registered_custom_page_type(temp_wiki_root: Path) -> None:
+    register_page_type("document", default_gate="B", requires_source_refs=True, truth_zone=True)
+    kg = KnowledgeGraphRetrievalProvider(temp_wiki_root, wiki_id="personal-1")
+    kg_path = temp_wiki_root / "knowledge_graph.jsonl"
+    kg_path.write_text(
+        json.dumps(
+            {
+                "subject": "Spec",
+                "relation": "powers",
+                "object": "docs",
+                "source_doc_id": "document-agent-001",
+                "confidence_label": "EXTRACTED",
+                "confidence_score": 1.0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    hits = kg.search("Spec powers docs", top_k=10, filters={"page_type": "document"})
+
+    assert len(hits) == 1
+    assert hits[0].doc_id == "document-agent-001"

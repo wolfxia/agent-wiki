@@ -230,3 +230,22 @@ def test_parse_structured_output_returns_none_for_garbage() -> None:
     result = service._parse_structured_output("not json at all")
 
     assert result is None
+
+
+def test_build_prompt_requires_exact_aliases_for_technical_phrases() -> None:
+    service = CompileApplyService()
+    payload = {
+        "topic": "agent-os",
+        "problem_cluster": "agent-os",
+        "proposed_doc_id": "atom-agent-os-0001",
+        "proposed_page_type": "atom",
+        "source_refs": ["personal-1:raw-1"],
+        "items": [],
+    }
+    prepare = type("PrepareResult", (), {"model_dump": lambda self, mode="json": payload})()
+
+    prompt = service._build_prompt(prepare)
+
+    assert "aliases" in prompt
+    assert "exact technical phrases" in prompt
+    assert "acronyms" in prompt

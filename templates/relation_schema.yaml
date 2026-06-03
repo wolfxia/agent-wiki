@@ -1,45 +1,84 @@
 # Copy this file to a wiki root as relation_schema.yaml and edit it for the domain.
 # Patterns are Python regular expressions. Use named groups for subject/object roles.
+# P0-2a: Entity patterns now require first-char capitalization for English and min-length for CJK.
+# Use confidence_label on each pattern to assign extraction quality.
 relation_types:
   - name: works_at
     patterns:
-      - "(?P<person>.+?) (?:works at|joins) (?P<org>.+)"
-      - "(?P<person>.+?) (?:在|加入|任职于) (?P<org>.+?)(?:工作|任职|就职)?"
+      - pattern: "(?P<person>[A-Z][A-Za-z\\s]{1,25}) (?:works at|joins) (?P<org>[A-Z][A-Za-z\\s]{1,25})"
+        confidence_label: EXTRACTED
+      - pattern: "(?P<person>[\\u4e00-\\u9fff]{2,10}) (?:在|加入|任职于) (?P<org>[\\u4e00-\\u9fffA-Za-z0-9]{2,15})(?:工作|任职|就职)?"
+        confidence_label: EXTRACTED
+      # Loose fallback patterns — produce AMBIGUOUS confidence
+      - pattern: "(?P<person>.+?) (?:works at|joins) (?P<org>.+)"
+        confidence_label: AMBIGUOUS
+      - pattern: "(?P<person>.+?) (?:在|加入|任职于) (?P<org>.+?)(?:工作|任职|就职)?"
+        confidence_label: AMBIGUOUS
     subject_type: person
     object_type: organization
 
   - name: founded
     patterns:
-      - "(?P<person>.+?) founded (?P<org>.+)"
-      - "(?P<person>.+?) (?:创立|创办|创建) (?P<org>.+)"
+      - pattern: "(?P<person>[A-Z][A-Za-z\\s]{1,25}) founded (?P<org>[A-Z][A-Za-z\\s]{1,25})"
+        confidence_label: EXTRACTED
+      - pattern: "(?P<person>[\\u4e00-\\u9fff]{2,10}) (?:创立|创办|创建) (?P<org>[\\u4e00-\\u9fffA-Za-z0-9]{2,15})"
+        confidence_label: EXTRACTED
+      - pattern: "(?P<person>.+?) founded (?P<org>.+)"
+        confidence_label: AMBIGUOUS
+      - pattern: "(?P<person>.+?) (?:创立|创办|创建) (?P<org>.+)"
+        confidence_label: AMBIGUOUS
     subject_type: person
     object_type: organization
 
   - name: invested_in
     patterns:
-      - "(?P<investor>.+?) invested in (?P<company>.+)"
-      - "(?P<investor>.+?) (?:投资|领投|参投) (?P<company>.+)"
+      - pattern: "(?P<investor>[A-Z][A-Za-z\\s]{1,25}) invested in (?P<company>[A-Z][A-Za-z\\s]{1,25})"
+        confidence_label: EXTRACTED
+      - pattern: "(?P<investor>[\\u4e00-\\u9fff]{2,10}) (?:投资|领投|参投) (?P<company>[\\u4e00-\\u9fffA-Za-z0-9]{2,15})"
+        confidence_label: EXTRACTED
+      - pattern: "(?P<investor>.+?) invested in (?P<company>.+)"
+        confidence_label: AMBIGUOUS
+      - pattern: "(?P<investor>.+?) (?:投资|领投|参投) (?P<company>.+)"
+        confidence_label: AMBIGUOUS
     subject_type: organization
     object_type: organization
 
   - name: competes_with
     patterns:
-      - "(?P<a>.+?) competes with (?P<b>.+)"
-      - "(?P<a>.+?) (?:与|和) (?P<b>.+?) (?:竞争|对标|对齐)"
+      - pattern: "(?P<a>[A-Z][A-Za-z\\s]{1,25}) competes with (?P<b>[A-Z][A-Za-z\\s]{1,25})"
+        confidence_label: EXTRACTED
+      - pattern: "(?P<a>[\\u4e00-\\u9fff]{2,10}) (?:与|和) (?P<b>[\\u4e00-\\u9fff]{2,10}) (?:竞争|对标|对齐)"
+        confidence_label: EXTRACTED
+      - pattern: "(?P<a>.+?) competes with (?P<b>.+)"
+        confidence_label: AMBIGUOUS
+      - pattern: "(?P<a>.+?) (?:与|和) (?P<b>.+?) (?:竞争|对标|对齐)"
+        confidence_label: AMBIGUOUS
     subject_type: organization
     object_type: organization
     symmetric: true
 
   - name: powers
     patterns:
-      - "(?P<tech>.+?) (?:powers|drives) (?P<target>.+)"
-      - "(?P<tech>.+?) (?:驱动|支撑|赋能) (?P<target>.+)"
+      - pattern: "(?P<tech>[A-Z][A-Za-z\\s]{1,25}) (?:powers|drives) (?P<target>[A-Z][A-Za-z\\s]{1,25})"
+        confidence_label: EXTRACTED
+      - pattern: "(?P<tech>[\\u4e00-\\u9fff]{2,10}) (?:驱动|支撑|赋能) (?P<target>[\\u4e00-\\u9fffA-Za-z0-9]{2,15})"
+        confidence_label: EXTRACTED
+      - pattern: "(?P<tech>.+?) (?:powers|drives) (?P<target>.+)"
+        confidence_label: AMBIGUOUS
+      - pattern: "(?P<tech>.+?) (?:驱动|支撑|赋能) (?P<target>.+)"
+        confidence_label: AMBIGUOUS
     subject_type: technology
     object_type: product
 
   - name: depends_on
     patterns:
-      - "(?P<a>.+?) (?:depends on|is built on|built on) (?P<b>.+)"
-      - "(?P<a>.+?) (?:依赖|基于) (?P<b>.+)"
+      - pattern: "(?P<a>[A-Z][A-Za-z\\s]{1,25}) (?:depends on|is built on|built on) (?P<b>[A-Z][A-Za-z\\s]{1,25})"
+        confidence_label: EXTRACTED
+      - pattern: "(?P<a>[\\u4e00-\\u9fff]{2,10}) (?:依赖|基于) (?P<b>[\\u4e00-\\u9fffA-Za-z0-9]{2,15})"
+        confidence_label: EXTRACTED
+      - pattern: "(?P<a>.+?) (?:depends on|is built on|built on) (?P<b>.+)"
+        confidence_label: AMBIGUOUS
+      - pattern: "(?P<a>.+?) (?:依赖|基于) (?P<b>.+)"
+        confidence_label: AMBIGUOUS
     subject_type: technology
     object_type: technology

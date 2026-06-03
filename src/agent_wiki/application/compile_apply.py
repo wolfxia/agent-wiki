@@ -195,6 +195,7 @@ class CompileApplyService:
             "Create one retrieval-ready atom page from this compile_prepare packet.\n"
             "The primary reader is an AI agent. Use concise structured Markdown.\n"
             "Include sections for Claims, Applicability, Evidence, Relationship Hints, and Open Questions when relevant.\n"
+            "For aliases, preserve exact technical phrases and acronyms from source evidence when they are retrieval-relevant.\n"
             "Preserve source refs exactly. Do not invent facts beyond the raw evidence.\n\n"
             "Return only valid JSON with this object shape:\n"
             "{\n"

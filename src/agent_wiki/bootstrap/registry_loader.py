@@ -27,6 +27,7 @@ class RetrievalConfig(BaseModel):
     route_priority: int
     embedding: "EmbeddingConfig | None" = None
     external_sync_penalty: float = 1.0
+    cross_wiki_weight: float = 1.0
 
 
 class EmbeddingConfig(BaseModel):

@@ -59,3 +59,8 @@ wikis:
         allowed_operations: [query, capture_raw]
         max_gate: A
         allowed_page_types: [raw]
+      - actor_type: agent
+        actor_id: codex-test
+        allowed_operations: [query, capture_raw, compile_update, lint, sync]
+        max_gate: B
+        allowed_page_types: [raw, atom, synthesis]

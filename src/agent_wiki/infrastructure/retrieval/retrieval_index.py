@@ -51,6 +51,7 @@ class RetrievalIndexRepository:
             "page_type": data.page_type,
             "topic": data.topic,
             "problem_cluster": data.problem_cluster,
+            "aliases": getattr(data, "aliases", []),
             "content": data.content,
         }
         with self.index_path.open("a", encoding="utf-8") as handle:
@@ -73,6 +74,7 @@ class RetrievalIndexRepository:
                     "topic": entry.get("topic"),
                     "problem_cluster": entry.get("problem_cluster"),
                     "summary": entry.get("summary"),
+                    "aliases": entry.get("aliases") or [],
                     "content": page_path.read_text(encoding="utf-8"),
                 }
                 if entry.get("sensitivity") is not None:
@@ -93,10 +95,13 @@ class RetrievalIndexRepository:
                 str(card.get(field, ""))
                 for field in ("topic", "problem_cluster", "summary", "content")
             ).lower()
+            alias_text = " ".join(str(alias) for alias in card.get("aliases") or []).lower()
+            searchable_text = f"{searchable_text} {alias_text}".strip()
             if lowercase_terms and not self._might_match(searchable_text, lowercase_terms):
                 continue
             topic_tokens = tokenize(str(card.get("topic", "")))
             problem_cluster_tokens = tokenize(str(card.get("problem_cluster", "")))
+            alias_tokens = tokenize(" ".join(str(alias) for alias in card.get("aliases") or []))
             content_tokens = tokenize(str(card.get("content", "")))
             score = 0.0
             for term in terms:
@@ -106,6 +111,9 @@ class RetrievalIndexRepository:
                 if term in problem_cluster_tokens:
                     score += 2.0
                     continue
+                if term in alias_tokens:
+                    score += 1.5
+                    continue
                 if term in content_tokens:
                     score += 1.0
                     continue
@@ -114,6 +122,9 @@ class RetrievalIndexRepository:
                     continue
                 if any(fuzzy_match(token, term) for token in problem_cluster_tokens):
                     score += 1.0
+                    continue
+                if any(fuzzy_match(token, term) for token in alias_tokens):
+                    score += 0.75
                     continue
                 if any(fuzzy_match(token, term) for token in content_tokens):
                     score += 0.5

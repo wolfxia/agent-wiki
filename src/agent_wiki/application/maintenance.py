@@ -19,7 +19,7 @@ from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.enums import Sensitivity
 from agent_wiki.infrastructure.repair.raw_metadata_repair import RawMetadataRepairService
-from agent_wiki.infrastructure.retrieval.knowledge_graph import KnowledgeGraphRepository
+from agent_wiki.infrastructure.retrieval.knowledge_graph import KnowledgeGraphRepository, RelationSchemaError
 from agent_wiki.infrastructure.retrieval.embedding import SiliconFlowEmbeddingProvider
 from agent_wiki.infrastructure.retrieval.index_consistency import IndexConsistencyChecker
 from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRepository
@@ -157,9 +157,15 @@ class MaintenanceService:
         compile_candidates = CompileSuggestService().detect_and_enqueue(wiki)
         quality_signals = FastFeedbackService().detect_and_enqueue(wiki)
         graph_repository = KnowledgeGraphRepository(wiki_root, wiki_id=wiki.wiki_id)
-        typed_relations = graph_repository.rebuild_from_raw_pages()
-        graph_repository.backfill_confidence_labels()
-        relation_reviews = graph_repository.enqueue_ambiguous_reviews(ReviewQueueRepository(wiki_root))
+        relation_schema_error: str | None = None
+        try:
+            typed_relations = graph_repository.rebuild_from_raw_pages()
+            graph_repository.backfill_confidence_labels()
+            relation_reviews = graph_repository.enqueue_ambiguous_reviews(ReviewQueueRepository(wiki_root))
+        except RelationSchemaError as error:
+            typed_relations = 0
+            relation_reviews = 0
+            relation_schema_error = str(error)
         relations = RelationsService()
         co_occurrences = relations.detect_and_enqueue_co_occurrences(wiki)
         cross_references = relations.detect_and_enqueue_cross_references(wiki)
@@ -199,6 +205,7 @@ class MaintenanceService:
             "compile_suggestions": len(compile_suggestions),
             "typed_relations": typed_relations,
             "relation_reviews": relation_reviews,
+            "relation_schema_error": relation_schema_error,
             "quality_signals": len(quality_signals),
             "co_occurrence_candidates": len(co_occurrences),
             "cross_reference_candidates": len(cross_references),

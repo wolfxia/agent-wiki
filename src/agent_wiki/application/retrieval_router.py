@@ -29,7 +29,7 @@ class RetrievalRouter:
         lexical_ranked: list[RetrievalHit] = []
         semantic_ranked: list[RetrievalHit] = []
 
-        for hit in self.graph.search(query, top_k=top_k):
+        for hit in self.graph.search(query, top_k=top_k, filters=filters):
             merged[hit.doc_id] = self._with_scores(
                 hit,
                 lexical_score=0.0,

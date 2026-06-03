@@ -8,11 +8,46 @@ from typing import Protocol, runtime_checkable
 
 _LATIN_OR_DIGIT = re.compile(r"[A-Za-z0-9]+")
 _CJK = re.compile(r"[㐀-䶿一-鿿]+")
+_LOW_INFORMATION_LATIN_TERMS = {
+    "a",
+    "an",
+    "as",
+    "at",
+    "by",
+    "for",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "to",
+}
 
 
 @runtime_checkable
 class Tokenizer(Protocol):
     def tokenize(self, text: str) -> list[str]: ...
+
+
+def _is_informative(term: str) -> bool:
+    """Filter low-information terms that hurt retrieval precision."""
+    if _LATIN_OR_DIGIT.fullmatch(term):
+        # Pure digits: must be ≥3 digits to be informative (e.g. "2026" ok, "7" bad)
+        if term.isdigit():
+            return len(term) >= 3
+        # Keep short technical acronyms, but drop common low-information function words.
+        lowered = term.lower()
+        if len(lowered) == 1:
+            return False
+        if lowered in _LOW_INFORMATION_LATIN_TERMS:
+            return False
+        return len(lowered) >= 2
+    if _CJK.fullmatch(term):
+        # CJK: must be ≥2 chars (single CJK char is almost always too ambiguous)
+        return len(term) >= 2
+    # Mixed or other: must be ≥2 chars
+    return len(term) >= 2
 
 
 def _iter_segments(text: str) -> Iterable[str]:
@@ -38,11 +73,14 @@ class BigramTokenizer:
         tokens: list[str] = []
         for segment in _iter_segments(text):
             if _LATIN_OR_DIGIT.fullmatch(segment):
-                tokens.append(segment.lower())
+                candidate = segment.lower()
+                if _is_informative(candidate):
+                    tokens.append(candidate)
                 continue
             if _CJK.fullmatch(segment):
                 if len(segment) <= 2:
-                    tokens.append(segment)
+                    if _is_informative(segment):
+                        tokens.append(segment)
                 else:
                     tokens.extend(segment[i : i + 2] for i in range(len(segment) - 1))
         return tokens
@@ -65,10 +103,13 @@ class JiebaTokenizer:
             normalized = str(token).strip()
             if not normalized:
                 continue
+            candidate = normalized.lower()
             if _LATIN_OR_DIGIT.fullmatch(normalized):
-                tokens.append(normalized.lower())
+                if _is_informative(candidate):
+                    tokens.append(candidate)
             elif _CJK.fullmatch(normalized) or _LATIN_OR_DIGIT.search(normalized):
-                tokens.append(normalized.lower())
+                if _is_informative(candidate):
+                    tokens.append(candidate)
         return tokens
 
 

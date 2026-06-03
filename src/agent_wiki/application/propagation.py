@@ -118,6 +118,7 @@ class PropagationService:
             "topic": data.topic,
             "problem_cluster": data.problem_cluster,
             "summary": data.summary,
+            "aliases": data.aliases,
             "content": data.content,
             "sensitivity": data.sensitivity,
         })

@@ -78,3 +78,48 @@ def test_mcp_compile_update_persists_retrieval_ready_fields_and_query_uses_summa
     assert manifest_entry["sensitivity"] == "internal"
     assert query_result.hits[0].doc_id == "atom-mcp-schema-1"
     assert query_result.l1_answer == "Canary deployment requires staged rollout."
+
+
+def test_mcp_compile_update_aliases_are_queryable(temp_wiki_root: Path) -> None:
+    registry_path = temp_wiki_root.parent / "registry-mcp-compile-alias.yaml"
+    registry_data = json.loads(json.dumps(__import__("yaml").safe_load(Path("tests/fixtures/registry.yaml").read_text())))
+    registry_path.write_text(__import__("yaml").safe_dump(registry_data, sort_keys=False), encoding="utf-8")
+    wiki = RegistryLoader().load(registry_path).wikis[0].model_copy(update={"workspace_path": str(temp_wiki_root)})
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="mcp")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-mcp-alias-1",
+            topic="agent-os",
+            problem_cluster="protocol",
+            content="# Raw alias",
+            source_refs=[],
+        ),
+    )
+
+    MCPServer(registry_path=str(registry_path)).invoke(
+        "wiki.compile_update",
+        {
+            "wiki_id": "personal-1",
+            "doc_id": "atom-mcp-alias-1",
+            "page_type": "atom",
+            "topic": "agent-os",
+            "problem_cluster": "protocol",
+            "summary": "Agent OS protocol note.",
+            "aliases": ["shared context sidecar"],
+            "confidence": "medium",
+            "content": "# Agent OS protocol\n\nGeneral MCP note.",
+            "source_refs": ["personal-1:raw-mcp-alias-1"],
+        },
+        session_metadata={"actor_type": "agent", "actor_id": "claude-code"},
+        wiki_workspace_overrides={"personal-1": str(temp_wiki_root)},
+    )
+
+    query_result = QueryService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=QueryInput(query="shared context sidecar"),
+    )
+
+    assert query_result.hits[0].doc_id == "atom-mcp-alias-1"

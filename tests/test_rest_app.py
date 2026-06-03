@@ -308,6 +308,7 @@ def test_rest_lint_endpoint_returns_structured_issues(temp_wiki_root: Path) -> N
     payload = response.json()
     assert payload["ok"] is False
     assert any("missing page" in issue for issue in payload["issues"])
+    assert "kg_coverage" in payload["metrics"]
 
 
 def test_rest_sync_endpoint_supports_push_view(temp_wiki_root: Path) -> None:

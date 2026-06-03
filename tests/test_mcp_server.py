@@ -164,10 +164,11 @@ def test_mcp_lint_tool_returns_structured_issue_payload(temp_wiki_root: Path) ->
         wiki_workspace_overrides={"personal-1": str(temp_wiki_root)},
     )
 
-    assert set(result) == {"ok", "issues", "issue_count"}
+    assert set(result) == {"ok", "issues", "issue_count", "metrics"}
     assert result["ok"] is True
     assert result["issues"] == []
     assert result["issue_count"] == 0
+    assert "kg_coverage" in result["metrics"]
 
 
 def test_mcp_sync_tool_accepts_doc_ids(temp_wiki_root: Path) -> None:

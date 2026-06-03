@@ -49,6 +49,7 @@ class LintToolResult(BaseModel):
     ok: bool | None = None
     issues: list[str] = Field(default_factory=list)
     issue_count: int = 0
+    metrics: dict = Field(default_factory=dict)
     error: ToolErrorResult | None = None
 
 

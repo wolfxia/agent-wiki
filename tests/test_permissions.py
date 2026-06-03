@@ -141,3 +141,50 @@ def test_permission_service_allows_phase1_shared_agent_profiles() -> None:
     assert codex.allowed is False
     assert codex.reason == "no matching permission rule"
     assert codex.required_gate is None
+
+
+def test_permission_service_allows_codex_test_self_evolution_operations() -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0]
+    service = PermissionService()
+
+    compile_decision = service.check(
+        ResolvedActor(actor_type="agent", actor_id="codex-test", transport="cli"),
+        operation="compile_update",
+        wiki=wiki,
+        page_type="atom",
+    )
+    sync_decision = service.check(
+        ResolvedActor(actor_type="agent", actor_id="codex-test", transport="cli"),
+        operation="sync",
+        wiki=wiki,
+        page_type="raw",
+    )
+    lint_decision = service.check(
+        ResolvedActor(actor_type="agent", actor_id="codex-test", transport="cli"),
+        operation="lint",
+        wiki=wiki,
+        page_type="raw",
+    )
+
+    assert compile_decision.allowed is True
+    assert compile_decision.required_gate == "B"
+    assert sync_decision.allowed is True
+    assert sync_decision.required_gate == "A"
+    assert lint_decision.allowed is True
+    assert lint_decision.required_gate == "A"
+
+
+def test_permission_service_denies_codex_test_c_gate_operations() -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0]
+    service = PermissionService()
+
+    decision = service.check(
+        ResolvedActor(actor_type="agent", actor_id="codex-test", transport="cli"),
+        operation="promote_principle",
+        wiki=wiki,
+        page_type="principle",
+    )
+
+    assert decision.allowed is False
+    assert decision.reason == "no matching permission rule"
+    assert decision.required_gate is None

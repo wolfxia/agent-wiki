@@ -9,6 +9,8 @@ from time import time
 from agent_wiki.domain.contracts import RetrievalHit
 from agent_wiki.infrastructure.retrieval.tokenizer import JiebaTokenizer, Tokenizer
 
+_CJK_TOKEN = re.compile(r"[㐀-䶿一-鿿]+")
+
 
 class SQLiteFTSIndexProvider:
     def __init__(self, wiki_root: Path, wiki_id: str, tokenizer: Tokenizer | None = None) -> None:
@@ -108,7 +110,7 @@ class SQLiteFTSIndexProvider:
                 with self._connect() as connection:
                     rows = connection.execute(
                         f"""
-                        SELECT wiki_id, doc_id, bm25(retrieval_fts, 0.0, 0.0, 0.0, 8.0, 6.0, 5.0, 1.0, 3.0, 0.0, 0.0) AS rank
+                        SELECT wiki_id, doc_id, page_type, problem_cluster, bm25(retrieval_fts, 0.0, 0.0, 0.0, 8.0, 6.0, 5.0, 1.0, 3.0, 0.0, 0.0) AS rank
                         FROM retrieval_fts
                         WHERE {where}
                         ORDER BY rank
@@ -126,7 +128,11 @@ class SQLiteFTSIndexProvider:
                 doc_id=row["doc_id"],
                 score=self._score_from_rank(float(row["rank"])),
                 section="fts5",
-                metadata={"fts_rank": float(row["rank"])},
+                metadata={
+                    "fts_rank": float(row["rank"]),
+                    "page_type": row["page_type"] or "",
+                    "problem_cluster": row["problem_cluster"] or "",
+                },
             )
             for row in rows
         ]
@@ -135,7 +141,7 @@ class SQLiteFTSIndexProvider:
         strength = max(-rank, 0.0)
         if not strength:
             return 0.0
-        reference_rank = 0.00001
+        reference_rank = 1.0
         scaled = 4.0 * math.log10(1.0 + (strength / reference_rank))
         return min(scaled, 20.0)
 
@@ -184,6 +190,7 @@ class SQLiteFTSIndexProvider:
             terms = [term for term in re.split(r"\s+", query.strip()) if term]
         sanitized = [self._sanitize_term(term) for term in terms]
         sanitized = [term for term in sanitized if term]
+        sanitized = list(dict.fromkeys(sanitized))
         if not sanitized:
             return []
         exact = " ".join(f'"{term}"' for term in sanitized)
@@ -193,7 +200,43 @@ class SQLiteFTSIndexProvider:
         phrase = self._sanitize_phrase(query)
         phrase_match = f'"{phrase}"' if phrase else exact
         token_mix = " OR ".join(f'"{term}"' for term in sanitized)
-        return [f"{phrase_match} OR ({token_mix})", exact]
+        queries: list[str] = []
+        anchor = self._anchor_query(sanitized)
+        if anchor:
+            queries.append(anchor)
+        token_and = " AND ".join(f'"{term}"' for term in sanitized)
+        if token_and not in queries:
+            queries.append(token_and)
+        if phrase_match and phrase_match not in queries:
+            queries.append(phrase_match)
+        broad = f"{phrase_match} OR ({token_mix})" if phrase_match else token_mix
+        if broad and broad not in queries:
+            queries.append(broad)
+        return queries
+
+    def _anchor_query(self, sanitized_terms: list[str]) -> str | None:
+        latin_terms = [
+            term
+            for term in sanitized_terms
+            if re.fullmatch(r"[a-z0-9-]+", term) and not term.isdigit()
+        ]
+        cjk_terms = [term for term in sanitized_terms if _CJK_TOKEN.fullmatch(term)]
+
+        latin_anchors = [term for term in latin_terms if len(term) >= 4][:3]
+        cjk_anchors = [term for term in cjk_terms if len(term) >= 2][:2]
+
+        clauses: list[str] = [f'"{term}"' for term in latin_anchors]
+        if cjk_anchors:
+            if len(cjk_anchors) == 1:
+                clauses.append(f'"{cjk_anchors[0]}"')
+            else:
+                clauses.append("(" + " OR ".join(f'"{term}"' for term in cjk_anchors) + ")")
+
+        if not clauses:
+            return None
+        if len(clauses) == 1:
+            return clauses[0]
+        return " AND ".join(clauses)
 
     def _sanitize_term(self, term: str) -> str:
         return re.sub(r'[^\w\u4e00-\u9fff-]+', ' ', term.replace('"', ' ')).strip()

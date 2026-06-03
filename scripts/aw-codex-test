@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# aw-codex-test — agent-wiki CLI wrapper for Codex test mode (B-level self-evolution)
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+AW_ACTOR_ID=codex-test
+# shellcheck source=scripts/aw-common.sh
+source "$SCRIPT_DIR/aw-common.sh"
+
+exec aw "$@"

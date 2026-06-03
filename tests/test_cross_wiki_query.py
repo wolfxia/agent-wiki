@@ -3,9 +3,9 @@ from shutil import copytree
 
 from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
 from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
-from agent_wiki.application.query import CrossWikiQueryService, QueryInput
+from agent_wiki.application.query import CrossWikiQueryService, QueryInput, QueryResult
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
-from agent_wiki.domain.contracts import ResolvedActor
+from agent_wiki.domain.contracts import ResolvedActor, RetrievalHit
 
 
 def test_cross_wiki_query_returns_hits_from_multiple_wikis(tmp_path: Path) -> None:
@@ -119,3 +119,56 @@ def test_cross_wiki_query_writes_single_aggregated_outcome(tmp_path: Path) -> No
     assert len(personal_outcomes) == 1
     assert personal_outcomes[0].get("cross_wiki") is True
     assert shared_outcomes == []
+
+
+def test_cross_wiki_query_normalizes_scores_and_applies_wiki_weight(tmp_path: Path, monkeypatch) -> None:
+    personal_root = tmp_path / "sample_wiki"
+    shared_root = tmp_path / "shared_wiki"
+    copytree(Path("tests/fixtures/sample_wiki"), personal_root)
+    copytree(Path("tests/fixtures/shared_wiki"), shared_root)
+
+    registry = RegistryLoader().load(Path("tests/fixtures/registry_multi.yaml"))
+    personal = registry.wikis[0].model_copy(update={"workspace_path": str(personal_root)})
+    shared = registry.wikis[1].model_copy(
+        update={
+            "workspace_path": str(shared_root),
+            "retrieval": registry.wikis[1].retrieval.model_copy(update={"cross_wiki_weight": 1.5}),
+        }
+    )
+
+    class FakeQueryService:
+        def __init__(self) -> None:
+            self._classifier = type("Classifier", (), {"classify": staticmethod(lambda query: "fact_lookup")})()
+
+        def execute(self, wiki, actor, data, write_outcome=False):
+            if wiki.wiki_id == "personal-1":
+                hits = [
+                    RetrievalHit(wiki_id="personal-1", doc_id="atom-personal-a", score=100.0, metadata={}),
+                    RetrievalHit(wiki_id="personal-1", doc_id="atom-personal-b", score=90.0, metadata={}),
+                ]
+            else:
+                hits = [
+                    RetrievalHit(wiki_id="shared-1", doc_id="atom-shared-a", score=12.0, metadata={}),
+                    RetrievalHit(wiki_id="shared-1", doc_id="atom-shared-b", score=11.0, metadata={}),
+                ]
+            return QueryResult(
+                query_type="fact_lookup",
+                l1_answer="answer",
+                l2_context=[],
+                l3_proof=[],
+                hits=hits,
+                hit_count=len(hits),
+                miss_signal=False,
+            )
+
+    monkeypatch.setattr("agent_wiki.application.query.QueryService", FakeQueryService)
+
+    result = CrossWikiQueryService().execute(
+        [personal, shared],
+        ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli"),
+        QueryInput(query="cross wiki weighting"),
+    )
+
+    assert result.hits[0].wiki_id == "shared-1"
+    assert result.hits[0].metadata["cross_wiki_weight"] == 1.5
+    assert result.hits[0].metadata["cross_wiki_normalized_score"] == 20.0

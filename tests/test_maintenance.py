@@ -1030,6 +1030,40 @@ def test_maintenance_reports_quality_metrics(temp_wiki_root: Path) -> None:
     assert 0.0 <= metrics["claim_annotation_coverage"] <= 1.0
 
 
+def test_maintenance_handles_invalid_relation_schema_without_crashing(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="cli")
+
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-invalid-schema",
+            topic="graph",
+            problem_cluster="invalid-schema",
+            content="# Raw invalid schema",
+            source_refs=[],
+        ),
+    )
+    (temp_wiki_root / "relation_schema.yaml").write_text(
+        """relation_types:
+  - name: broken
+    patterns:
+      - pattern: "(?P<person>.+ works at (?P<org>.+)"
+    subject_type: person
+    object_type: organization
+""",
+        encoding="utf-8",
+    )
+
+    summary = MaintenanceService().run(wiki)
+
+    assert summary["typed_relations"] == 0
+    assert summary["relation_schema_error"]
+
+
 def test_maintenance_quality_metrics_freshness_prefers_created_at(temp_wiki_root: Path) -> None:
     wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
         update={"workspace_path": str(temp_wiki_root)}

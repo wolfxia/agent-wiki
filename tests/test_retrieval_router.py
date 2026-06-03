@@ -35,6 +35,38 @@ def test_retrieval_router_prefers_structured_hits(temp_wiki_root: Path) -> None:
     assert hits[0].doc_id == "atom-structured-1"
 
 
+def test_retrieval_router_does_not_let_same_cluster_summary_noise_outrank_better_lexical_hit(temp_wiki_root: Path) -> None:
+    topic_index = TopicIndexRepository(temp_wiki_root)
+    topic_index.upsert({
+        "doc_id": "atom-overview-1",
+        "page_type": "atom",
+        "topic": "agent-os",
+        "problem_cluster": "communication-standard",
+        "summary": "Agent OS protocol overview for shared context and tools.",
+    })
+    topic_index.upsert({
+        "doc_id": "atom-narrow-1",
+        "page_type": "atom",
+        "topic": "agent-os",
+        "problem_cluster": "communication-standard",
+        "summary": "MCP protocol agent os communication standard tools shared context sidecar details.",
+    })
+
+    router = RetrievalRouter(temp_wiki_root, wiki_id="personal-1")
+    router.graph.search = lambda query, top_k=10, filters=None: []  # type: ignore[method-assign]
+    router.lexical.search = lambda wiki_root, query: []  # type: ignore[method-assign]
+    router.fts.search = lambda query, top_k=10, filters=None: [  # type: ignore[method-assign]
+        RetrievalHit(wiki_id="personal-1", doc_id="atom-overview-1", score=12.0, section="fts5", metadata={}),
+        RetrievalHit(wiki_id="personal-1", doc_id="atom-narrow-1", score=10.0, section="fts5", metadata={}),
+    ]
+
+    hits = router.search("MCP protocol Agent OS communication standard tools shared context sidecar", top_k=2)
+
+    assert [hit.doc_id for hit in hits] == ["atom-overview-1", "atom-narrow-1"]
+    narrow = next(hit for hit in hits if hit.doc_id == "atom-narrow-1")
+    assert narrow.metadata["structured_score"] <= 6.5
+
+
 def test_retrieval_router_falls_back_to_lexical_hits(temp_wiki_root: Path) -> None:
     lexical = RetrievalIndexRepository(temp_wiki_root)
     lexical.append_compiled_card(
@@ -127,7 +159,7 @@ def test_retrieval_router_caps_graph_score_below_structured_relevance(temp_wiki_
         metadata={},
     )
 
-    router.graph.search = lambda query, top_k=10: [graph_only]  # type: ignore[method-assign]
+    router.graph.search = lambda query, top_k=10, filters=None: [graph_only]  # type: ignore[method-assign]
     router.fts.search = lambda query, top_k=10, filters=None: []  # type: ignore[method-assign]
     router.lexical.search = lambda wiki_root, query: []  # type: ignore[method-assign]
     router.structured.search = lambda query, top_k=10: [structured_relevant]  # type: ignore[method-assign]
@@ -145,7 +177,7 @@ def test_retrieval_router_rrf_fuses_fts_and_semantic_ranks(temp_wiki_root: Path)
     )
     router = RetrievalRouter(temp_wiki_root, wiki_id="personal-1", wiki=wiki)
 
-    router.graph.search = lambda query, top_k=10: []  # type: ignore[method-assign]
+    router.graph.search = lambda query, top_k=10, filters=None: []  # type: ignore[method-assign]
     router.structured.search = lambda query, top_k=10: []  # type: ignore[method-assign]
     router.fts.search = lambda query, top_k=10, filters=None: [  # type: ignore[method-assign]
         RetrievalHit(wiki_id="personal-1", doc_id="doc-fts-1", score=9.0, section="fts5", metadata={}),
@@ -178,7 +210,7 @@ def test_retrieval_router_rrf_fuses_fts_and_semantic_ranks(temp_wiki_root: Path)
 
 def test_retrieval_router_keeps_fts_only_behavior_without_embedding_config(temp_wiki_root: Path) -> None:
     router = RetrievalRouter(temp_wiki_root, wiki_id="personal-1")
-    router.graph.search = lambda query, top_k=10: []  # type: ignore[method-assign]
+    router.graph.search = lambda query, top_k=10, filters=None: []  # type: ignore[method-assign]
     router.structured.search = lambda query, top_k=10: []  # type: ignore[method-assign]
     router.fts.search = lambda query, top_k=10, filters=None: [  # type: ignore[method-assign]
         RetrievalHit(wiki_id="personal-1", doc_id="fts-only", score=6.0, section="fts5", metadata={}),
@@ -197,7 +229,7 @@ def test_retrieval_router_falls_back_when_embedding_query_fails(temp_wiki_root: 
         update={"workspace_path": str(temp_wiki_root)}
     )
     router = RetrievalRouter(temp_wiki_root, wiki_id="personal-1", wiki=wiki)
-    router.graph.search = lambda query, top_k=10: []  # type: ignore[method-assign]
+    router.graph.search = lambda query, top_k=10, filters=None: []  # type: ignore[method-assign]
     router.structured.search = lambda query, top_k=10: []  # type: ignore[method-assign]
     router.fts.search = lambda query, top_k=10, filters=None: [  # type: ignore[method-assign]
         RetrievalHit(wiki_id="personal-1", doc_id="fts-only", score=6.0, section="fts5", metadata={}),
@@ -238,7 +270,7 @@ def test_retrieval_router_applies_external_sync_penalty_by_doc_id_prefix(temp_wi
         }
     )
     router = RetrievalRouter(temp_wiki_root, wiki_id="personal-1", wiki=wiki)
-    router.graph.search = lambda query, top_k=10: []  # type: ignore[method-assign]
+    router.graph.search = lambda query, top_k=10, filters=None: []  # type: ignore[method-assign]
     router.structured.search = lambda query, top_k=10: []  # type: ignore[method-assign]
     router.fts.search = lambda query, top_k=10, filters=None: [  # type: ignore[method-assign]
         RetrievalHit(wiki_id="personal-1", doc_id="atom-external-sync-001", score=10.0, section="fts5", metadata={}),
@@ -262,7 +294,7 @@ def test_retrieval_router_penalizes_external_sync_raw_doc_id_pattern(temp_wiki_r
         }
     )
     router = RetrievalRouter(temp_wiki_root, wiki_id="personal-1", wiki=wiki)
-    router.graph.search = lambda query, top_k=10: []  # type: ignore[method-assign]
+    router.graph.search = lambda query, top_k=10, filters=None: []  # type: ignore[method-assign]
     router.structured.search = lambda query, top_k=10: []  # type: ignore[method-assign]
     router.fts.search = lambda query, top_k=10, filters=None: [  # type: ignore[method-assign]
         RetrievalHit(wiki_id="personal-1", doc_id="raw-external-sync-abc", score=10.0, section="fts5", metadata={}),

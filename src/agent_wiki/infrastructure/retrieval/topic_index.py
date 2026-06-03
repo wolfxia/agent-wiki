@@ -131,23 +131,25 @@ class StructuredIndexProvider:
         topic_tokens = tokenize(str(row.get("topic", "")))
         cluster_tokens = tokenize(str(row.get("problem_cluster", "")))
         summary_tokens = tokenize(str(row.get("summary", "")))
-        score = 0.0
+        topic_score = 0.0
+        cluster_score = 0.0
+        summary_score = 0.0
         for term in terms:
             if term in topic_tokens:
-                score += 3.0
+                topic_score += 3.0
                 continue
             if term in cluster_tokens:
-                score += 2.0
+                cluster_score += 2.0
                 continue
             if term in summary_tokens:
-                score += 1.5
+                summary_score += 1.5
                 continue
             if any(fuzzy_match(token, term) for token in topic_tokens):
-                score += 1.5
+                topic_score += 1.5
                 continue
             if any(fuzzy_match(token, term) for token in cluster_tokens):
-                score += 1.0
+                cluster_score += 1.0
                 continue
             if any(fuzzy_match(token, term) for token in summary_tokens):
-                score += 0.5
-        return score
+                summary_score += 0.5
+        return min(topic_score, 3.0) + min(cluster_score, 2.0) + min(summary_score, 1.5)
