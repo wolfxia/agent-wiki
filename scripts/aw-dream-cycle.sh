@@ -14,13 +14,13 @@ output=$(aw dream-cycle --step "$STEP" 2>&1) || true
 # Summary output (keep under 1KB for cron)
 case "$STEP" in
   orphan)
-    echo "$output" | grep -oP 'orphan_count=\d+' | tail -1
+    echo "$output" | grep -oE 'orphan_count=[0-9]+' | tail -1
     ;;
   cross-ref)
-    echo "$output" | grep -oP 'candidate_group_count=\d+' | tail -1
+    echo "$output" | grep -oE 'candidate_group_count=[0-9]+' | tail -1
     ;;
   synthesis)
-    echo "$output" | grep -oP 'synthesis_count=\d+' | tail -1
+    echo "$output" | grep -oE 'synthesis_count=[0-9]+' | tail -1
     ;;
 esac
 echo "DREAM_CYCLE_${STEP^^}_OK $(date +%H:%M)"

@@ -1,5 +1,4 @@
 from __future__ import annotations
-import fcntl
 import json
 import logging
 import os
@@ -7,6 +6,8 @@ from agent_wiki._compat import UTC
 from datetime import datetime
 from pathlib import Path
 import tempfile
+
+from agent_wiki.infrastructure.runtime.file_lock import FileLock
 
 
 logger = logging.getLogger(__name__)
@@ -96,7 +97,7 @@ class ClaimAnnotationRepository:
     def _exclusive_lock(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-        return _FileLock(self.lock_path)
+        return FileLock(self.lock_path)
 
     def _fsync_parent_dir(self) -> None:
         try:
@@ -107,24 +108,3 @@ class ClaimAnnotationRepository:
             os.fsync(dir_fd)
         finally:
             os.close(dir_fd)
-
-
-class _FileLock:
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._fd: int | None = None
-
-    def __enter__(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._fd = os.open(str(self.path), os.O_RDWR | os.O_CREAT, 0o644)
-        fcntl.flock(self._fd, fcntl.LOCK_EX)
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        if self._fd is None:
-            return
-        try:
-            fcntl.flock(self._fd, fcntl.LOCK_UN)
-        finally:
-            os.close(self._fd)
-            self._fd = None

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fcntl
 import os
 from pathlib import Path
 import tempfile
@@ -8,6 +7,7 @@ import tempfile
 from agent_wiki.domain.contracts import RetrievalHit
 from agent_wiki.infrastructure.retrieval.fuzzy import fuzzy_match
 from agent_wiki.infrastructure.retrieval.tokenizer import tokenize
+from agent_wiki.infrastructure.runtime.file_lock import FileLock
 
 _HEADER = "| doc_id | page_type | topic | problem_cluster | summary |"
 _DIVIDER = "| --- | --- | --- | --- | --- |"
@@ -98,7 +98,7 @@ class TopicIndexRepository:
 
     def _exclusive_lock(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        return _FileLock(self.lock_path)
+        return FileLock(self.lock_path)
 
     def _fsync_parent_dir(self) -> None:
         try:
@@ -109,27 +109,6 @@ class TopicIndexRepository:
             os.fsync(dir_fd)
         finally:
             os.close(dir_fd)
-
-
-class _FileLock:
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._fd: int | None = None
-
-    def __enter__(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._fd = os.open(str(self.path), os.O_RDWR | os.O_CREAT, 0o644)
-        fcntl.flock(self._fd, fcntl.LOCK_EX)
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        if self._fd is None:
-            return
-        try:
-            fcntl.flock(self._fd, fcntl.LOCK_UN)
-        finally:
-            os.close(self._fd)
-            self._fd = None
 
 
 class StructuredIndexProvider:
