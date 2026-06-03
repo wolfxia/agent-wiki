@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import fcntl
+import os
 from pathlib import Path
+import tempfile
 
 from agent_wiki.domain.contracts import RetrievalHit
 from agent_wiki.infrastructure.retrieval.fuzzy import fuzzy_match
@@ -13,6 +16,7 @@ _DIVIDER = "| --- | --- | --- | --- | --- |"
 class TopicIndexRepository:
     def __init__(self, wiki_root: Path) -> None:
         self.path = wiki_root / "topic_index.md"
+        self.lock_path = self.path.with_suffix(self.path.suffix + ".lock")
 
     def read_all(self) -> list[dict]:
         if not self.path.exists():
@@ -35,23 +39,24 @@ class TopicIndexRepository:
         return rows
 
     def upsert(self, row: dict) -> None:
-        rows = self.read_all()
-        normalized = {
-            "doc_id": str(row.get("doc_id", "")),
-            "page_type": str(row.get("page_type", "")),
-            "topic": str(row.get("topic", "")),
-            "problem_cluster": str(row.get("problem_cluster", "")),
-            "summary": str(row.get("summary", "")),
-        }
-        updated = False
-        for index, existing in enumerate(rows):
-            if existing["doc_id"] == normalized["doc_id"]:
-                rows[index] = normalized
-                updated = True
-                break
-        if not updated:
-            rows.append(normalized)
-        self._write_all(rows)
+        with self._exclusive_lock():
+            rows = self.read_all()
+            normalized = {
+                "doc_id": str(row.get("doc_id", "")),
+                "page_type": str(row.get("page_type", "")),
+                "topic": str(row.get("topic", "")),
+                "problem_cluster": str(row.get("problem_cluster", "")),
+                "summary": str(row.get("summary", "")),
+            }
+            updated = False
+            for index, existing in enumerate(rows):
+                if existing["doc_id"] == normalized["doc_id"]:
+                    rows[index] = normalized
+                    updated = True
+                    break
+            if not updated:
+                rows.append(normalized)
+            self._write_all(rows)
 
     def find(self, doc_id: str) -> dict | None:
         for row in self.read_all():
@@ -60,12 +65,13 @@ class TopicIndexRepository:
         return None
 
     def delete(self, doc_id: str) -> bool:
-        rows = self.read_all()
-        remaining = [row for row in rows if row.get("doc_id") != doc_id]
-        if len(remaining) == len(rows):
-            return False
-        self._write_all(remaining)
-        return True
+        with self._exclusive_lock():
+            rows = self.read_all()
+            remaining = [row for row in rows if row.get("doc_id") != doc_id]
+            if len(remaining) == len(rows):
+                return False
+            self._write_all(remaining)
+            return True
 
     def _write_all(self, rows: list[dict]) -> None:
         lines = [_HEADER, _DIVIDER]
@@ -73,10 +79,57 @@ class TopicIndexRepository:
             lines.append(
                 f"| {self._sanitize(row['doc_id'])} | {self._sanitize(row['page_type'])} | {self._sanitize(row['topic'])} | {self._sanitize(row['problem_cluster'])} | {self._sanitize(row['summary'])} |"
             )
-        self.path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp_path = tempfile.mkstemp(prefix=f".{self.path.name}.", suffix=".tmp", dir=self.path.parent)
+        temp = Path(temp_path)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write("\n".join(lines) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp, self.path)
+            self._fsync_parent_dir()
+        except Exception:
+            temp.unlink(missing_ok=True)
+            raise
 
     def _sanitize(self, value: str) -> str:
         return value.replace("|", "/")
+
+    def _exclusive_lock(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        return _FileLock(self.lock_path)
+
+    def _fsync_parent_dir(self) -> None:
+        try:
+            dir_fd = os.open(self.path.parent, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+
+
+class _FileLock:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._fd: int | None = None
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._fd = os.open(str(self.path), os.O_RDWR | os.O_CREAT, 0o644)
+        fcntl.flock(self._fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self._fd is None:
+            return
+        try:
+            fcntl.flock(self._fd, fcntl.LOCK_UN)
+        finally:
+            os.close(self._fd)
+            self._fd = None
 
 
 class StructuredIndexProvider:

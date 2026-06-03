@@ -12,6 +12,16 @@ from agent_wiki.infrastructure.retrieval.sqlite_fts import SQLiteFTSIndexProvide
 from agent_wiki.infrastructure.retrieval.topic_index import StructuredIndexProvider
 from agent_wiki.infrastructure.retrieval.vector_index import SQLiteVectorIndexProvider
 
+_TRUTH_ZONE_PAGE_TYPE_BOOSTS = {
+    "atom": 1.25,
+    "synthesis": 1.5,
+    "principle": 1.0,
+}
+_LEXICAL_REFERENCE_SCORE = 4.0
+_STRUCTURED_REFERENCE_SCORE = 6.5
+_GRAPH_REFERENCE_SCORE = 5.0
+_SEMANTIC_REFERENCE_SCORE = 1.0
+
 
 class RetrievalRouter:
     def __init__(self, wiki_root: Path, wiki_id: str, wiki: WikiConfig | None = None) -> None:
@@ -99,6 +109,8 @@ class RetrievalRouter:
         if semantic_ranked:
             self._apply_rrf(merged, lexical_ranked, semantic_ranked)
 
+        self._apply_fusion_scores(merged)
+
         self._apply_source_penalties(merged)
 
         hits = list(merged.values())
@@ -128,6 +140,34 @@ class RetrievalRouter:
                 "final_score": rrf_score,
             }
             merged[doc_id] = hit.model_copy(update={"score": rrf_score, "metadata": metadata})
+
+    def _apply_fusion_scores(self, merged: dict[str, RetrievalHit]) -> None:
+        for doc_id, hit in list(merged.items()):
+            lexical_score = float(hit.metadata.get("lexical_score", 0.0))
+            structured_score = float(hit.metadata.get("structured_score", 0.0))
+            semantic_score = float(hit.metadata.get("semantic_score", 0.0))
+            graph_score = float(hit.metadata.get("graph_score", 0.0))
+            page_type_boost = self._candidate_page_type_boost(hit)
+            fusion_lexical = self._normalize_component(lexical_score, _LEXICAL_REFERENCE_SCORE) * 4.0
+            fusion_structured = self._normalize_component(structured_score, _STRUCTURED_REFERENCE_SCORE) * 5.0
+            fusion_semantic = self._normalize_component(semantic_score, _SEMANTIC_REFERENCE_SCORE) * 2.0
+            fusion_graph = self._normalize_component(graph_score, _GRAPH_REFERENCE_SCORE) * 2.0
+            final_score = fusion_lexical + fusion_structured + fusion_semantic + fusion_graph + page_type_boost
+            metadata = {
+                **hit.metadata,
+                "fusion_lexical_score": fusion_lexical,
+                "fusion_structured_score": fusion_structured,
+                "fusion_semantic_score": fusion_semantic,
+                "fusion_graph_score": fusion_graph,
+                "candidate_page_type_boost": page_type_boost,
+                "final_score": final_score,
+            }
+            merged[doc_id] = hit.model_copy(update={"score": final_score, "metadata": metadata})
+
+    def _normalize_component(self, score: float, reference_score: float) -> float:
+        if score <= 0.0 or reference_score <= 0.0:
+            return 0.0
+        return min(score / reference_score, 1.0)
 
     def _apply_source_penalties(self, merged: dict[str, RetrievalHit]) -> None:
         for doc_id, hit in list(merged.items()):
@@ -179,8 +219,9 @@ class RetrievalRouter:
         semantic_score: float = 0.0,
         section: str,
     ) -> RetrievalHit:
-        capped_graph_score = min(graph_score, 5.0)
-        final_score = lexical_score + structured_score + semantic_score + capped_graph_score
+        capped_graph_score = min(graph_score, _GRAPH_REFERENCE_SCORE)
+        page_type_boost = self._candidate_page_type_boost(hit)
+        final_score = lexical_score + structured_score + semantic_score + capped_graph_score + page_type_boost
         metadata = {
             **hit.metadata,
             "lexical_score": lexical_score,
@@ -188,6 +229,17 @@ class RetrievalRouter:
             "semantic_score": semantic_score,
             "graph_score": capped_graph_score,
             "raw_graph_score": graph_score,
+            "candidate_page_type_boost": page_type_boost,
             "final_score": final_score,
         }
         return hit.model_copy(update={"score": final_score, "section": section, "metadata": metadata})
+
+    def _candidate_page_type_boost(self, hit: RetrievalHit) -> float:
+        page_type = str(hit.metadata.get("page_type") or getattr(hit, "page_type", "") or "").lower()
+        if not page_type:
+            normalized_doc_id = hit.doc_id.lower().replace("_", "-")
+            for candidate in _TRUTH_ZONE_PAGE_TYPE_BOOSTS:
+                if normalized_doc_id.startswith(candidate + "-"):
+                    page_type = candidate
+                    break
+        return _TRUTH_ZONE_PAGE_TYPE_BOOSTS.get(page_type, 0.0)

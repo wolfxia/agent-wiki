@@ -1,8 +1,15 @@
 from __future__ import annotations
+import fcntl
 import json
+import logging
+import os
 from agent_wiki._compat import UTC
 from datetime import datetime, timedelta
 from pathlib import Path
+import tempfile
+
+
+logger = logging.getLogger(__name__)
 
 _VALID_TRANSITIONS = {
     "open": {"assigned", "failed"},
@@ -18,72 +25,78 @@ _VALID_STATUSES = set(_VALID_TRANSITIONS.keys())
 class ReviewQueueRepository:
     def __init__(self, wiki_root: Path) -> None:
         self.path = wiki_root / "review_queue.jsonl"
+        self.lock_path = self.path.with_suffix(self.path.suffix + ".lock")
 
     def append(self, entry: dict) -> None:
         normalized = self._normalize_entry(entry)
-        item_id = normalized.get("item_id")
-        if item_id and self.find(item_id) is not None:
-            return
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(normalized, ensure_ascii=False) + "\n")
+        with self._exclusive_lock():
+            items = self.read_all()
+            item_id = normalized.get("item_id")
+            if item_id and any(item.get("item_id") == item_id for item in items):
+                return
+            items.append(normalized)
+            self._write_all(items)
 
     def append_many(self, entries: list[dict]) -> int:
         if not entries:
             return 0
-        items = self.read_all()
-        existing_ids = {item.get("item_id") for item in items if item.get("item_id")}
-        appended = 0
-        for entry in entries:
-            normalized = self._normalize_entry(entry)
-            item_id = normalized.get("item_id")
-            if item_id and item_id in existing_ids:
-                continue
-            items.append(normalized)
-            if item_id:
-                existing_ids.add(item_id)
-            appended += 1
-        if appended:
-            self._write_all(items)
-        return appended
+        with self._exclusive_lock():
+            items = self.read_all()
+            existing_ids = {item.get("item_id") for item in items if item.get("item_id")}
+            appended = 0
+            for entry in entries:
+                normalized = self._normalize_entry(entry)
+                item_id = normalized.get("item_id")
+                if item_id and item_id in existing_ids:
+                    continue
+                items.append(normalized)
+                if item_id:
+                    existing_ids.add(item_id)
+                appended += 1
+            if appended:
+                self._write_all(items)
+            return appended
 
     def upsert_compile_suggestions(self, entries: list[dict]) -> int:
         if not entries:
             return 0
-        items = self.read_all()
-        item_indexes = {item.get("item_id"): index for index, item in enumerate(items) if item.get("item_id")}
-        changed = 0
-        for entry in entries:
-            normalized = self._normalize_entry(entry)
-            item_id = normalized.get("item_id")
-            if not item_id:
-                continue
-            existing_index = item_indexes.get(item_id)
-            if existing_index is None:
-                item_indexes[item_id] = len(items)
-                items.append(normalized)
-                changed += 1
-                continue
+        with self._exclusive_lock():
+            items = self.read_all()
+            item_indexes = {item.get("item_id"): index for index, item in enumerate(items) if item.get("item_id")}
+            changed = 0
+            for entry in entries:
+                normalized = self._normalize_entry(entry)
+                item_id = normalized.get("item_id")
+                if not item_id:
+                    continue
+                existing_index = item_indexes.get(item_id)
+                if existing_index is None:
+                    item_indexes[item_id] = len(items)
+                    items.append(normalized)
+                    changed += 1
+                    continue
 
-            existing = items[existing_index]
-            if not self._should_update_compile_suggestion(existing, normalized):
-                continue
-            created_at = existing.get("created_at", normalized.get("created_at"))
-            items[existing_index] = {**existing, **normalized, "created_at": created_at}
-            changed += 1
-        if changed:
-            self._write_all(items)
-        return changed
+                existing = items[existing_index]
+                if not self._should_update_compile_suggestion(existing, normalized):
+                    continue
+                created_at = existing.get("created_at", normalized.get("created_at"))
+                items[existing_index] = {**existing, **normalized, "created_at": created_at}
+                changed += 1
+            if changed:
+                self._write_all(items)
+            return changed
 
     def read_all(self) -> list[dict]:
         if not self.path.exists():
             return []
         items: list[dict] = []
-        for line in self.path.read_text(encoding="utf-8").splitlines():
+        for line_number, line in enumerate(self.path.read_text(encoding="utf-8").splitlines(), start=1):
             if not line.strip():
                 continue
             try:
                 item = json.loads(line)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as error:
+                logger.warning("Skipping corrupt review queue line %s in %s: %s", line_number, self.path, error)
                 continue
             if isinstance(item, dict):
                 items.append(item)
@@ -96,68 +109,71 @@ class ReviewQueueRepository:
         return None
 
     def transition(self, item_id: str, new_status: str) -> bool:
-        items = self.read_all()
-        for i, item in enumerate(items):
-            if item.get("item_id") == item_id:
-                current = item.get("status", "open")
-                allowed = _VALID_TRANSITIONS.get(current, set())
-                if new_status not in allowed:
-                    return False
-                items[i] = {**item, "status": new_status}
-                self._write_all(items)
-                return True
-        return False
+        with self._exclusive_lock():
+            items = self.read_all()
+            for i, item in enumerate(items):
+                if item.get("item_id") == item_id:
+                    current = item.get("status", "open")
+                    allowed = _VALID_TRANSITIONS.get(current, set())
+                    if new_status not in allowed:
+                        return False
+                    items[i] = {**item, "status": new_status}
+                    self._write_all(items)
+                    return True
+            return False
 
     def consume(self, item_type: str, actor_id: str, priority_filter: str | None = None) -> dict | None:
-        items = self.read_all()
-        candidates: list[tuple[int, dict]] = []
-        for index, item in enumerate(items):
-            if item.get("item_type") != item_type:
-                continue
-            if item.get("status", "open") != "open":
-                continue
-            if priority_filter and str(item.get("priority_label", "")).upper() != priority_filter.upper():
-                continue
-            candidates.append((index, item))
-        if not candidates:
-            return None
+        with self._exclusive_lock():
+            items = self.read_all()
+            candidates: list[tuple[int, dict]] = []
+            for index, item in enumerate(items):
+                if item.get("item_type") != item_type:
+                    continue
+                if item.get("status", "open") != "open":
+                    continue
+                if priority_filter and str(item.get("priority_label", "")).upper() != priority_filter.upper():
+                    continue
+                candidates.append((index, item))
+            if not candidates:
+                return None
 
-        index, item = sorted(candidates, key=lambda candidate: self._consume_sort_key(candidate[1]))[0]
-        updated = {
-            **item,
-            "status": "assigned",
-            "assigned_to": actor_id,
-            "claimed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        }
-        items[index] = updated
-        self._write_all(items)
-        return updated
+            index, item = sorted(candidates, key=lambda candidate: self._consume_sort_key(candidate[1]))[0]
+            updated = {
+                **item,
+                "status": "assigned",
+                "assigned_to": actor_id,
+                "claimed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            }
+            items[index] = updated
+            self._write_all(items)
+            return updated
 
 
     def recover_assigned_timeouts(self, now: str | datetime | None = None, timeout_minutes: int = 30) -> int:
         now_dt = self._parse_timestamp(now) if now is not None else datetime.now(UTC)
         cutoff = now_dt - timedelta(minutes=timeout_minutes)
-        items = self.read_all()
-        recovered_count = 0
-        recovered_at = self._format_timestamp(now_dt)
-        for index, item in enumerate(items):
-            if item.get("status") != "assigned":
-                continue
-            claimed_at = self._parse_timestamp(item.get("claimed_at"))
-            if claimed_at is None or claimed_at > cutoff:
-                continue
-            updated = dict(item)
-            assigned_to = updated.pop("assigned_to", None)
-            updated.pop("claimed_at", None)
-            updated["status"] = "open"
-            updated["timeout_recovered_at"] = recovered_at
-            if assigned_to is not None:
-                updated["previous_assigned_to"] = assigned_to
-            items[index] = updated
-            recovered_count += 1
-        if recovered_count:
-            self._write_all(items)
-        return recovered_count
+        with self._exclusive_lock():
+            items = self.read_all()
+            recovered_count = 0
+            recovered_at = self._format_timestamp(now_dt)
+            for index, item in enumerate(items):
+                if item.get("status") != "assigned":
+                    continue
+                claimed_at = self._parse_timestamp(item.get("claimed_at"))
+                if claimed_at is None or claimed_at > cutoff:
+                    continue
+                updated = dict(item)
+                assigned_to = updated.pop("assigned_to", None)
+                updated.pop("claimed_at", None)
+                updated["status"] = "open"
+                updated["timeout_recovered_at"] = recovered_at
+                if assigned_to is not None:
+                    updated["previous_assigned_to"] = assigned_to
+                items[index] = updated
+                recovered_count += 1
+            if recovered_count:
+                self._write_all(items)
+            return recovered_count
 
     def _parse_timestamp(self, value: str | datetime | None) -> datetime | None:
         if value is None:
@@ -189,19 +205,20 @@ class ReviewQueueRepository:
         )
 
     def release_assignment(self, item_id: str) -> bool:
-        items = self.read_all()
-        for index, item in enumerate(items):
-            if item.get("item_id") != item_id:
-                continue
-            updated = dict(item)
-            assigned_to = updated.pop("assigned_to", None)
-            updated.pop("claimed_at", None)
-            if assigned_to is not None:
-                updated["previous_assigned_to"] = assigned_to
-            items[index] = updated
-            self._write_all(items)
-            return True
-        return False
+        with self._exclusive_lock():
+            items = self.read_all()
+            for index, item in enumerate(items):
+                if item.get("item_id") != item_id:
+                    continue
+                updated = dict(item)
+                assigned_to = updated.pop("assigned_to", None)
+                updated.pop("claimed_at", None)
+                if assigned_to is not None:
+                    updated["previous_assigned_to"] = assigned_to
+                items[index] = updated
+                self._write_all(items)
+                return True
+            return False
 
     def _mark_terminal(
         self,
@@ -211,23 +228,24 @@ class ReviewQueueRepository:
         content_state: dict | None = None,
         extra: dict | None = None,
     ) -> bool:
-        items = self.read_all()
-        for index, item in enumerate(items):
-            if item.get("item_id") != item_id:
-                continue
-            current = item.get("content_state", {})
-            updated = {
-                **item,
-                "status": status,
-                timestamp_field: datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-                **(extra or {}),
-            }
-            if content_state is not None:
-                updated["content_state"] = {**current, **content_state}
-            items[index] = updated
-            self._write_all(items)
-            return True
-        return False
+        with self._exclusive_lock():
+            items = self.read_all()
+            for index, item in enumerate(items):
+                if item.get("item_id") != item_id:
+                    continue
+                current = item.get("content_state", {})
+                updated = {
+                    **item,
+                    "status": status,
+                    timestamp_field: datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                    **(extra or {}),
+                }
+                if content_state is not None:
+                    updated["content_state"] = {**current, **content_state}
+                items[index] = updated
+                self._write_all(items)
+                return True
+            return False
 
     def _consume_sort_key(self, item: dict) -> tuple[int, str, str]:
         try:
@@ -237,17 +255,18 @@ class ReviewQueueRepository:
         return (priority, str(item.get("created_at", "")), str(item.get("item_id", "")))
 
     def remove_old_format_compile_suggestions(self) -> int:
-        items = self.read_all()
-        kept: list[dict] = []
-        removed_count = 0
-        for item in items:
-            if item.get("item_type") == "compile_suggestion" and not self._is_current_compile_suggestion(item):
-                removed_count += 1
-                continue
-            kept.append(item)
-        if removed_count:
-            self._write_all(kept)
-        return removed_count
+        with self._exclusive_lock():
+            items = self.read_all()
+            kept: list[dict] = []
+            removed_count = 0
+            for item in items:
+                if item.get("item_type") == "compile_suggestion" and not self._is_current_compile_suggestion(item):
+                    removed_count += 1
+                    continue
+                kept.append(item)
+            if removed_count:
+                self._write_all(kept)
+            return removed_count
 
     def _is_current_compile_suggestion(self, item: dict) -> bool:
         return (
@@ -289,6 +308,52 @@ class ReviewQueueRepository:
         return normalized
 
     def _write_all(self, items: list[dict]) -> None:
-        with self.path.open("w", encoding="utf-8") as handle:
-            for item in items:
-                handle.write(json.dumps(item, ensure_ascii=False) + "\n")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp_path = tempfile.mkstemp(prefix=f".{self.path.name}.", suffix=".tmp", dir=self.path.parent)
+        temp = Path(temp_path)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                for item in items:
+                    handle.write(json.dumps(item, ensure_ascii=False) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp, self.path)
+            self._fsync_parent_dir()
+        except Exception:
+            temp.unlink(missing_ok=True)
+            raise
+
+    def _exclusive_lock(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        return _FileLock(self.lock_path)
+
+    def _fsync_parent_dir(self) -> None:
+        try:
+            dir_fd = os.open(self.path.parent, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+
+
+class _FileLock:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._fd: int | None = None
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._fd = os.open(str(self.path), os.O_RDWR | os.O_CREAT, 0o644)
+        fcntl.flock(self._fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self._fd is None:
+            return
+        try:
+            fcntl.flock(self._fd, fcntl.LOCK_UN)
+        finally:
+            os.close(self._fd)
+            self._fd = None

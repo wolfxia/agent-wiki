@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -45,13 +44,7 @@ class LintService:
                 issues.append(f"missing source_refs for compiled page {entry.get('doc_id')}")
 
         pending_state = PendingStateRepository(wiki_root)
-        pending_entries: list[dict] = []
-        if pending_state.pending_manifest_path.exists():
-            pending_entries = [
-                json.loads(line)
-                for line in pending_state.pending_manifest_path.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
+        pending_entries = pending_state.read_pending_manifest()
         pending_doc_ids = {entry.get("doc_id") for entry in pending_entries if entry.get("doc_id")}
 
         index_issues = IndexConsistencyChecker().check(wiki_root)

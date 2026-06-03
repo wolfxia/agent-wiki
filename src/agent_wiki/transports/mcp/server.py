@@ -1,9 +1,13 @@
 from __future__ import annotations
 from pydantic import BaseModel, Field
-from mcp.server.fastmcp import Context, FastMCP
+from typing import TYPE_CHECKING, Any
 
-from agent_wiki.extensions import MCPToolSpec
-from agent_wiki.transports.mcp.dispatcher import MCPDispatcher
+from agent_wiki.extensions.mcp import MCPToolSpec
+
+if TYPE_CHECKING:
+    from mcp.server.fastmcp import Context, FastMCP
+else:
+    Context = Any
 
 
 class ToolErrorResult(BaseModel):
@@ -107,9 +111,17 @@ def _validate_extra_tools(extra_tools: list[MCPToolSpec] | None) -> list[MCPTool
     return tools
 
 
-def build_fastmcp_server(registry_path: str | None = None, extra_tools: list[MCPToolSpec] | None = None) -> FastMCP:
+def _dispatcher_cls():
+    from agent_wiki.transports.mcp.dispatcher import MCPDispatcher
+
+    return MCPDispatcher
+
+
+def build_fastmcp_server(registry_path: str | None = None, extra_tools: list[MCPToolSpec] | None = None) -> "FastMCP":
+    from mcp.server.fastmcp import FastMCP
+
     extra_tools = _validate_extra_tools(extra_tools)
-    dispatcher = MCPDispatcher(registry_path=registry_path, extra_tools=extra_tools)
+    dispatcher = _dispatcher_cls()(registry_path=registry_path, extra_tools=extra_tools)
     server = FastMCP(name="agent-wiki")
 
     @server.tool(name="wiki.query", structured_output=True)
@@ -280,7 +292,7 @@ def run_stdio_server(registry_path: str | None = None) -> None:
 class MCPServer:
     def __init__(self, registry_path: str | None = None, extra_tools: list[MCPToolSpec] | None = None) -> None:
         self._extra_tools = _validate_extra_tools(extra_tools)
-        self._dispatcher = MCPDispatcher(registry_path=registry_path, extra_tools=self._extra_tools)
+        self._dispatcher = _dispatcher_cls()(registry_path=registry_path, extra_tools=self._extra_tools)
 
     def list_tools(self) -> list[dict]:
         return [

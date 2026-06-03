@@ -140,7 +140,7 @@ def test_compile_prepare_uses_dynamic_token_budget_and_sentence_level_claims(tem
     )
     actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="mcp")
     capture = CaptureRawService()
-    long_paragraph = " ".join([f"sentence-{index} with camera pipeline evidence." for index in range(500)])
+    long_paragraph = " ".join([f"sentence-{index} with service pipeline evidence." for index in range(500)])
     for index in range(3):
         capture.execute(
             wiki=wiki,
@@ -152,7 +152,7 @@ def test_compile_prepare_uses_dynamic_token_budget_and_sentence_level_claims(tem
                 summary=f"summary {index}",
                 content=(
                     f"# Raw Budget {index}\n\n"
-                    f"Camera pipeline {index} improves retrieval fidelity.\n\n"
+                    f"Service pipeline {index} improves retrieval fidelity.\n\n"
                     f"Key metric {index}: latency dropped to {index + 10}ms.\n\n"
                     f"{long_paragraph}"
                 ),
@@ -167,10 +167,40 @@ def test_compile_prepare_uses_dynamic_token_budget_and_sentence_level_claims(tem
     )
 
     assert result.items[0].claims
-    assert any("Camera pipeline 0 improves retrieval fidelity." in claim for claim in result.items[0].claims)
+    assert any("Service pipeline 0 improves retrieval fidelity." in claim for claim in result.items[0].claims)
     assert any("Key metric 0: latency dropped to 10ms." in claim for claim in result.items[0].claims)
     assert len(result.items[0].content_preview) > 1200
     assert len(result.items[0].content_preview) <= 3000
+
+
+def test_compile_prepare_extracts_generic_claim_sentences_without_domain_hardcoding(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="mcp")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-generic-claim-1",
+            topic="platform",
+            problem_cluster="claim-extraction",
+            content=(
+                "# Generic Claim\n\n"
+                "storage pipeline improves retrieval fidelity.\n\n"
+                "supporting context without metrics or named entities."
+            ),
+            source_refs=[],
+        ),
+    )
+
+    result = CompilePrepareService().prepare(
+        wiki,
+        actor,
+        CompilePrepareInput(topic="platform", problem_cluster="claim-extraction", max_items=1),
+    )
+
+    assert "storage pipeline improves retrieval fidelity." in result.items[0].claims
 
 
 def test_compile_prepare_includes_existing_atom_summaries_for_dedup_context(temp_wiki_root: Path) -> None:

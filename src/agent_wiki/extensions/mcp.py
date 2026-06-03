@@ -3,10 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from agent_wiki.domain.contracts import ResolvedActor
-
 if TYPE_CHECKING:
     from agent_wiki.bootstrap.registry_loader import WikiConfig
+    from agent_wiki.domain.contracts import ResolvedActor
 
 
 @dataclass(frozen=True)
@@ -23,7 +22,7 @@ class MCPToolSpec:
 class MCPToolContext:
     dispatcher: Any
     wiki: "WikiConfig"
-    actor: ResolvedActor
+    actor: "ResolvedActor"
     params: dict[str, Any]
 
     def check_permission(self, operation: str, page_type: str) -> Any:

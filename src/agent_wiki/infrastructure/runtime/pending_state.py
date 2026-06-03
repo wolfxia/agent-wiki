@@ -1,5 +1,9 @@
 import json
+import logging
 from pathlib import Path
+
+
+logger = logging.getLogger(__name__)
 
 
 class PendingStateRepository:
@@ -20,4 +24,23 @@ class PendingStateRepository:
     def read_stale_markers(self) -> list[dict]:
         if not self.stale_markers_path.exists():
             return []
-        return [json.loads(line) for line in self.stale_markers_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        return self._read_jsonl(self.stale_markers_path)
+
+    def read_pending_manifest(self) -> list[dict]:
+        if not self.pending_manifest_path.exists():
+            return []
+        return self._read_jsonl(self.pending_manifest_path)
+
+    def _read_jsonl(self, path: Path) -> list[dict]:
+        entries: list[dict] = []
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError as error:
+                logger.warning("Skipping corrupt pending state line %s in %s: %s", line_number, path, error)
+                continue
+            if isinstance(entry, dict):
+                entries.append(entry)
+        return entries

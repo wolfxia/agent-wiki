@@ -171,6 +171,40 @@ def test_retrieval_router_caps_graph_score_below_structured_relevance(temp_wiki_
     assert graph_hit.metadata["graph_score"] <= 5.0
 
 
+def test_retrieval_router_keeps_strong_fts_hit_above_weak_graph_only_hit(temp_wiki_root: Path) -> None:
+    router = RetrievalRouter(temp_wiki_root, wiki_id="personal-1")
+
+    router.graph.search = lambda query, top_k=10, filters=None: [  # type: ignore[method-assign]
+        RetrievalHit(wiki_id="personal-1", doc_id="raw-weak-graph", score=5.0, section="knowledge_graph", metadata={}),
+    ]
+    router.fts.search = lambda query, top_k=10, filters=None: [  # type: ignore[method-assign]
+        RetrievalHit(wiki_id="personal-1", doc_id="atom-strong-fts", score=3.7, section="fts5", metadata={}),
+    ]
+    router.lexical.search = lambda wiki_root, query: []  # type: ignore[method-assign]
+    router.structured.search = lambda query, top_k=10: []  # type: ignore[method-assign]
+
+    hits = router.search("ranking calibration", top_k=2)
+
+    assert [hit.doc_id for hit in hits] == ["atom-strong-fts", "raw-weak-graph"]
+    assert hits[0].metadata["fusion_lexical_score"] > hits[1].metadata["fusion_graph_score"]
+
+
+def test_retrieval_router_applies_truth_zone_boost_before_top_k_cutoff(temp_wiki_root: Path) -> None:
+    router = RetrievalRouter(temp_wiki_root, wiki_id="personal-1")
+    router.graph.search = lambda query, top_k=10, filters=None: []  # type: ignore[method-assign]
+    router.structured.search = lambda query, top_k=10: []  # type: ignore[method-assign]
+    router.lexical.search = lambda wiki_root, query: []  # type: ignore[method-assign]
+    router.fts.search = lambda query, top_k=10, filters=None: [  # type: ignore[method-assign]
+        RetrievalHit(wiki_id="personal-1", doc_id="raw-close", score=3.9, section="fts5", metadata={"page_type": "raw"}),
+        RetrievalHit(wiki_id="personal-1", doc_id="atom-compiled", score=3.0, section="fts5", metadata={"page_type": "atom"}),
+    ]
+
+    hits = router.search("candidate balance", top_k=1)
+
+    assert [hit.doc_id for hit in hits] == ["atom-compiled"]
+    assert hits[0].metadata["candidate_page_type_boost"] > 0.0
+
+
 def test_retrieval_router_rrf_fuses_fts_and_semantic_ranks(temp_wiki_root: Path) -> None:
     wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
         update={"workspace_path": str(temp_wiki_root)}

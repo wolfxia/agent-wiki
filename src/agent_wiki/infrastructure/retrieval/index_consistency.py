@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from pathlib import Path
 
 from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
+
+
+logger = logging.getLogger(__name__)
 
 
 class IndexConsistencyChecker:
@@ -37,10 +41,14 @@ class IndexConsistencyChecker:
         if not path.exists():
             return set()
         doc_ids: set[str] = set()
-        for line in path.read_text(encoding="utf-8").splitlines():
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             if not line.strip():
                 continue
-            card = json.loads(line)
+            try:
+                card = json.loads(line)
+            except json.JSONDecodeError as error:
+                logger.warning("Skipping corrupt retrieval index line %s in %s: %s", line_number, path, error)
+                continue
             doc_id = card.get("doc_id")
             if doc_id:
                 doc_ids.add(str(doc_id))

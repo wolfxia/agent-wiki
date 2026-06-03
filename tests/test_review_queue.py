@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
 from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
@@ -81,6 +82,20 @@ def test_review_queue_read_all_skips_malformed_jsonl_lines(temp_wiki_root: Path)
     items = ReviewQueueRepository(temp_wiki_root).read_all()
 
     assert [item["item_id"] for item in items] == ["rq-valid"]
+
+
+def test_review_queue_append_many_preserves_concurrent_writers(temp_wiki_root: Path) -> None:
+    def append_item(index: int) -> None:
+        ReviewQueueRepository(temp_wiki_root).append_many([
+            {"item_id": f"rq-concurrent-{index}", "item_type": "task", "status": "open"}
+        ])
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(append_item, range(40)))
+
+    item_ids = {item["item_id"] for item in ReviewQueueRepository(temp_wiki_root).read_all()}
+
+    assert item_ids == {f"rq-concurrent-{index}" for index in range(40)}
 
 
 def test_review_queue_status_transitions(temp_wiki_root: Path) -> None:

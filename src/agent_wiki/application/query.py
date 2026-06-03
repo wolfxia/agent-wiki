@@ -19,6 +19,7 @@ from agent_wiki.infrastructure.storage.manifest_repo import ManifestRepository
 from agent_wiki.infrastructure.storage.purpose_reader import PurposeReader
 from agent_wiki.infrastructure.retrieval.topic_index import TopicIndexRepository
 from agent_wiki.infrastructure.runtime.claim_annotations import ClaimAnnotationRepository
+from agent_wiki.infrastructure.runtime.pending_state import PendingStateRepository
 from agent_wiki.infrastructure.runtime.review_queue import ReviewQueueRepository
 
 
@@ -122,13 +123,7 @@ class QueryService:
         entry = (manifest_by_doc_id or {}).get(hit.doc_id) or manifest.find(hit.doc_id)
         if entry is not None:
             return True
-        pending_manifest_path = wiki_root / ".agent-wiki" / "pending_manifest.jsonl"
-        if not pending_manifest_path.exists():
-            return False
-        for line in pending_manifest_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            pending_entry = json.loads(line)
+        for pending_entry in PendingStateRepository(wiki_root).read_pending_manifest():
             if pending_entry.get("doc_id") != hit.doc_id:
                 continue
             if pending_entry.get("page_type") == PageType.RAW.value:
@@ -137,15 +132,9 @@ class QueryService:
         return False
 
     def _search_pending_truth_zone(self, wiki_root: Path, wiki_id: str, query: str) -> list[RetrievalHit]:
-        pending_manifest_path = wiki_root / ".agent-wiki" / "pending_manifest.jsonl"
-        if not pending_manifest_path.exists():
-            return []
         terms = [term.lower() for term in query.split() if term.strip()]
         hits: list[RetrievalHit] = []
-        for line in pending_manifest_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            pending_entry = json.loads(line)
+        for pending_entry in PendingStateRepository(wiki_root).read_pending_manifest():
             if pending_entry.get("page_type") == PageType.RAW.value:
                 continue
             page_path = wiki_root / "pages" / f"{pending_entry['doc_id']}.md"

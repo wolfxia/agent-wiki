@@ -1,4 +1,5 @@
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 from agent_wiki.infrastructure.retrieval.topic_index import StructuredIndexProvider, TopicIndexRepository
 
@@ -131,3 +132,23 @@ def test_topic_index_repository_deletes_rows_by_doc_id(temp_wiki_root: Path) -> 
     assert repository.find("raw-1") is None
     assert repository.find("raw-2") is not None
     assert repository.delete("raw-missing") is False
+
+
+def test_topic_index_repository_preserves_concurrent_upserts(temp_wiki_root: Path) -> None:
+    def upsert_row(index: int) -> None:
+        TopicIndexRepository(temp_wiki_root).upsert(
+            {
+                "doc_id": f"atom-concurrent-{index}",
+                "page_type": "atom",
+                "topic": "concurrency",
+                "problem_cluster": "index",
+                "summary": f"summary {index}",
+            }
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(upsert_row, range(40)))
+
+    doc_ids = {row["doc_id"] for row in TopicIndexRepository(temp_wiki_root).read_all()}
+
+    assert doc_ids == {f"atom-concurrent-{index}" for index in range(40)}

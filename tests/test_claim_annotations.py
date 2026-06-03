@@ -31,6 +31,21 @@ def test_claim_annotation_repository_round_trips_by_doc_id(temp_wiki_root: Path)
     assert stored["annotated_at"]
 
 
+def test_claim_annotation_repository_skips_malformed_jsonl_lines(temp_wiki_root: Path) -> None:
+    path = temp_wiki_root / ".agent-wiki" / "claim_annotations.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "not-json\n"
+        + json.dumps({"doc_id": "atom-valid", "claims": []}, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    entries = ClaimAnnotationRepository(temp_wiki_root).read_all()
+
+    assert [entry["doc_id"] for entry in entries] == ["atom-valid"]
+
+
 def test_claim_annotation_service_classifies_claim_confidence_rules(temp_wiki_root: Path) -> None:
     pages = temp_wiki_root / "pages"
     pages.mkdir(exist_ok=True)

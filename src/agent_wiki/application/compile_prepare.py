@@ -45,6 +45,34 @@ class CompilePrepareResult(BaseModel):
 
 
 _TOTAL_PREVIEW_BUDGET = 6000
+_CLAIM_VERBS = {
+    "allow",
+    "allows",
+    "avoid",
+    "avoids",
+    "block",
+    "blocks",
+    "cause",
+    "causes",
+    "enable",
+    "enables",
+    "improve",
+    "improves",
+    "increase",
+    "increases",
+    "keep",
+    "keeps",
+    "prevent",
+    "prevents",
+    "reduce",
+    "reduces",
+    "require",
+    "requires",
+    "show",
+    "shows",
+    "support",
+    "supports",
+}
 
 
 class CompilePrepareService:
@@ -131,12 +159,18 @@ class CompilePrepareService:
                 or re.search(r"\b[A-Z][a-z]+\b", stripped)
                 or "metric" in lowered
                 or "evidence" in lowered
-                or "camera pipeline" in lowered
+                or self._looks_like_claim_sentence(lowered)
             ):
                 claims.append(stripped if stripped.endswith((".", "!", "?")) else stripped + ".")
             if len(claims) >= 8:
                 break
         return claims
+
+    def _looks_like_claim_sentence(self, lowered: str) -> bool:
+        tokens = re.findall(r"[a-z]+", lowered)
+        if len(tokens) < 3:
+            return False
+        return any(token in _CLAIM_VERBS for token in tokens)
 
     def _existing_atom_summaries(self, manifest: ManifestRepository, topic: str, problem_cluster: str) -> list[dict]:
         summaries: list[dict] = []

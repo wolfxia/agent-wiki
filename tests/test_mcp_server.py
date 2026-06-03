@@ -1,9 +1,34 @@
 from pathlib import Path
+import os
+import subprocess
+import sys
 
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.transports.mcp.server import MCPServer, build_fastmcp_server, run_stdio_server
 import yaml
+
+
+def test_mcp_server_module_defers_heavy_runtime_imports() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "import agent_wiki.transports.mcp.server; "
+                "print('mcp.server.fastmcp' in sys.modules); "
+                "print('agent_wiki.transports.mcp.dispatcher' in sys.modules)"
+            ),
+        ],
+        env={**os.environ, "PYTHONPATH": str(Path.cwd() / "src")},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == ["False", "False"]
 
 
 def test_mcp_server_lists_expected_tools() -> None:

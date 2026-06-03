@@ -1,11 +1,15 @@
 from __future__ import annotations
 import json
+import logging
 from pathlib import Path
 
 from agent_wiki.domain.contracts import RetrievalHit
 from agent_wiki.domain.models import CompileUpdateInput
 from agent_wiki.infrastructure.retrieval.fuzzy import fuzzy_match
 from agent_wiki.infrastructure.retrieval.tokenizer import tokenize
+
+
+logger = logging.getLogger(__name__)
 
 
 class LexicalRetrievalProvider:
@@ -87,10 +91,14 @@ class RetrievalIndexRepository:
         terms = tokenize(query)
         lowercase_terms = [term.lower() for term in terms if term]
         hits: list[RetrievalHit] = []
-        for line in self.index_path.read_text(encoding="utf-8").splitlines():
+        for line_number, line in enumerate(self.index_path.read_text(encoding="utf-8").splitlines(), start=1):
             if not line.strip():
                 continue
-            card = json.loads(line)
+            try:
+                card = json.loads(line)
+            except json.JSONDecodeError as error:
+                logger.warning("Skipping corrupt retrieval index line %s in %s: %s", line_number, self.index_path, error)
+                continue
             searchable_text = " ".join(
                 str(card.get(field, ""))
                 for field in ("topic", "problem_cluster", "summary", "content")
