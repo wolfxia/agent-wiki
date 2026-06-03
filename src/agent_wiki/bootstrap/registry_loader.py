@@ -32,6 +32,8 @@ class RetrievalConfig(BaseModel):
 
 class EmbeddingConfig(BaseModel):
     provider: str
+    provider_module: str | None = None
+    provider_modules: list[str] = Field(default_factory=list)
     base_url: str = ""
     api_key_env: str
     model: str

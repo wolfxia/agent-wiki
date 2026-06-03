@@ -74,7 +74,7 @@ Permission checks, gate calculation, compile updates, and linting compare page t
 
 ## Embedding Providers
 
-Agent Wiki includes `siliconflow`, `openai`, and `azure_openai` providers. All implement the `EmbeddingProvider` Protocol:
+Agent Wiki includes `openai` and `azure_openai` providers in the core extension module. Other providers are enabled by registering a module from wiki configuration, an environment variable, or a package entry point. All providers implement the `EmbeddingProvider` Protocol:
 
 ```python
 from agent_wiki.extensions import create_embedding_provider
@@ -118,4 +118,35 @@ class KnowledgeAgentEmbeddingProvider:
 register_embedding_provider("knowledge-agent", KnowledgeAgentEmbeddingProvider)
 ```
 
-After registration, set `retrieval.embedding.provider: knowledge-agent` in the registry.
+After registration, set `retrieval.embedding.provider: knowledge-agent` in the registry. If the provider registration lives in a module that is not imported elsewhere, declare it in the wiki registry so agents can load it without changing `agent-wiki` code:
+
+```yaml
+retrieval:
+  coarse_provider: lexical
+  optional_providers: [embedding]
+  route_priority: 80
+  embedding:
+    provider: knowledge-agent
+    provider_module: knowledge_agent.embedding_provider
+    api_key_env: KNOWLEDGE_AGENT_EMBEDDING_KEY
+    model: custom-semantic-model
+    dimension: 768
+```
+
+Multiple registration modules can be listed with `provider_modules`. Operators can also set `AGENT_WIKI_EMBEDDING_PROVIDER_MODULES=module.one,module.two` for process-level registration.
+
+SiliconFlow is provided as `agent_wiki.infrastructure.retrieval.embedding` and can be enabled by configuration instead of being hardcoded in the core factory:
+
+```yaml
+retrieval:
+  coarse_provider: lexical
+  optional_providers: [embedding]
+  route_priority: 80
+  embedding:
+    provider: siliconflow
+    provider_module: agent_wiki.infrastructure.retrieval.embedding
+    base_url: https://api.siliconflow.cn/v1
+    api_key_env: SILICONFLOW_API_KEY
+    model: BAAI/bge-m3
+    dimension: 1024
+```

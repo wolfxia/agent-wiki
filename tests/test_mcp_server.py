@@ -31,6 +31,52 @@ def test_mcp_server_module_defers_heavy_runtime_imports() -> None:
     assert result.stdout.splitlines() == ["False", "False"]
 
 
+def test_mcp_server_facade_defers_dispatcher_runtime_imports() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "from agent_wiki.transports.mcp.server import MCPServer; "
+                "MCPServer(); "
+                "print('agent_wiki.transports.mcp.dispatcher' in sys.modules); "
+                "print('fastapi' in sys.modules)"
+            ),
+        ],
+        env={**os.environ, "PYTHONPATH": str(Path.cwd() / "src")},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == ["False", "False"]
+
+
+def test_build_fastmcp_server_defers_dispatcher_until_tool_invocation() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "from agent_wiki.transports.mcp.server import build_fastmcp_server; "
+                "build_fastmcp_server(); "
+                "print('agent_wiki.transports.mcp.dispatcher' in sys.modules); "
+                "print('agent_wiki.application.retrieval_router' in sys.modules)"
+            ),
+        ],
+        env={**os.environ, "PYTHONPATH": str(Path.cwd() / "src")},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == ["False", "False"]
+
+
 def test_mcp_server_lists_expected_tools() -> None:
     server = MCPServer()
     tools = server.list_tools()

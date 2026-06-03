@@ -205,6 +205,33 @@ def test_retrieval_router_applies_truth_zone_boost_before_top_k_cutoff(temp_wiki
     assert hits[0].metadata["candidate_page_type_boost"] > 0.0
 
 
+def test_retrieval_router_overfetches_candidates_so_truth_zone_pages_are_not_provider_truncated(temp_wiki_root: Path) -> None:
+    router = RetrievalRouter(temp_wiki_root, wiki_id="personal-1")
+    router.graph.search = lambda query, top_k=10, filters=None: []  # type: ignore[method-assign]
+    router.structured.search = lambda query, top_k=10: []  # type: ignore[method-assign]
+    router.lexical.search = lambda wiki_root, query: []  # type: ignore[method-assign]
+
+    def fts_search(query, top_k=10, filters=None):
+        raw_hits = [
+            RetrievalHit(wiki_id="personal-1", doc_id=f"raw-{index}", score=3.1, section="fts5", metadata={"page_type": "raw"})
+            for index in range(10)
+        ]
+        atom_hit = RetrievalHit(
+            wiki_id="personal-1",
+            doc_id="atom-not-truncated",
+            score=3.0,
+            section="fts5",
+            metadata={"page_type": "atom"},
+        )
+        return [*raw_hits, atom_hit][:top_k]
+
+    router.fts.search = fts_search  # type: ignore[method-assign]
+
+    hits = router.search("provider truncation", top_k=5)
+
+    assert hits[0].doc_id == "atom-not-truncated"
+
+
 def test_retrieval_router_rrf_fuses_fts_and_semantic_ranks(temp_wiki_root: Path) -> None:
     wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
         update={"workspace_path": str(temp_wiki_root)}

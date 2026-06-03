@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from importlib import import_module, metadata
 from typing import Any, Protocol, runtime_checkable
 
 import httpx
@@ -128,10 +129,37 @@ def register_embedding_provider(provider_type: str, factory: EmbeddingProviderFa
 
 def create_embedding_provider(provider_type: str, config: Any, **kwargs: Any) -> EmbeddingProvider:
     normalized = provider_type.strip().lower()
+    _load_configured_provider_modules(config)
     factory = _EMBEDDING_PROVIDER_REGISTRY.get(normalized)
+    if factory is None:
+        _load_entry_point_provider(normalized)
+        factory = _EMBEDDING_PROVIDER_REGISTRY.get(normalized)
     if factory is None:
         raise ValueError(f"unknown embedding provider: {provider_type}")
     return factory(config=config, **kwargs)
+
+
+def _load_configured_provider_modules(config: Any) -> None:
+    modules: list[str] = []
+    provider_module = getattr(config, "provider_module", None)
+    if provider_module:
+        modules.append(str(provider_module))
+    modules.extend(str(module) for module in getattr(config, "provider_modules", []) or [] if str(module).strip())
+    env_modules = os.environ.get("AGENT_WIKI_EMBEDDING_PROVIDER_MODULES", "")
+    modules.extend(module.strip() for module in env_modules.split(",") if module.strip())
+    for module_name in dict.fromkeys(modules):
+        import_module(module_name)
+
+
+def _load_entry_point_provider(provider_type: str) -> None:
+    try:
+        entry_points = metadata.entry_points(group="agent_wiki.embedding_providers")
+    except TypeError:
+        entry_points = metadata.entry_points().get("agent_wiki.embedding_providers", ())
+    for entry_point in entry_points:
+        if entry_point.name.strip().lower() == provider_type:
+            entry_point.load()
+            return
 
 
 def _openai_factory(*, config: Any, **kwargs: Any) -> EmbeddingProvider:

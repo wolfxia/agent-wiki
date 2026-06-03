@@ -121,7 +121,14 @@ def build_fastmcp_server(registry_path: str | None = None, extra_tools: list[MCP
     from mcp.server.fastmcp import FastMCP
 
     extra_tools = _validate_extra_tools(extra_tools)
-    dispatcher = _dispatcher_cls()(registry_path=registry_path, extra_tools=extra_tools)
+    dispatcher = None
+
+    def _dispatcher():
+        nonlocal dispatcher
+        if dispatcher is None:
+            dispatcher = _dispatcher_cls()(registry_path=registry_path, extra_tools=extra_tools)
+        return dispatcher
+
     server = FastMCP(name="agent-wiki")
 
     @server.tool(name="wiki.query", structured_output=True)
@@ -133,7 +140,7 @@ def build_fastmcp_server(registry_path: str | None = None, extra_tools: list[MCP
         ctx: Context | None = None,
     ) -> QueryToolResult:
         return QueryToolResult.model_validate(
-            dispatcher.dispatch(
+            _dispatcher().dispatch(
                 tool_name="wiki.query",
                 params={
                     "wiki_id": wiki_id,
@@ -156,7 +163,7 @@ def build_fastmcp_server(registry_path: str | None = None, extra_tools: list[MCP
         ctx: Context | None = None,
     ) -> MutationToolResult:
         return MutationToolResult.model_validate(
-            dispatcher.dispatch(
+            _dispatcher().dispatch(
                 tool_name="wiki.capture_raw",
                 params={
                     "wiki_id": wiki_id,
@@ -188,7 +195,7 @@ def build_fastmcp_server(registry_path: str | None = None, extra_tools: list[MCP
         ctx: Context | None = None,
     ) -> MutationToolResult:
         return MutationToolResult.model_validate(
-            dispatcher.dispatch(
+            _dispatcher().dispatch(
                 tool_name="wiki.compile_update",
                 params={
                     "wiki_id": wiki_id,
@@ -220,7 +227,7 @@ def build_fastmcp_server(registry_path: str | None = None, extra_tools: list[MCP
         ctx: Context | None = None,
     ) -> CompilePrepareToolResult:
         return CompilePrepareToolResult.model_validate(
-            dispatcher.dispatch(
+            _dispatcher().dispatch(
                 tool_name="wiki.compile_prepare",
                 params={
                     "wiki_id": wiki_id,
@@ -237,7 +244,7 @@ def build_fastmcp_server(registry_path: str | None = None, extra_tools: list[MCP
     @server.tool(name="wiki.lint", structured_output=True)
     def lint_tool(wiki_id: str, ctx: Context | None = None) -> LintToolResult:
         return LintToolResult.model_validate(
-            dispatcher.dispatch(
+            _dispatcher().dispatch(
                 tool_name="wiki.lint",
                 params={"wiki_id": wiki_id},
                 session_metadata=_metadata_from_context(ctx),
@@ -252,7 +259,7 @@ def build_fastmcp_server(registry_path: str | None = None, extra_tools: list[MCP
         ctx: Context | None = None,
     ) -> SyncToolResult:
         return SyncToolResult.model_validate(
-            dispatcher.dispatch(
+            _dispatcher().dispatch(
                 tool_name="wiki.sync",
                 params={"wiki_id": wiki_id, "mode": mode, "doc_ids": doc_ids},
                 session_metadata=_metadata_from_context(ctx),
@@ -261,7 +268,7 @@ def build_fastmcp_server(registry_path: str | None = None, extra_tools: list[MCP
 
     def _make_extra_tool(spec: MCPToolSpec):
         def _extra_tool(ctx: Context | None = None, **params) -> dict:
-            return dispatcher.dispatch(
+            return _dispatcher().dispatch(
                 tool_name=spec.name,
                 params=params,
                 session_metadata=_metadata_from_context(ctx),
@@ -291,8 +298,14 @@ def run_stdio_server(registry_path: str | None = None) -> None:
 
 class MCPServer:
     def __init__(self, registry_path: str | None = None, extra_tools: list[MCPToolSpec] | None = None) -> None:
+        self._registry_path = registry_path
         self._extra_tools = _validate_extra_tools(extra_tools)
-        self._dispatcher = _dispatcher_cls()(registry_path=registry_path, extra_tools=self._extra_tools)
+        self._dispatcher = None
+
+    def _get_dispatcher(self):
+        if self._dispatcher is None:
+            self._dispatcher = _dispatcher_cls()(registry_path=self._registry_path, extra_tools=self._extra_tools)
+        return self._dispatcher
 
     def list_tools(self) -> list[dict]:
         return [
@@ -308,7 +321,7 @@ class MCPServer:
         session_metadata: dict | None = None,
         wiki_workspace_overrides: dict[str, str] | None = None,
     ) -> dict:
-        return self._dispatcher.dispatch(
+        return self._get_dispatcher().dispatch(
             tool_name=tool_name,
             params=params,
             request_metadata=request_metadata,
@@ -317,4 +330,4 @@ class MCPServer:
         )
 
     def resolve_identity(self, request_metadata: dict, session_metadata: dict):
-        return self._dispatcher.resolve_identity(request_metadata, session_metadata)
+        return self._get_dispatcher().resolve_identity(request_metadata, session_metadata)

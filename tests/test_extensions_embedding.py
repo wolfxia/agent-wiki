@@ -5,6 +5,40 @@ from agent_wiki.extensions import (
     create_embedding_provider,
     register_embedding_provider,
 )
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+def test_create_embedding_provider_loads_configured_provider_module(monkeypatch) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from agent_wiki.bootstrap.registry_loader import EmbeddingConfig; "
+                "from agent_wiki.extensions import create_embedding_provider; "
+                "config = EmbeddingConfig("
+                "provider='siliconflow', "
+                "provider_module='agent_wiki.infrastructure.retrieval.embedding', "
+                "base_url='https://api.siliconflow.cn/v1', "
+                "api_key_env='SILICONFLOW_API_KEY', "
+                "model='BAAI/bge-m3', "
+                "dimension=1024); "
+                "provider = create_embedding_provider('siliconflow', config); "
+                "print(provider.__class__.__name__); "
+                "print(provider.dimension)"
+            ),
+        ],
+        env={**os.environ, "PYTHONPATH": str(Path.cwd() / "src"), "SILICONFLOW_API_KEY": "siliconflow-key"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["SiliconFlowEmbeddingProvider", "1024"]
 
 
 def test_openai_embedding_provider_uses_openai_compatible_embeddings_endpoint(monkeypatch) -> None:

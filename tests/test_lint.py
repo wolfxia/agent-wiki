@@ -302,6 +302,7 @@ def test_lint_reports_kg_coverage_metrics(temp_wiki_root: Path) -> None:
     assert result.metrics["kg_coverage"]["raw_with_relations"] == 1
     assert result.metrics["kg_coverage"]["raw_without_relations"] == 1
     assert result.metrics["kg_coverage"]["coverage"] == 0.5
+    assert result.metrics["kg_coverage"]["raw_without_relation_doc_ids"] == ["raw-kg-missing"]
 
 
 def test_lint_reports_invalid_relation_schema_issue(temp_wiki_root: Path) -> None:

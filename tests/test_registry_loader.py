@@ -154,6 +154,7 @@ wikis:
       route_priority: 80
       embedding:
         provider: siliconflow
+        provider_module: agent_wiki.infrastructure.retrieval.embedding
         base_url: https://api.siliconflow.cn/v1
         api_key_env: SILICONFLOW_API_KEY
         model: BAAI/bge-m3
@@ -168,5 +169,6 @@ wikis:
 
     assert wiki.retrieval.embedding is not None
     assert wiki.retrieval.embedding.provider == "siliconflow"
+    assert wiki.retrieval.embedding.provider_module == "agent_wiki.infrastructure.retrieval.embedding"
     assert wiki.retrieval.embedding.model == "BAAI/bge-m3"
     assert wiki.retrieval.embedding.dimension == 1024

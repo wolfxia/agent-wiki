@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from fastapi import HTTPException
-
 
 @dataclass(frozen=True)
 class TransportError:
@@ -16,14 +14,16 @@ class TransportError:
 
 
 def map_exception(exc: Exception) -> TransportError:
-    if isinstance(exc, HTTPException):
-        if exc.status_code == 404:
-            return TransportError(type="not_found", message=str(exc.detail), status_code=404)
-        if exc.status_code in {401, 403}:
-            return TransportError(type="permission_denied", message=str(exc.detail), status_code=exc.status_code)
-        if exc.status_code == 400:
-            return TransportError(type="invalid_input", message=str(exc.detail), status_code=400)
-        return TransportError(type="internal_error", message=str(exc.detail), status_code=exc.status_code)
+    status_code = getattr(exc, "status_code", None)
+    detail = getattr(exc, "detail", None)
+    if isinstance(status_code, int) and detail is not None:
+        if status_code == 404:
+            return TransportError(type="not_found", message=str(detail), status_code=404)
+        if status_code in {401, 403}:
+            return TransportError(type="permission_denied", message=str(detail), status_code=status_code)
+        if status_code == 400:
+            return TransportError(type="invalid_input", message=str(detail), status_code=400)
+        return TransportError(type="internal_error", message=str(detail), status_code=status_code)
 
     if isinstance(exc, FileNotFoundError):
         return TransportError(type="not_found", message=str(exc), status_code=404)

@@ -66,7 +66,7 @@ class LintService:
             },
         )
 
-    def _kg_coverage_metrics(self, manifest_entries: list[dict], wiki_root: Path) -> dict[str, float | int]:
+    def _kg_coverage_metrics(self, manifest_entries: list[dict], wiki_root: Path) -> dict[str, float | int | list[str]]:
         raw_doc_ids = {
             str(entry.get("doc_id"))
             for entry in manifest_entries
@@ -81,10 +81,12 @@ class LintService:
         raw_total = len(raw_doc_ids)
         raw_with_relations = len(covered)
         raw_without_relations = raw_total - raw_with_relations
+        raw_without_relation_doc_ids = sorted(raw_doc_ids - relation_doc_ids)
         coverage = round(raw_with_relations / raw_total, 3) if raw_total else 0.0
         return {
             "raw_total": raw_total,
             "raw_with_relations": raw_with_relations,
             "raw_without_relations": raw_without_relations,
+            "raw_without_relation_doc_ids": raw_without_relation_doc_ids,
             "coverage": coverage,
         }

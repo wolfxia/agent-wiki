@@ -20,7 +20,7 @@ from agent_wiki.domain.contracts import ResolvedActor
 from agent_wiki.domain.enums import Sensitivity
 from agent_wiki.infrastructure.repair.raw_metadata_repair import RawMetadataRepairService
 from agent_wiki.infrastructure.retrieval.knowledge_graph import KnowledgeGraphRepository, RelationSchemaError
-from agent_wiki.infrastructure.retrieval.embedding import SiliconFlowEmbeddingProvider
+from agent_wiki.extensions import create_embedding_provider
 from agent_wiki.infrastructure.retrieval.index_consistency import IndexConsistencyChecker
 from agent_wiki.infrastructure.retrieval.retrieval_index import RetrievalIndexRepository
 from agent_wiki.infrastructure.retrieval.sqlite_fts import SQLiteFTSIndexProvider
@@ -70,16 +70,10 @@ class MaintenanceService:
             return None
         if "embedding" not in set(wiki.retrieval.optional_providers or []):
             return None
-        if config.provider != "siliconflow":
+        try:
+            return create_embedding_provider(config.provider, config)
+        except ValueError:
             return None
-        return SiliconFlowEmbeddingProvider(
-            base_url=config.base_url,
-            api_key_env=config.api_key_env,
-            model=config.model,
-            dimension=config.dimension,
-            batch_size=config.batch_size,
-            timeout_seconds=config.timeout_seconds,
-        )
 
     def _embed_incremental(self, wiki_root: Path, wiki: WikiConfig) -> dict[str, int]:
         embedding_provider = self._embedding_provider_from_wiki(wiki)

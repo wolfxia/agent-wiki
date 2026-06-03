@@ -5,7 +5,6 @@ from pathlib import Path
 from agent_wiki.bootstrap.registry_loader import WikiConfig
 from agent_wiki.domain.contracts import RetrievalHit
 from agent_wiki.extensions import create_embedding_provider
-from agent_wiki.infrastructure.retrieval import embedding as _embedding_providers
 from agent_wiki.infrastructure.retrieval.knowledge_graph import KnowledgeGraphRetrievalProvider
 from agent_wiki.infrastructure.retrieval.retrieval_index import LexicalRetrievalProvider, RetrievalIndexRepository
 from agent_wiki.infrastructure.retrieval.sqlite_fts import SQLiteFTSIndexProvider
@@ -21,6 +20,7 @@ _LEXICAL_REFERENCE_SCORE = 4.0
 _STRUCTURED_REFERENCE_SCORE = 6.5
 _GRAPH_REFERENCE_SCORE = 5.0
 _SEMANTIC_REFERENCE_SCORE = 1.0
+_CANDIDATE_FETCH_MULTIPLIER = 3
 
 
 class RetrievalRouter:
@@ -39,7 +39,9 @@ class RetrievalRouter:
         lexical_ranked: list[RetrievalHit] = []
         semantic_ranked: list[RetrievalHit] = []
 
-        for hit in self.graph.search(query, top_k=top_k, filters=filters):
+        candidate_top_k = max(top_k * _CANDIDATE_FETCH_MULTIPLIER, top_k)
+
+        for hit in self.graph.search(query, top_k=candidate_top_k, filters=filters):
             merged[hit.doc_id] = self._with_scores(
                 hit,
                 lexical_score=0.0,
@@ -48,7 +50,7 @@ class RetrievalRouter:
                 section="knowledge_graph",
             )
 
-        fts_hits = self.fts.search(query, top_k=top_k, filters=filters)
+        fts_hits = self.fts.search(query, top_k=candidate_top_k, filters=filters)
         lexical_hits = fts_hits or self.lexical.search(self.wiki_root, query)
         for hit in lexical_hits:
             lexical_ranked.append(hit)
@@ -68,7 +70,7 @@ class RetrievalRouter:
                 embeddings = self.embedding_provider.embed_texts([query])
                 query_embedding = embeddings[0] if embeddings else None
                 semantic_hits = (
-                    self.vector_index.search(query_embedding, top_k=top_k, filters=filters)
+                    self.vector_index.search(query_embedding, top_k=candidate_top_k, filters=filters)
                     if query_embedding is not None
                     else []
                 )
@@ -90,7 +92,7 @@ class RetrievalRouter:
                     section=base_hit.section or "vector",
                 )
 
-        for hit in self.structured.search(query, top_k=top_k):
+        for hit in self.structured.search(query, top_k=candidate_top_k):
             existing = merged.get(hit.doc_id)
             lexical_score = float(existing.metadata.get("lexical_score", 0.0)) if existing else 0.0
             semantic_score = float(existing.metadata.get("semantic_score", 0.0)) if existing else 0.0
@@ -200,7 +202,10 @@ class RetrievalRouter:
         if "embedding" not in set(wiki.retrieval.optional_providers or []):
             return None
         config = wiki.retrieval.embedding
-        return create_embedding_provider(config.provider, config)
+        try:
+            return create_embedding_provider(config.provider, config)
+        except ValueError:
+            return None
 
     def _build_vector_index(self, wiki_root: Path, wiki_id: str, wiki: WikiConfig | None):
         if wiki is None or wiki.retrieval.embedding is None:
