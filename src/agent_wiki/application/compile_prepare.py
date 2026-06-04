@@ -123,6 +123,7 @@ class CompilePrepareService:
             page_path = wiki_root / str(canonical_uri)
             if page_path.exists() and page_path.is_file():
                 content = page_path.read_text(encoding="utf-8")
+        body_content = self._strip_yaml_frontmatter(content)
         doc_id = str(entry.get("doc_id") or "")
         max_preview_chars = self._preview_budget_chars(total_items=total_items)
         return CompilePrepareItem(
@@ -131,9 +132,17 @@ class CompilePrepareService:
             summary=entry.get("summary"),
             source_ref=f"{wiki.wiki_id}:{doc_id}",
             canonical_uri=str(canonical_uri) if canonical_uri else None,
-            claims=self._extract_claims(content),
-            content_preview=content[:max_preview_chars],
+            claims=self._extract_claims(body_content),
+            content_preview=body_content[:max_preview_chars],
         )
+
+    def _strip_yaml_frontmatter(self, content: str) -> str:
+        if not content.startswith("---"):
+            return content
+        match = re.match(r"\A---[ \t]*\r?\n.*?\r?\n---[ \t]*(?:\r?\n|\Z)", content, flags=re.DOTALL)
+        if match is None:
+            return content
+        return content[match.end():].lstrip("\r\n")
 
     def _extract_claims(self, content: str) -> list[str]:
         cleaned_lines = [line for line in content.splitlines() if not line.strip().startswith("#")]

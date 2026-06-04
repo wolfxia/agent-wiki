@@ -203,6 +203,58 @@ def test_compile_prepare_extracts_generic_claim_sentences_without_domain_hardcod
     assert "storage pipeline improves retrieval fidelity." in result.items[0].claims
 
 
+def test_compile_prepare_strips_yaml_frontmatter_before_claim_extraction(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="mcp")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-frontmatter-claim-1",
+            topic="compile-frontmatter",
+            problem_cluster="claim-extraction",
+            summary="frontmatter should not become claims",
+            content="placeholder",
+            source_refs=[],
+        ),
+    )
+    page_path = temp_wiki_root / "pages" / "raw-frontmatter-claim-1.md"
+    noisy_frontmatter = "\n".join(
+        [
+            "---",
+            "doc_id: raw-frontmatter-claim-1",
+            "source_refs:",
+            *[f"  - personal-1:raw-source-{index}" for index in range(700)],
+            "confidence: medium",
+            "version: v03",
+            "---",
+        ]
+    )
+    page_path.write_text(
+        noisy_frontmatter
+        + "\n# Raw Frontmatter Claim\n\n"
+        + "Storage pipeline improves retrieval fidelity.\n\n"
+        + "Key metric: prompt size stays under 8KB.",
+        encoding="utf-8",
+    )
+
+    result = CompilePrepareService().prepare(
+        wiki,
+        actor,
+        CompilePrepareInput(topic="compile-frontmatter", problem_cluster="claim-extraction", max_items=1),
+    )
+    item = result.items[0]
+
+    assert "Storage pipeline improves retrieval fidelity." in item.claims
+    assert "Key metric: prompt size stays under 8KB." in item.claims
+    assert all("source_refs" not in claim for claim in item.claims)
+    assert all("raw-source-" not in claim for claim in item.claims)
+    assert item.content_preview.startswith("# Raw Frontmatter Claim")
+    assert "source_refs" not in item.content_preview
+
+
 def test_compile_prepare_includes_existing_atom_summaries_for_dedup_context(temp_wiki_root: Path) -> None:
     from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
 
