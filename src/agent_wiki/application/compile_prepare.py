@@ -137,12 +137,18 @@ class CompilePrepareService:
         )
 
     def _strip_yaml_frontmatter(self, content: str) -> str:
-        if not content.startswith("---"):
-            return content
-        match = re.match(r"\A---[ \t]*\r?\n.*?\r?\n---[ \t]*(?:\r?\n|\Z)", content, flags=re.DOTALL)
-        if match is None:
-            return content
-        return content[match.end():].lstrip("\r\n")
+        stripped = content
+        for _ in range(8):
+            if not stripped.startswith("---"):
+                break
+            match = re.match(r"\A---[ \t]*\r?\n.*?\r?\n---[ \t]*(?:\r?\n|\Z)", stripped, flags=re.DOTALL)
+            if match is None or match.end() == 0:
+                break
+            next_stripped = stripped[match.end():].lstrip("\r\n")
+            if next_stripped == stripped:
+                break
+            stripped = next_stripped
+        return stripped
 
     def _extract_claims(self, content: str) -> list[str]:
         cleaned_lines = [line for line in content.splitlines() if not line.strip().startswith("#")]

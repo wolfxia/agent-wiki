@@ -255,6 +255,64 @@ def test_compile_prepare_strips_yaml_frontmatter_before_claim_extraction(temp_wi
     assert "source_refs" not in item.content_preview
 
 
+def test_compile_prepare_strips_nested_yaml_frontmatter_blocks(temp_wiki_root: Path) -> None:
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="mcp")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-nested-frontmatter-claim-1",
+            topic="compile-frontmatter",
+            problem_cluster="nested-claim-extraction",
+            summary="nested frontmatter should not become claims",
+            content="placeholder",
+            source_refs=[],
+        ),
+    )
+    page_path = temp_wiki_root / "pages" / "raw-nested-frontmatter-claim-1.md"
+    first_frontmatter = "\n".join([
+        "---",
+        "doc_id: raw-nested-frontmatter-claim-1",
+        "source_type: pptx",
+        "---",
+    ])
+    second_frontmatter = "\n".join(
+        [
+            "---",
+            "source_refs:",
+            *[f"  - data-blueprint:slide-{index}" for index in range(700)],
+            "confidence: medium",
+            "version: v03",
+            "---",
+        ]
+    )
+    page_path.write_text(
+        first_frontmatter
+        + "\n"
+        + second_frontmatter
+        + "\n# Nested Raw Frontmatter Claim\n\n"
+        + "Import pipeline reduces compile prompt size.\n\n"
+        + "Evidence: nested source metadata stays out of claims.",
+        encoding="utf-8",
+    )
+
+    result = CompilePrepareService().prepare(
+        wiki,
+        actor,
+        CompilePrepareInput(topic="compile-frontmatter", problem_cluster="nested-claim-extraction", max_items=1),
+    )
+    item = result.items[0]
+
+    assert "Import pipeline reduces compile prompt size." in item.claims
+    assert "Evidence: nested source metadata stays out of claims." in item.claims
+    assert all("source_refs" not in claim for claim in item.claims)
+    assert all("slide-" not in claim for claim in item.claims)
+    assert item.content_preview.startswith("# Nested Raw Frontmatter Claim")
+
+
 def test_compile_prepare_includes_existing_atom_summaries_for_dedup_context(temp_wiki_root: Path) -> None:
     from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
 
