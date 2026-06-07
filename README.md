@@ -38,6 +38,8 @@ Available MCP tools:
 | Tool | Purpose |
 |---|---|
 | `wiki.query` | Query the knowledge base with layered results and debug scores |
+| `wiki.get_doc` | Read an exact committed page body and manifest metadata |
+| `wiki.inbound_refs` | List exact inbound `source_refs` and `wikilinks` for a document |
 | `wiki.capture_raw` | Capture raw source or learning notes |
 | `wiki.compile_prepare` | Prepare agent-facing raw evidence packets for compilation |
 | `wiki.compile_update` | Create or revise `atom` / `synthesis` pages |
@@ -262,6 +264,8 @@ The primary agent path is MCP stdio through `aw serve`. The MCP surface intentio
 
 ```text
 wiki.query
+wiki.get_doc
+wiki.inbound_refs
 wiki.capture_raw
 wiki.compile_prepare
 wiki.compile_update

@@ -4,10 +4,13 @@ Agent Wiki should be mounted into Hermes as a stdio MCP sidecar. This is the pri
 
 ## Goal
 
-After this setup, Hermes can call these five MCP tools directly:
+After this setup, Hermes can call these MCP tools directly:
 
 - `wiki.query`
+- `wiki.get_doc`
+- `wiki.inbound_refs`
 - `wiki.capture_raw`
+- `wiki.compile_prepare`
 - `wiki.compile_update`
 - `wiki.lint`
 - `wiki.sync`
@@ -91,7 +94,10 @@ The important constraint is architectural, not cosmetic:
 Use the MCP tools this way:
 
 - `wiki.query`: read path for L1/L2/L3 answers over committed knowledge, with optional pending inclusion when explicitly requested
+- `wiki.get_doc`: read-only exact document fetch by `doc_id`, returning page body and manifest metadata
+- `wiki.inbound_refs`: read-only exact reverse-reference lookup over structured `source_refs` and `wikilinks`
 - `wiki.capture_raw`: low-risk raw capture into Git-tracked pages or pending runtime state
+- `wiki.compile_prepare`: read-only evidence packet preparation for agent-driven compilation
 - `wiki.compile_update`: truth-zone compile step that writes internal authority state only
 - `wiki.lint`: authority/workspace consistency checks
 - `wiki.sync`: explicit external-view sync, including Obsidian push-view

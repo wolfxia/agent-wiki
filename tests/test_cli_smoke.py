@@ -986,7 +986,7 @@ def test_cli_health_command_reports_registry_and_tool_surface(temp_wiki_root) ->
     assert result.exit_code == 0
     assert "status=ok" in result.stdout
     assert "wiki_count=1" in result.stdout
-    assert "tool_count=6" in result.stdout
+    assert "tool_count=8" in result.stdout
     assert "actor_type=agent" in result.stdout
     assert "actor_id=claude-code" in result.stdout
 

@@ -8,6 +8,7 @@ from agent_wiki.application.compile_prepare import CompilePrepareInput, CompileP
 from agent_wiki.application.compile_update import CompileUpdateService
 from agent_wiki.application.linting import LintService
 from agent_wiki.application.query import QueryService
+from agent_wiki.application.read_docs import WikiReadService
 from agent_wiki.application.sync import SyncInput, SyncService
 from agent_wiki.bootstrap.registry_loader import RegistryLoader
 from agent_wiki.domain.models import (
@@ -41,6 +42,8 @@ class MCPDispatcher:
         try:
             handlers = {
                 "wiki.query": self._tool_query,
+                "wiki.get_doc": self._tool_get_doc,
+                "wiki.inbound_refs": self._tool_inbound_refs,
                 "wiki.capture_raw": self._tool_capture_raw,
                 "wiki.compile_prepare": self._tool_compile_prepare,
                 "wiki.compile_update": self._tool_compile_update,
@@ -147,6 +150,12 @@ class MCPDispatcher:
             ),
         )
         return {"status": result.status, "doc_id": result.doc_id, "page_path": result.page_path}
+
+    def _tool_get_doc(self, params: dict, wiki, actor) -> dict:
+        return WikiReadService().get_doc(wiki=wiki, actor=actor, doc_id=params["doc_id"]).model_dump()
+
+    def _tool_inbound_refs(self, params: dict, wiki, actor) -> dict:
+        return WikiReadService().inbound_refs(wiki=wiki, actor=actor, doc_id=params["doc_id"]).model_dump()
 
     def _tool_compile_update(self, params: dict, wiki, actor) -> dict:
         result = CompileUpdateService().apply(

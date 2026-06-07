@@ -84,6 +84,8 @@ def test_mcp_server_lists_expected_tools() -> None:
     tool_names = {tool["name"] for tool in tools}
     assert tool_names == {
         "wiki.query",
+        "wiki.get_doc",
+        "wiki.inbound_refs",
         "wiki.capture_raw",
         "wiki.compile_prepare",
         "wiki.compile_update",
@@ -161,6 +163,123 @@ def test_mcp_query_tool_delegates_to_query_service(temp_wiki_root: Path) -> None
 
     assert result["hit_count"] >= 1
     assert any(h["doc_id"] == "atom-mcp-1" for h in result["hits"])
+
+
+def test_mcp_get_doc_returns_exact_committed_page(temp_wiki_root: Path) -> None:
+    from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="mcp")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-mcp-get-doc-1",
+            topic="testing",
+            problem_cluster="get-doc",
+            summary="get doc summary",
+            content="# Raw Get Doc\n\nExact page body.",
+            source_refs=[],
+        ),
+    )
+
+    result = MCPServer(registry_path="tests/fixtures/registry.yaml").invoke(
+        "wiki.get_doc",
+        {"wiki_id": "personal-1", "doc_id": "raw-mcp-get-doc-1"},
+        session_metadata={"actor_type": "agent", "actor_id": "claude-code"},
+        wiki_workspace_overrides={"personal-1": str(temp_wiki_root)},
+    )
+
+    assert result["doc_id"] == "raw-mcp-get-doc-1"
+    assert result["metadata"]["summary"] == "get doc summary"
+    assert result["content"] == "# Raw Get Doc\n\nExact page body."
+
+
+def test_mcp_inbound_refs_returns_exact_source_ref_and_wikilink_matches(temp_wiki_root: Path) -> None:
+    from agent_wiki.application.capture_raw import CaptureRawInput, CaptureRawService
+    from agent_wiki.application.compile_update import CompileUpdateInput, CompileUpdateService
+
+    wiki = RegistryLoader().load(Path("tests/fixtures/registry.yaml")).wikis[0].model_copy(
+        update={"workspace_path": str(temp_wiki_root)}
+    )
+    actor = ResolvedActor(actor_type="agent", actor_id="claude-code", transport="mcp")
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-mcp-inbound-1",
+            topic="testing",
+            problem_cluster="inbound",
+            content="# Raw inbound",
+            source_refs=[],
+        ),
+    )
+    CaptureRawService().execute(
+        wiki=wiki,
+        actor=actor,
+        data=CaptureRawInput(
+            doc_id="raw-mcp-inbound-10",
+            topic="testing",
+            problem_cluster="inbound",
+            content="# Raw inbound near miss",
+            source_refs=[],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-mcp-inbound-source-ref",
+            page_type="atom",
+            topic="testing",
+            problem_cluster="inbound",
+            content="# Atom source ref",
+            source_refs=["personal-1:raw-mcp-inbound-1"],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-mcp-inbound-wikilink",
+            page_type="atom",
+            topic="testing",
+            problem_cluster="inbound",
+            content="# Atom wikilink",
+            source_refs=["personal-1:raw-mcp-inbound-1"],
+            wikilinks=["[[raw-mcp-inbound-1]]"],
+        ),
+    )
+    CompileUpdateService().apply(
+        wiki=wiki,
+        actor=actor,
+        data=CompileUpdateInput(
+            doc_id="atom-mcp-inbound-near-miss",
+            page_type="atom",
+            topic="testing",
+            problem_cluster="inbound",
+            content="# Atom near miss",
+            source_refs=["personal-1:raw-mcp-inbound-10"],
+        ),
+    )
+
+    result = MCPServer(registry_path="tests/fixtures/registry.yaml").invoke(
+        "wiki.inbound_refs",
+        {"wiki_id": "personal-1", "doc_id": "raw-mcp-inbound-1"},
+        session_metadata={"actor_type": "agent", "actor_id": "claude-code"},
+        wiki_workspace_overrides={"personal-1": str(temp_wiki_root)},
+    )
+
+    assert result["doc_id"] == "raw-mcp-inbound-1"
+    assert result["ref_count"] == 2
+    assert [ref["doc_id"] for ref in result["refs"]] == [
+        "atom-mcp-inbound-source-ref",
+        "atom-mcp-inbound-wikilink",
+    ]
+    assert result["refs"][0]["fields"] == ["source_refs"]
+    assert result["refs"][1]["fields"] == ["source_refs", "wikilinks"]
 
 
 def test_mcp_capture_tool_delegates_to_capture_service(temp_wiki_root: Path) -> None:
@@ -417,6 +536,8 @@ def test_build_fastmcp_server_registers_agent_wiki_tools() -> None:
     assert app.name == "agent-wiki"
     assert tools == {
         "wiki.query",
+        "wiki.get_doc",
+        "wiki.inbound_refs",
         "wiki.capture_raw",
         "wiki.compile_prepare",
         "wiki.compile_update",

@@ -26,6 +26,24 @@ class QueryToolResult(BaseModel):
     error: ToolErrorResult | None = None
 
 
+class GetDocToolResult(BaseModel):
+    wiki_id: str | None = None
+    doc_id: str | None = None
+    page_type: str | None = None
+    canonical_uri: str | None = None
+    metadata: dict = Field(default_factory=dict)
+    content: str | None = None
+    error: ToolErrorResult | None = None
+
+
+class InboundRefsToolResult(BaseModel):
+    wiki_id: str | None = None
+    doc_id: str | None = None
+    ref_count: int = 0
+    refs: list[dict] = Field(default_factory=list)
+    error: ToolErrorResult | None = None
+
+
 class MutationToolResult(BaseModel):
     status: str | None = None
     doc_id: str | None = None
@@ -93,6 +111,8 @@ def _metadata_from_context(ctx: Context | None) -> dict[str, str]:
 
 _BUILTIN_TOOLS = {
     "wiki.query": "Query the agent wiki",
+    "wiki.get_doc": "Read an exact committed wiki document",
+    "wiki.inbound_refs": "List exact inbound source_refs and wikilinks for a document",
     "wiki.capture_raw": "Capture a raw page",
     "wiki.compile_prepare": "Prepare raw evidence for agent-driven compilation",
     "wiki.compile_update": "Compile a truth-zone page",
@@ -148,6 +168,34 @@ def build_fastmcp_server(registry_path: str | None = None, extra_tools: list[MCP
                     "include_pending": include_pending,
                     "max_sensitivity": max_sensitivity,
                 },
+                session_metadata=_metadata_from_context(ctx),
+            )
+        )
+
+    @server.tool(name="wiki.get_doc", structured_output=True)
+    def get_doc_tool(
+        wiki_id: str,
+        doc_id: str,
+        ctx: Context | None = None,
+    ) -> GetDocToolResult:
+        return GetDocToolResult.model_validate(
+            _dispatcher().dispatch(
+                tool_name="wiki.get_doc",
+                params={"wiki_id": wiki_id, "doc_id": doc_id},
+                session_metadata=_metadata_from_context(ctx),
+            )
+        )
+
+    @server.tool(name="wiki.inbound_refs", structured_output=True)
+    def inbound_refs_tool(
+        wiki_id: str,
+        doc_id: str,
+        ctx: Context | None = None,
+    ) -> InboundRefsToolResult:
+        return InboundRefsToolResult.model_validate(
+            _dispatcher().dispatch(
+                tool_name="wiki.inbound_refs",
+                params={"wiki_id": wiki_id, "doc_id": doc_id},
                 session_metadata=_metadata_from_context(ctx),
             )
         )

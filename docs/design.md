@@ -83,7 +83,7 @@ The current runtime now exposes a real FastMCP stdio server and workflow-complet
 - `aw serve` as the primary stdio service entrypoint
 - `aw-agent` as an alias for the same service identity
 - a real FastMCP stdio server named `agent-wiki`
-- a six-tool MCP surface: `wiki.query`, `wiki.capture_raw`, `wiki.compile_prepare`, `wiki.compile_update`, `wiki.lint`, `wiki.sync`
+- an eight-tool MCP surface: `wiki.query`, `wiki.get_doc`, `wiki.inbound_refs`, `wiki.capture_raw`, `wiki.compile_prepare`, `wiki.compile_update`, `wiki.lint`, `wiki.sync`
 - workflow-complete CLI and REST surfaces over the same shared core
 - explicit `sync` separation so `compile_update` still writes only internal authority/workspace state
 

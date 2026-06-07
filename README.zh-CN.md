@@ -56,6 +56,8 @@ Hermes 等 MCP 客户端应将 Agent Wiki 作为 stdio sidecar 运行。始终�
 | 工具 | 用途 |
 |------|------|
 | `wiki.query` | 查询知识库，返回分层结果与调试评分 |
+| `wiki.get_doc` | 精确读取已提交页面正文与 manifest 元数据 |
+| `wiki.inbound_refs` | 精确列出指向某文档的 `source_refs` 与 `wikilinks` |
 | `wiki.capture_raw` | 捕获 raw 来源或学习笔记 |
 | `wiki.compile_prepare` | 为编译准备面向 Agent 的 raw evidence 数据包 |
 | `wiki.compile_update` | 创建或修订 `atom` / `synthesis` 页面 |
@@ -242,6 +244,8 @@ compile:
 
 ```text
 wiki.query
+wiki.get_doc
+wiki.inbound_refs
 wiki.capture_raw
 wiki.compile_prepare
 wiki.compile_update
